@@ -1,0 +1,29 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 4
+max_connections = 100
+
+[database]
+host = "localhost"
+port = 5432
+name = "cce_production"
+user = "app_user"
+pool_size = 20
+
+[cache]
+enabled = true
+ttl_seconds = 3600
+max_size_mb = 512
+strategy = "lru"
+
+[logging]
+level = "info"
+format = "json"
+output = "stdout"
+file = "/var/log/cce/app.log"
+
+[rate_limiting]
+enabled = true
+requests_per_minute = 1000
+burst_size = 50

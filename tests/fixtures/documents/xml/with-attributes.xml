@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project id="main" type="application">
+  <name>my-project</name>
+  <version major="1" minor="0" patch="0"/>
+  <dependencies>
+    <dependency name="tokio" version="1.0" scope="runtime"/>
+    <dependency name="serde" version="1.0" scope="runtime"/>
+    <dependency name="cargo" version="0.1" scope="build"/>
+  </dependencies>
+  <build>
+    <target name="release" optimized="true"/>
+  </build>
+</project>

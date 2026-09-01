@@ -1,0 +1,23 @@
+[project]
+name = "my-project"
+version = "1.0.0"
+
+[database]
+host = "localhost"
+port = 5432
+
+[database.credentials]
+username = "admin"
+password = "secret"
+
+[cache]
+enabled = true
+ttl = 3600
+
+[[products]]
+name = "Hammer"
+sku = 738594937
+
+[[products]]
+name = "Nail"
+sku = 284758393

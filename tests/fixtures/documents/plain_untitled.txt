@@ -1,0 +1,4 @@
+This file has no heading or section markers.
+It only contains a few paragraphs of plain prose.
+Second paragraph about nothing in particular.
+Third paragraph to give the chunker enough text to work with.

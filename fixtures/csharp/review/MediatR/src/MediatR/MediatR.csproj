@@ -1,0 +1,71 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Authors>Jimmy Bogard</Authors>
+    <Description>Simple, unambitious mediator implementation in .NET</Description>
+    <Copyright>Copyright Jimmy Bogard</Copyright>
+    <TargetFrameworks>netstandard2.0;net8.0;net9.0;net10.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <Features>strict</Features>
+    <PackageTags>mediator;request;response;queries;commands;notifications</PackageTags>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>..\..\MediatR.snk</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageIcon>gradient_128x128.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
+    <PackageLicenseFile>LICENSE.md</PackageLicenseFile>
+    <PackageProjectUrl>https://mediatr.io</PackageProjectUrl>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(IsWindows)' == 'true' ">
+    <TargetFrameworks>$(TargetFrameworks);net462</TargetFrameworks>
+  </PropertyGroup>
+
+  <Target Name="EmbedBuildDate" BeforeTargets="CoreCompile">
+    <Exec Command="git log -1 --format=%25cI" ConsoleToMSBuild="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="BuildDateUtc" />
+    </Exec>
+    <PropertyGroup>
+      <BuildDateUtc Condition="'$(BuildDateUtc)' == ''">$([System.DateTime]::UtcNow.ToString("O"))</BuildDateUtc>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)BuildDateGenerated.cs" Lines="[assembly: System.Reflection.AssemblyMetadata(&quot;BuildDateUtc&quot;, &quot;$(BuildDateUtc)&quot;)]" Overwrite="true" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)BuildDateGenerated.cs" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <None Include="..\..\assets\logo\gradient_128x128.png" Pack="true" PackagePath="" />
+    <None Include="..\..\LICENSE.md" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>MediatR.Tests, PublicKey=002400000480000094000000060200000024000052534131000400000100010091986edd141861f402457659cb82b56cf6a0d60b3bd2e5aa4ea73d88afa929d278462d6c4c0e2ecbce21948c15514a310a82e6b2e6beaab6cb14230a03bc026609be59f938423f2490fa0033ae87a982fb4950db77d1a4635e14f7727161e93e5511de766ed8e515efd801464b7820a27fca30a32161485824e442cc5ffecfbe</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="IsExternalInit" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="MediatR.Contracts" Version="[2.0.1, 3.0.0)" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="[10.0.0, )" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="[10.0.0, )" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="[10.0.0, )" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="[8.14.0, )" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+    <PackageReference Include="MinVer" Version="6.0.0" PrivateAssets="All" />
+  </ItemGroup>
+  
+</Project>

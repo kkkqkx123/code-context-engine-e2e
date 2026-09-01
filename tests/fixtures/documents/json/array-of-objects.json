@@ -1,0 +1,15 @@
+{
+  "servers": [
+    {
+      "name": "web-01",
+      "ip": "192.168.1.10",
+      "role": "frontend"
+    },
+    {
+      "name": "web-02",
+      "ip": "192.168.1.11",
+      "role": "backend"
+    }
+  ],
+  "tags": ["production", "monitored"]
+}

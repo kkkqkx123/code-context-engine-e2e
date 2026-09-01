@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  workflow_dispatch: 
+  push:
+    branches:
+    - main
+  pull_request:
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  MINVERBUILDMETADATA: build.${{ github.run_id }}.${{ github.run_attempt}}
+# On pull requests — especially from forks, where GitHub forces the token to
+# read-only — this workflow needs no secrets and only read access: it builds,
+# tests, and uploads .trx artifacts. Test results are published by a separate
+# workflow (test-report.yml, triggered via workflow_run) that runs in the
+# base-repo context with checks:write. The only secret is used by the main-only
+# Push to MyGet step. CI does not use OIDC, so no id-token. See issue #1172.
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4.2.0
+      with:
+        fetch-depth: 0
+        filter: tree:0
+    - name: Setup dotnet
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: |
+          8.0.x
+          9.0.x
+          10.0.x
+    - name: Install NuGetKeyVaultSignTool
+      run: dotnet tool install --global NuGetKeyVaultSignTool
+    - name: Build and Test
+      run: ./Build.ps1
+      shell: pwsh
+    - name: Upload Test Results
+      # Publishing happens in test-report.yml, which downloads this artifact.
+      uses: actions/upload-artifact@v4
+      if: success() || failure()
+      with:
+        name: test-results-Windows
+        path: '**/TestResults/**/*.trx'
+        if-no-files-found: ignore
+    - name: Get package version
+      id: version
+      shell: pwsh
+      run: |
+        $pkg = Get-ChildItem ./artifacts -Filter "MediatR.*.nupkg" | Select-Object -First 1
+        $version = $pkg.BaseName -replace '^MediatR\.', ''
+        "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+    - name: Generate SBOM
+      shell: pwsh
+      run: |
+        dotnet tool install --global Microsoft.Sbom.DotNetTool
+        sbom-tool generate `
+          -b ./artifacts `
+          -bc ./src/MediatR `
+          -pn MediatR `
+          -pv ${{ steps.version.outputs.version }} `
+          -ps "Lucky Penny Software LLC" `
+          -nsb https://mediatr.io
+    - name: Push to MyGet
+      if: github.ref == 'refs/heads/main'
+      env:
+        NUGET_URL: https://f.feedz.io/lucky-penny-software/mediatr/nuget/index.json
+        NUGET_API_KEY: ${{ secrets.FEEDZIO_ACCESS_TOKEN }}
+      run: ./Push.ps1
+      shell: pwsh
+    - name: Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: artifacts
+        path: artifacts/**/*

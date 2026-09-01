@@ -1,0 +1,52 @@
+[package]
+name = "ripgrep"
+version = "15.1.0"
+authors = [""]
+description = """
+ripgrep is a line-oriented search tool that recursively searches the current
+directory for a regex pattern.
+"""
+license = "MIT"
+edition = "2024"
+rust-version = "1.85"
+
+[lib]
+name = "ripgrep"
+path = "src/lib.rs"
+
+[features]
+default = ["pcre2", "serde"]
+
+# PCRE2 正则引擎支持
+pcre2 = ["dep:pcre2-sys"]
+
+# JSON 输出支持
+serde = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+# === 核心必需 ===
+aho-corasick = "1"
+bstr = "1"
+encoding_rs = "0.8"
+encoding_rs_io = "0.1"
+log = "0.4"
+memchr = "2"
+regex = "1"
+regex-automata = "0.4"
+regex-syntax = "0.8"
+walkdir = "2"
+
+# === 可选：PCRE2 ===
+pcre2-sys = { version = "0.2", optional = true }
+pcre2 = { version = "0.2", optional = true }
+
+# === 可选：JSON 输出 ===
+serde = { version = "1", optional = true, features = ["derive"] }
+serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+serde = "1"
+serde_derive = "1"
+
+[profile.release]
+debug = 1

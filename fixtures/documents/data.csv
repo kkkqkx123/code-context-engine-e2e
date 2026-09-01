@@ -1,0 +1,11 @@
+id,name,role,department,active
+1,Alice Smith,Engineer,Platform,true
+2,Bob Johnson,Senior Engineer,Security,true
+3,Charlie Lee,Architect,Infrastructure,true
+4,Diana Wang,Engineer,Platform,false
+5,Edward Brown,Manager,Engineering,true
+6,Fiona Garcia,Engineer,Data,true
+7,George Kim,SRE,Infrastructure,true
+8,Helen Davis,Engineer,Security,false
+9,Ian Wilson,Intern,Platform,true
+10,Julia Martinez,Senior Engineer,Data,true
