@@ -1,6 +1,6 @@
 # tests
 
-这里是 `cce_e2e_tests` 的集成测试入口目录。
+这里是 `cce-e2e-tests` 的集成测试入口目录。
 
 ## 分层
 

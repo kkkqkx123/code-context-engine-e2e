@@ -1,6 +1,6 @@
-# cce_e2e_tests
+# cce-e2e-tests
 
-`cce_e2e_tests` is the integration test support package for the Code Context Engine. Shared testing capabilities are placed in library crates, while test entry points are layered under `tests/` based on their purpose.
+`cce-e2e-tests` is the integration test support package for the Code Context Engine. Shared testing capabilities are placed in library crates, while test entry points are layered under `tests/` based on their purpose.
 
 ## Directory Responsibilities
 

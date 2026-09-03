@@ -23,10 +23,18 @@ use cce_e2e_tests::output_manager::{OutputBuilder, OutputCategory};
 use cce_e2e_tests::query_test::QueryWorkflowTest;
 use cce_llm_client::OpenAICompatibleProvider;
 use cce_orchestrator::SearchSources;
+use cce_orchestrator::query::searcher::expand_multi_entity_results;
 use cce_orchestrator::query::types::SearchResult;
 
 const FIXTURE: &str = "rust/basic";
 const QUERIES: &[&str] = &["process", "internal", "process internal result"];
+
+fn no_threshold_config() -> cce_orchestrator::SearchConfig {
+    let mut config = cce_orchestrator::SearchConfig::default();
+    config.vector.min_score = 0.0;
+    config.result.min_score = 0.0;
+    config
+}
 
 fn alignment_key_of(item: &SearchResult) -> String {
     if let Some(entity_id) = item.entity_ids.first() {
@@ -76,8 +84,9 @@ fn main() {
         .expect("mock embedder"),
     );
 
-    let mut query_test =
-        QueryWorkflowTest::new(fixture, EmbeddingConfig::mock()).with_embedder(embedder);
+    let mut query_test = QueryWorkflowTest::new(fixture, EmbeddingConfig::mock())
+        .with_embedder(embedder)
+        .with_config(no_threshold_config());
 
     // Probe Qdrant availability: hybrid indexing fails fast with a clear
     // message when the service is absent; fall back to BM25-only then.
@@ -134,6 +143,10 @@ fn main() {
         } else {
             Vec::new()
         };
+
+        let vector_items = expand_multi_entity_results(vector_items);
+        let bm25_items = expand_multi_entity_results(bm25_items);
+        let hybrid_items = expand_multi_entity_results(hybrid_items);
 
         let vector_keys: std::collections::HashSet<String> =
             vector_items.iter().map(alignment_key_of).collect();

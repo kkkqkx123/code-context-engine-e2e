@@ -1,6 +1,6 @@
-# cce_e2e_tests
+# cce-e2e-tests
 
-`cce_e2e_tests` 是代码上下文引擎的集成测试支持包。共享测试能力放在库 crate 中，测试入口按目的分层放在 `tests/` 下。
+`cce-e2e-tests` 是代码上下文引擎的集成测试支持包。共享测试能力放在库 crate 中，测试入口按目的分层放在 `tests/` 下。
 
 ## 目录职责
 
