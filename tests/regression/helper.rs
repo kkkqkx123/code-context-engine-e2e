@@ -30,6 +30,10 @@ pub mod pipeline_debug {
     pub use cce_e2e_tests::pipeline_debug::*;
 }
 
+pub mod type_inference_assert {
+    pub use cce_e2e_tests::type_inference_assert::*;
+}
+
 #[path = "../e2e/helper/fixture.rs"]
 pub mod fixture;
 

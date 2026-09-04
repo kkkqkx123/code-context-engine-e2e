@@ -22,6 +22,20 @@ pub enum FixtureCategory {
     TypeScript,
     /// C# project fixtures.
     CSharp,
+    /// C++ project fixtures.
+    Cpp,
+    /// Kotlin project fixtures.
+    Kotlin,
+    /// Scala project fixtures.
+    Scala,
+    /// Ruby project fixtures.
+    Ruby,
+    /// PHP project fixtures.
+    Php,
+    /// Dart project fixtures.
+    Dart,
+    /// JavaScript project fixtures.
+    JavaScript,
     /// Go project fixtures.
     Go,
     /// Multi-language project fixtures.
@@ -39,6 +53,13 @@ impl FixtureCategory {
             FixtureCategory::Java => "java",
             FixtureCategory::TypeScript => "typescript",
             FixtureCategory::CSharp => "csharp",
+            FixtureCategory::Cpp => "cpp",
+            FixtureCategory::Kotlin => "kotlin",
+            FixtureCategory::Scala => "scala",
+            FixtureCategory::Ruby => "ruby",
+            FixtureCategory::Php => "php",
+            FixtureCategory::Dart => "dart",
+            FixtureCategory::JavaScript => "javascript",
             FixtureCategory::Go => "go",
             FixtureCategory::MultiLanguage => "multi_language",
             FixtureCategory::Documents => "documents",
@@ -124,6 +145,11 @@ impl FixtureSpec {
     /// Python type inference control flow fixture.
     pub fn python_type_inference_control_flow() -> Self {
         Self::new(FixtureCategory::Python, "type_inference/control_flow")
+    }
+
+    /// Python type inference cross-file fixture.
+    pub fn python_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::Python, "type_inference/cross_file")
     }
 
     /// Java basic project fixture.
@@ -212,6 +238,56 @@ impl FixtureSpec {
     /// Go type inference control flow fixture.
     pub fn go_type_inference_control_flow() -> Self {
         Self::new(FixtureCategory::Go, "type_inference/control_flow")
+    }
+
+    /// C++ type inference declarations fixture.
+    pub fn cpp_type_inference_declarations() -> Self {
+        Self::new(FixtureCategory::Cpp, "type_inference/declarations")
+    }
+
+    /// Kotlin type inference generics fixture.
+    pub fn kotlin_type_inference_generics() -> Self {
+        Self::new(FixtureCategory::Kotlin, "type_inference/generics")
+    }
+
+    /// Kotlin type inference control flow fixture.
+    pub fn kotlin_type_inference_control_flow() -> Self {
+        Self::new(FixtureCategory::Kotlin, "type_inference/control_flow")
+    }
+
+    /// Scala type inference declarations fixture.
+    pub fn scala_type_inference_declarations() -> Self {
+        Self::new(FixtureCategory::Scala, "type_inference/declarations")
+    }
+
+    /// Scala type inference control flow fixture.
+    pub fn scala_type_inference_control_flow() -> Self {
+        Self::new(FixtureCategory::Scala, "type_inference/control_flow")
+    }
+
+    /// Ruby type inference constructors fixture.
+    pub fn ruby_type_inference_constructors() -> Self {
+        Self::new(FixtureCategory::Ruby, "type_inference/constructors")
+    }
+
+    /// PHP type inference phpdoc fixture.
+    pub fn php_type_inference_phpdoc() -> Self {
+        Self::new(FixtureCategory::Php, "type_inference/phpdoc")
+    }
+
+    /// Dart type inference declarations fixture.
+    pub fn dart_type_inference_declarations() -> Self {
+        Self::new(FixtureCategory::Dart, "type_inference/declarations")
+    }
+
+    /// Dart type inference control flow fixture.
+    pub fn dart_type_inference_control_flow() -> Self {
+        Self::new(FixtureCategory::Dart, "type_inference/control_flow")
+    }
+
+    /// JavaScript type inference narrowing fixture.
+    pub fn javascript_type_inference_narrowing() -> Self {
+        Self::new(FixtureCategory::JavaScript, "type_inference/narrowing")
     }
 
     /// Multi-language project fixture.
@@ -320,6 +396,11 @@ impl TestFixture {
         Self::load(FixtureSpec::python_type_inference_control_flow())
     }
 
+    /// Load Python type inference cross-file fixture.
+    pub fn python_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::python_type_inference_cross_file())
+    }
+
     /// Load Java basic project fixture.
     pub fn java_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::java_basic())
@@ -388,6 +469,56 @@ impl TestFixture {
     /// Load Go type inference control flow fixture.
     pub fn go_type_inference_control_flow() -> io::Result<Self> {
         Self::load(FixtureSpec::go_type_inference_control_flow())
+    }
+
+    /// Load C++ type inference declarations fixture.
+    pub fn cpp_type_inference_declarations() -> io::Result<Self> {
+        Self::load(FixtureSpec::cpp_type_inference_declarations())
+    }
+
+    /// Load Kotlin type inference generics fixture.
+    pub fn kotlin_type_inference_generics() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_type_inference_generics())
+    }
+
+    /// Load Kotlin type inference control flow fixture.
+    pub fn kotlin_type_inference_control_flow() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_type_inference_control_flow())
+    }
+
+    /// Load Scala type inference declarations fixture.
+    pub fn scala_type_inference_declarations() -> io::Result<Self> {
+        Self::load(FixtureSpec::scala_type_inference_declarations())
+    }
+
+    /// Load Scala type inference control flow fixture.
+    pub fn scala_type_inference_control_flow() -> io::Result<Self> {
+        Self::load(FixtureSpec::scala_type_inference_control_flow())
+    }
+
+    /// Load Ruby type inference constructors fixture.
+    pub fn ruby_type_inference_constructors() -> io::Result<Self> {
+        Self::load(FixtureSpec::ruby_type_inference_constructors())
+    }
+
+    /// Load PHP type inference phpdoc fixture.
+    pub fn php_type_inference_phpdoc() -> io::Result<Self> {
+        Self::load(FixtureSpec::php_type_inference_phpdoc())
+    }
+
+    /// Load Dart type inference declarations fixture.
+    pub fn dart_type_inference_declarations() -> io::Result<Self> {
+        Self::load(FixtureSpec::dart_type_inference_declarations())
+    }
+
+    /// Load Dart type inference control flow fixture.
+    pub fn dart_type_inference_control_flow() -> io::Result<Self> {
+        Self::load(FixtureSpec::dart_type_inference_control_flow())
+    }
+
+    /// Load JavaScript type inference narrowing fixture.
+    pub fn javascript_type_inference_narrowing() -> io::Result<Self> {
+        Self::load(FixtureSpec::javascript_type_inference_narrowing())
     }
 
     /// Load multi-language project fixture.

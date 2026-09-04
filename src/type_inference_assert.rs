@@ -1,0 +1,293 @@
+//! Deterministic type-inference assertions for E2E tests.
+//!
+//! The per-file [`TypeInferenceEngine`](cce_relation::type_inference::TypeInferenceEngine)
+//! output is converted into a sorted, `EntityId`-free snapshot
+//! ([`CanonicalTypeBinding`]) so tests can assert on inferred types without
+//! depending on process-local ID assignment or scope insertion order.
+//!
+//! Human-readable visualization reuses
+//! [`render_type_inference`](crate::structured_output::render_type_inference),
+//! which runs the same engine and renders the
+//! `Variables / Function Returns / Control-Flow Narrowing / Type Shapes`
+//! markdown tables. Use the `export_type_inference` example to regenerate the
+//! `outputs/scenarios/<lang>/structured/<case>/` reports and eyeball them;
+//! use the helpers in this module for machine-checked assertions.
+
+use std::collections::BTreeMap;
+
+use cce_relation::type_inference::TypeInferenceEngine;
+use cce_relation::type_inference::traits::InferenceContext;
+use cce_relation::type_inference::types::origin_priority;
+use cce_types::ParsedFile;
+
+/// Binding kind inside a canonical snapshot.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+pub enum TypeBindingKind {
+    Variable,
+    Narrowed,
+    Return,
+}
+
+impl std::fmt::Display for TypeBindingKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeBindingKind::Variable => write!(f, "variable"),
+            TypeBindingKind::Narrowed => write!(f, "narrowed"),
+            TypeBindingKind::Return => write!(f, "return"),
+        }
+    }
+}
+
+/// A single deterministic type binding entry.
+///
+/// `name` is the variable name for variable/narrowed bindings and the
+/// function name for return bindings.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct CanonicalTypeBinding {
+    pub file: String,
+    pub name: String,
+    pub kind: TypeBindingKind,
+    pub inferred_type: String,
+    pub origin: String,
+    pub shape: String,
+}
+
+/// Collect a sorted snapshot of inferred types for the given parsed files.
+///
+/// Runs both single-pass and two-pass inference and merges them, mirroring
+/// [`render_type_inference`](crate::structured_output::render_type_inference)
+/// so snapshot assertions and visualized markdown never diverge.
+pub fn collect_type_bindings(files: &[ParsedFile]) -> Vec<CanonicalTypeBinding> {
+    let mut out = Vec::new();
+    for file in files {
+        let ctx = TypeInferenceEngine::infer_types(file, &InferenceContext::default());
+        let ctx_two = TypeInferenceEngine::infer_types_two_pass(file, &InferenceContext::default());
+        let mut merged = ctx.clone();
+        merged.merge_from(&ctx_two);
+
+        let returns: BTreeMap<u64, String> = merged
+            .return_types_iter()
+            .map(|(eid, _)| {
+                let func_name = file
+                    .entities
+                    .iter()
+                    .find(|e| e.id == *eid)
+                    .map(|e| e.name.clone())
+                    .unwrap_or_else(|| format!("EntityId({})", eid.0));
+                (eid.0, func_name)
+            })
+            .collect();
+        let mut return_bindings: BTreeMap<u64, (String, String, String)> = BTreeMap::new();
+        for (eid, binding) in merged.return_types_iter() {
+            let shape = binding
+                .shape
+                .as_ref()
+                .map(|s| s.to_type_string())
+                .unwrap_or_default();
+            let origin = binding.origin.map(|o| format!("{o:?}")).unwrap_or_default();
+            return_bindings.insert(eid.0, (binding.type_name.clone(), origin, shape));
+        }
+
+        for frame in merged.frames_iter() {
+            for (name, binding) in &frame.bindings {
+                out.push(CanonicalTypeBinding {
+                    file: file.path.clone(),
+                    name: name.clone(),
+                    kind: TypeBindingKind::Variable,
+                    inferred_type: binding.type_name.clone(),
+                    origin: binding.origin.map(|o| format!("{o:?}")).unwrap_or_default(),
+                    shape: binding
+                        .shape
+                        .as_ref()
+                        .map(|s| s.to_type_string())
+                        .unwrap_or_default(),
+                });
+            }
+            for (name, list) in &frame.narrowed {
+                for binding in list {
+                    out.push(CanonicalTypeBinding {
+                        file: file.path.clone(),
+                        name: name.clone(),
+                        kind: TypeBindingKind::Narrowed,
+                        inferred_type: binding.type_name.clone(),
+                        origin: binding.origin.map(|o| format!("{o:?}")).unwrap_or_default(),
+                        shape: binding
+                            .shape
+                            .as_ref()
+                            .map(|s| s.to_type_string())
+                            .unwrap_or_default(),
+                    });
+                }
+            }
+        }
+        for (id, func_name) in &returns {
+            if let Some((ty, origin, shape)) = return_bindings.get(id) {
+                out.push(CanonicalTypeBinding {
+                    file: file.path.clone(),
+                    name: func_name.clone(),
+                    kind: TypeBindingKind::Return,
+                    inferred_type: ty.clone(),
+                    origin: origin.clone(),
+                    shape: shape.clone(),
+                });
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Find bindings matching a name (substring) and kind.
+pub fn find_bindings<'a>(
+    bindings: &'a [CanonicalTypeBinding],
+    name_substr: &str,
+    kind: TypeBindingKind,
+) -> Vec<&'a CanonicalTypeBinding> {
+    bindings
+        .iter()
+        .filter(|b| b.kind == kind && b.name.contains(name_substr))
+        .collect()
+}
+
+/// Assert that a variable has an inferred type containing `expected_substr`.
+pub fn assert_variable_has_type(
+    bindings: &[CanonicalTypeBinding],
+    variable: &str,
+    expected_substr: &str,
+) {
+    let hits = find_bindings(bindings, variable, TypeBindingKind::Variable);
+    assert!(
+        !hits.is_empty(),
+        "Expected variable binding for '{variable}', got none. All bindings: {bindings:#?}"
+    );
+    assert!(
+        hits.iter()
+            .any(|b| b.inferred_type.contains(expected_substr)),
+        "Variable '{variable}' should contain type '{expected_substr}', got: {:?}",
+        hits.iter().map(|b| &b.inferred_type).collect::<Vec<_>>()
+    );
+}
+
+/// Assert that a control-flow narrowed binding exists for a variable.
+pub fn assert_narrowed_has_type(
+    bindings: &[CanonicalTypeBinding],
+    variable: &str,
+    expected_substr: &str,
+) {
+    let hits = find_bindings(bindings, variable, TypeBindingKind::Narrowed);
+    assert!(
+        !hits.is_empty(),
+        "Expected narrowed binding for '{variable}', got none. All bindings: {bindings:#?}"
+    );
+    assert!(
+        hits.iter()
+            .any(|b| b.inferred_type.contains(expected_substr)),
+        "Narrowed '{variable}' should contain type '{expected_substr}', got: {:?}",
+        hits.iter().map(|b| &b.inferred_type).collect::<Vec<_>>()
+    );
+}
+
+/// Assert that a function has an inferred return type containing `expected_substr`.
+pub fn assert_return_has_type(
+    bindings: &[CanonicalTypeBinding],
+    function: &str,
+    expected_substr: &str,
+) {
+    let hits = find_bindings(bindings, function, TypeBindingKind::Return);
+    assert!(
+        !hits.is_empty(),
+        "Expected return binding for '{function}', got none. All bindings: {bindings:#?}"
+    );
+    assert!(
+        hits.iter()
+            .any(|b| b.inferred_type.contains(expected_substr)),
+        "Return of '{function}' should contain type '{expected_substr}', got: {:?}",
+        hits.iter().map(|b| &b.inferred_type).collect::<Vec<_>>()
+    );
+}
+
+/// Assert that no binding (of any kind) was produced for `name`.
+///
+/// Useful for documenting conservative no-guess behavior.
+pub fn assert_no_binding(bindings: &[CanonicalTypeBinding], name: &str) {
+    let hits: Vec<_> = bindings.iter().filter(|b| b.name == name).collect();
+    assert!(
+        hits.is_empty(),
+        "Expected no binding for '{name}', got: {hits:#?}"
+    );
+}
+
+/// Assert that `origin_priority` prefers `higher` over `lower`.
+pub fn assert_origin_priority_higher(higher: &str, lower: &str) {
+    let parse = |s: &str| match s {
+        "TypeAnnotation" => {
+            Some(cce_relation::type_inference::types::InferenceOrigin::TypeAnnotation)
+        }
+        "LiteralType" => Some(cce_relation::type_inference::types::InferenceOrigin::LiteralType),
+        "ControlFlowNarrowing" => {
+            Some(cce_relation::type_inference::types::InferenceOrigin::ControlFlowNarrowing)
+        }
+        "ConstructorCall" => {
+            Some(cce_relation::type_inference::types::InferenceOrigin::ConstructorCall)
+        }
+        _ => None,
+    };
+    assert!(
+        origin_priority(parse(higher)) > origin_priority(parse(lower)),
+        "Expected origin '{higher}' to outrank '{lower}'"
+    );
+}
+
+/// Assert that two snapshots are equivalent, printing a diff on failure.
+#[macro_export]
+macro_rules! assert_type_snapshot_eq {
+    ($left:expr, $right:expr) => {{
+        let left: &Vec<$crate::type_inference_assert::CanonicalTypeBinding> = &$left;
+        let right: &Vec<$crate::type_inference_assert::CanonicalTypeBinding> = &$right;
+        if left != right {
+            let left_only: Vec<_> = left.iter().filter(|b| !right.contains(b)).collect();
+            let right_only: Vec<_> = right.iter().filter(|b| !left.contains(b)).collect();
+            panic!(
+                "Type snapshot mismatch:\nleft-only:  {left_only:#?}\nright-only: {right_only:#?}"
+            );
+        }
+    }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn binding(file: &str, name: &str, kind: TypeBindingKind, ty: &str) -> CanonicalTypeBinding {
+        CanonicalTypeBinding {
+            file: file.to_string(),
+            name: name.to_string(),
+            kind,
+            inferred_type: ty.to_string(),
+            origin: "TypeAnnotation".to_string(),
+            shape: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_assert_variable_has_type() {
+        let snapshot = vec![binding("a.py", "count", TypeBindingKind::Variable, "int")];
+        assert_variable_has_type(&snapshot, "count", "int");
+    }
+
+    #[test]
+    fn test_snapshot_eq_macro() {
+        let left = vec![binding("a.py", "x", TypeBindingKind::Variable, "str")];
+        let right = left.clone();
+        assert_type_snapshot_eq!(left, right);
+    }
+
+    #[test]
+    fn test_origin_priority_helper() {
+        assert_origin_priority_higher("TypeAnnotation", "LiteralType");
+        assert_origin_priority_higher("ControlFlowNarrowing", "ConstructorCall");
+    }
+}

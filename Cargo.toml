@@ -150,3 +150,7 @@ path = "examples/go/export_go.rs"
 [[example]]
 name = "export_js"
 path = "examples/javascript/export_js.rs"
+
+[[example]]
+name = "export_type_inference"
+path = "examples/type_inference/export_type_inference.rs"

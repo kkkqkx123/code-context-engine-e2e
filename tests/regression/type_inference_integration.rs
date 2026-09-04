@@ -2,6 +2,13 @@
 //!
 //! Tests the full pipeline: source code parsing -> type inference -> symbol table construction.
 //! Each language fixture contains realistic code snippets exercising type inference patterns.
+//!
+//! Indexing smoke tests use the orchestrator; precise type assertions parse the
+//! fixture with [`ParseCoordinator`](cce_parser::parser::ParseCoordinator) and
+//! check the canonical snapshot from
+//! [`collect_type_bindings`](cce_e2e_tests::type_inference_assert::collect_type_bindings).
+//! Run `cargo run -p cce-e2e-tests --example export_type_inference` to regenerate
+//! the human-readable `TYPE_INFERENCE.md` reports for visual inspection.
 
 use cce_orchestrator::{IndexOptions, IndexOrchestrator};
 use cce_relation::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
@@ -302,4 +309,187 @@ async fn test_go_control_flow_type_inference() {
         relation_index.file_count() >= 1,
         "Should have at least one file indexed"
     );
+}
+
+// ==================== Snapshot assertion helpers ====================
+
+/// Parse every file in a loaded fixture with the same tree-sitter pipeline
+/// used by the indexer and return the canonical type snapshot.
+fn snapshot_for(
+    fixture: &TestFixture,
+) -> Vec<cce_e2e_tests::type_inference_assert::CanonicalTypeBinding> {
+    use cce_parser::parser::ParseCoordinator;
+
+    let mut files = Vec::new();
+    let mut stack = vec![fixture.root_path().to_path_buf()];
+    let mut coordinator = ParseCoordinator::new();
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).expect("fixture dir should be readable");
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(content) = std::fs::read_to_string(&path) {
+                let rel = path
+                    .strip_prefix(fixture.root_path())
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if let Ok(parsed) = coordinator.parse(&rel, &content) {
+                    files.push(parsed);
+                }
+            }
+        }
+    }
+    assert!(!files.is_empty(), "Fixture should yield parsed files");
+    cce_e2e_tests::type_inference_assert::collect_type_bindings(&files)
+}
+
+// ==================== New language coverage ====================
+
+#[test]
+fn test_cpp_declarations_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_return_has_type;
+
+    init_minimal_logging();
+    let fixture =
+        TestFixture::cpp_type_inference_declarations().expect("Failed to load cpp fixture");
+    let bindings = snapshot_for(&fixture);
+
+    // Locals inside `main` are not extracted as entities for C++; the
+    // observable surface is function return types (including templates).
+    assert_return_has_type(&bindings, "process_items", "int");
+    assert_return_has_type(&bindings, "to_map", "std::map");
+    assert_return_has_type(&bindings, "identity", "T");
+    assert_return_has_type(&bindings, "main", "int");
+}
+
+#[test]
+fn test_kotlin_control_flow_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_narrowed_has_type;
+
+    init_minimal_logging();
+    // NB: expression-body functions and `val` metadata are not captured by
+    // the Kotlin extractor yet, so `generics.kt` is index-smoke only (see
+    // `test_new_language_fixtures_index`). Narrowing via `is`/`when` works.
+    let fixture = TestFixture::kotlin_type_inference_control_flow()
+        .expect("Failed to load kotlin control flow fixture");
+    let bindings = snapshot_for(&fixture);
+    assert_narrowed_has_type(&bindings, "value", "String");
+    assert_narrowed_has_type(&bindings, "result", "Result.Success");
+}
+
+#[test]
+fn test_scala_control_flow_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_narrowed_has_type;
+
+    init_minimal_logging();
+    // NB: `val`/return metadata is not captured by the Scala extractor yet,
+    // so `declarations.scala` is index-smoke only. `match`/`isInstanceOf`
+    // narrowing works.
+    let fixture = TestFixture::scala_type_inference_control_flow()
+        .expect("Failed to load scala control flow fixture");
+    let bindings = snapshot_for(&fixture);
+    assert_narrowed_has_type(&bindings, "c", "Circle");
+}
+
+#[test]
+fn test_ruby_constructors_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_variable_has_type;
+
+    init_minimal_logging();
+    let fixture =
+        TestFixture::ruby_type_inference_constructors().expect("Failed to load ruby fixture");
+    let bindings = snapshot_for(&fixture);
+
+    assert_variable_has_type(&bindings, "user", "User");
+    assert_variable_has_type(&bindings, "calc", "Calculator");
+}
+
+#[test]
+fn test_php_phpdoc_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_variable_has_type;
+
+    init_minimal_logging();
+    let fixture = TestFixture::php_type_inference_phpdoc().expect("Failed to load php fixture");
+    let bindings = snapshot_for(&fixture);
+
+    // Observable today: property annotations and literal types.
+    // `new User(...)` constructor metadata is not captured yet.
+    assert_variable_has_type(&bindings, "age", "int");
+    assert_variable_has_type(&bindings, "greeting", "string");
+}
+
+#[test]
+fn test_javascript_narrowing_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_return_has_type;
+
+    init_minimal_logging();
+    let fixture =
+        TestFixture::javascript_type_inference_narrowing().expect("Failed to load js fixture");
+    let bindings = snapshot_for(&fixture);
+
+    // Return-type harvesting works; `typeof`/`instanceof` narrowing does not
+    // produce bindings for this fixture yet.
+    assert_return_has_type(&bindings, "handleResult", "unknown");
+    assert_return_has_type(&bindings, "process", "falsy");
+    assert_return_has_type(&bindings, "createUser", "kind");
+}
+
+#[test]
+fn test_python_cross_file_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_return_has_type;
+
+    init_minimal_logging();
+    let fixture =
+        TestFixture::python_type_inference_cross_file().expect("Failed to load cross-file fixture");
+    let bindings = snapshot_for(&fixture);
+
+    assert_return_has_type(&bindings, "load_user", "User");
+    assert_return_has_type(&bindings, "render_greeting", "str");
+}
+
+#[tokio::test]
+async fn test_new_language_fixtures_index() {
+    init_minimal_logging();
+
+    for (fixture, extensions) in [
+        (
+            TestFixture::cpp_type_inference_declarations().expect("Failed to load cpp fixture"),
+            vec!["cpp".to_string()],
+        ),
+        (
+            TestFixture::kotlin_type_inference_generics().expect("Failed to load kotlin fixture"),
+            vec!["kt".to_string()],
+        ),
+        (
+            TestFixture::scala_type_inference_declarations().expect("Failed to load scala fixture"),
+            vec!["scala".to_string()],
+        ),
+        (
+            TestFixture::ruby_type_inference_constructors().expect("Failed to load ruby fixture"),
+            vec!["rb".to_string()],
+        ),
+        (
+            TestFixture::php_type_inference_phpdoc().expect("Failed to load php fixture"),
+            vec!["php".to_string()],
+        ),
+        (
+            TestFixture::dart_type_inference_declarations().expect("Failed to load dart fixture"),
+            vec!["dart".to_string()],
+        ),
+        (
+            TestFixture::javascript_type_inference_narrowing().expect("Failed to load js fixture"),
+            vec!["js".to_string()],
+        ),
+    ] {
+        let orchestrator = run_index(fixture, extensions).await;
+        let relation_index = orchestrator
+            .get_relation_index()
+            .expect("Relation index should be available");
+        assert!(
+            relation_index.file_count() >= 1,
+            "Should have at least one file indexed"
+        );
+    }
 }
