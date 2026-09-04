@@ -18,6 +18,7 @@
 - `typescript/` — TypeScript fixture
 - `javascript/` — JavaScript fixture
 - `csharp/` — C# fixture
+- `c/` — C fixture（含基础头源分离与类型推断专项）
 - `cpp/` — C++ fixture
 - `go/` — Go fixture
 - `kotlin/` — Kotlin fixture
@@ -25,6 +26,8 @@
 - `ruby/` — Ruby fixture
 - `php/` — PHP fixture
 - `dart/` — Dart fixture
+- `bash/` — Bash fixture（基础加载与函数用例）
+- `lua/` — Lua fixture（基础引用与函数用例）
 - `multi_language/` — 多语言混合 project fixture
 - `documents/` — 文档类 fixture
 

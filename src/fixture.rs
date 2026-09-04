@@ -19,6 +19,8 @@ pub enum FixtureCategory {
     TypeScript,
     /// C# project fixtures
     CSharp,
+    /// C project fixtures
+    C,
     /// C++ project fixtures
     Cpp,
     /// Scala project fixtures
@@ -35,6 +37,10 @@ pub enum FixtureCategory {
     Ruby,
     /// JavaScript project fixtures
     JavaScript,
+    /// Bash project fixtures
+    Bash,
+    /// Lua project fixtures
+    Lua,
     /// Multi-language project fixtures
     MultiLanguage,
     /// Document fixtures (markdown, plain text, logs, config files)
@@ -50,6 +56,7 @@ impl FixtureCategory {
             FixtureCategory::Java => "java",
             FixtureCategory::TypeScript => "typescript",
             FixtureCategory::CSharp => "csharp",
+            FixtureCategory::C => "c",
             FixtureCategory::Cpp => "cpp",
             FixtureCategory::Scala => "scala",
             FixtureCategory::Dart => "dart",
@@ -58,6 +65,8 @@ impl FixtureCategory {
             FixtureCategory::Php => "php",
             FixtureCategory::Ruby => "ruby",
             FixtureCategory::JavaScript => "javascript",
+            FixtureCategory::Bash => "bash",
+            FixtureCategory::Lua => "lua",
             FixtureCategory::MultiLanguage => "multi_language",
             FixtureCategory::Documents => "documents",
         }
@@ -69,7 +78,7 @@ impl FixtureCategory {
 pub struct FixtureSpec {
     /// Category of the fixture
     pub category: FixtureCategory,
-    /// Subdirectory name (e.g., "basic", "edge_cases")
+    /// Subdirectory name (e.g., "basic")
     pub subdirectory: String,
 }
 
@@ -85,11 +94,6 @@ impl FixtureSpec {
     /// Rust basic project fixture
     pub fn rust_basic() -> Self {
         Self::new(FixtureCategory::Rust, "basic")
-    }
-
-    /// Rust edge cases fixture
-    pub fn rust_edge_cases() -> Self {
-        Self::new(FixtureCategory::Rust, "edge_cases")
     }
 
     /// Rust review fixture group
@@ -318,6 +322,26 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Documents, "")
     }
 
+    /// C basic project fixture (header/source separation)
+    pub fn c_basic() -> Self {
+        Self::new(FixtureCategory::C, "basic")
+    }
+
+    /// C type inference declarations fixture
+    pub fn c_type_inference_declarations() -> Self {
+        Self::new(FixtureCategory::C, "type_inference/declarations")
+    }
+
+    /// Bash basic project fixture (source/function)
+    pub fn bash_basic() -> Self {
+        Self::new(FixtureCategory::Bash, "basic")
+    }
+
+    /// Lua basic project fixture (require/function)
+    pub fn lua_basic() -> Self {
+        Self::new(FixtureCategory::Lua, "basic")
+    }
+
     /// C++ type inference declarations fixture
     pub fn cpp_type_inference_declarations() -> Self {
         Self::new(FixtureCategory::Cpp, "type_inference/declarations")
@@ -473,11 +497,6 @@ impl TestFixture {
     /// Load Rust basic project fixture
     pub fn rust_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::rust_basic())
-    }
-
-    /// Load Rust edge cases fixture
-    pub fn rust_edge_cases() -> io::Result<Self> {
-        Self::load(FixtureSpec::rust_edge_cases())
     }
 
     /// Load Rust review fixture
@@ -658,6 +677,26 @@ impl TestFixture {
     /// Load multi-language project fixture
     pub fn multi_language() -> io::Result<Self> {
         Self::load(FixtureSpec::multi_language())
+    }
+
+    /// Load C basic project fixture
+    pub fn c_basic() -> io::Result<Self> {
+        Self::load(FixtureSpec::c_basic())
+    }
+
+    /// Load C type inference declarations fixture
+    pub fn c_type_inference_declarations() -> io::Result<Self> {
+        Self::load(FixtureSpec::c_type_inference_declarations())
+    }
+
+    /// Load Bash basic project fixture
+    pub fn bash_basic() -> io::Result<Self> {
+        Self::load(FixtureSpec::bash_basic())
+    }
+
+    /// Load Lua basic project fixture
+    pub fn lua_basic() -> io::Result<Self> {
+        Self::load(FixtureSpec::lua_basic())
     }
 
     /// Load C++ type inference declarations fixture

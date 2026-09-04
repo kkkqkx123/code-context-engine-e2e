@@ -348,6 +348,23 @@ fn snapshot_for(
 // ==================== New language coverage ====================
 
 #[test]
+fn test_c_declarations_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_return_has_type;
+
+    init_minimal_logging();
+    let fixture = TestFixture::c_type_inference_declarations().expect("Failed to load c fixture");
+    let bindings = snapshot_for(&fixture);
+
+    // Locals inside `main` are not extracted as entities for C; the
+    // observable surface is function return types (including typedef
+    // aliases), which verifies C inferer dispatch end to end.
+    assert_return_has_type(&bindings, "add", "int");
+    assert_return_has_type(&bindings, "distance", "double");
+    assert_return_has_type(&bindings, "count_items", "size_alias");
+    assert_return_has_type(&bindings, "main", "int");
+}
+
+#[test]
 fn test_cpp_declarations_snapshot() {
     use cce_e2e_tests::type_inference_assert::assert_return_has_type;
 
@@ -454,6 +471,22 @@ async fn test_new_language_fixtures_index() {
     init_minimal_logging();
 
     for (fixture, extensions) in [
+        (
+            TestFixture::c_type_inference_declarations().expect("Failed to load c fixture"),
+            vec!["c".to_string(), "h".to_string()],
+        ),
+        (
+            TestFixture::c_basic().expect("Failed to load c basic fixture"),
+            vec!["c".to_string(), "h".to_string()],
+        ),
+        (
+            TestFixture::bash_basic().expect("Failed to load bash fixture"),
+            vec!["sh".to_string()],
+        ),
+        (
+            TestFixture::lua_basic().expect("Failed to load lua fixture"),
+            vec!["lua".to_string()],
+        ),
         (
             TestFixture::cpp_type_inference_declarations().expect("Failed to load cpp fixture"),
             vec!["cpp".to_string()],

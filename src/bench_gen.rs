@@ -93,6 +93,7 @@ pub fn load_fixture_files(spec: FixtureSpec) -> io::Result<Vec<(String, String)>
         crate::FixtureCategory::Java => "java",
         crate::FixtureCategory::TypeScript => "ts",
         crate::FixtureCategory::CSharp => "cs",
+        crate::FixtureCategory::C => "c",
         crate::FixtureCategory::Cpp => "cpp",
         crate::FixtureCategory::Go => "go",
         crate::FixtureCategory::Kotlin => "kt",
@@ -101,6 +102,8 @@ pub fn load_fixture_files(spec: FixtureSpec) -> io::Result<Vec<(String, String)>
         crate::FixtureCategory::Ruby => "rb",
         crate::FixtureCategory::Dart => "dart",
         crate::FixtureCategory::JavaScript => "js",
+        crate::FixtureCategory::Bash => "sh",
+        crate::FixtureCategory::Lua => "lua",
         crate::FixtureCategory::MultiLanguage => "*",
         crate::FixtureCategory::Documents => "*",
     };
@@ -117,6 +120,7 @@ pub fn scan_fixture(spec: FixtureSpec) -> anyhow::Result<Vec<cce_scanner::FileEn
         crate::FixtureCategory::Java => "*.java",
         crate::FixtureCategory::TypeScript => "*.ts",
         crate::FixtureCategory::CSharp => "*.cs",
+        crate::FixtureCategory::C => "*.c",
         crate::FixtureCategory::Cpp => "*.cpp",
         crate::FixtureCategory::Go => "*.go",
         crate::FixtureCategory::Kotlin => "*.kt",
@@ -125,6 +129,8 @@ pub fn scan_fixture(spec: FixtureSpec) -> anyhow::Result<Vec<cce_scanner::FileEn
         crate::FixtureCategory::Ruby => "*.rb",
         crate::FixtureCategory::Dart => "*.dart",
         crate::FixtureCategory::JavaScript => "*.js",
+        crate::FixtureCategory::Bash => "*.sh",
+        crate::FixtureCategory::Lua => "*.lua",
         crate::FixtureCategory::MultiLanguage => "*",
         crate::FixtureCategory::Documents => "*",
     };
