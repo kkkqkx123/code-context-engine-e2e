@@ -12,5 +12,5 @@
 
 - 不要在这里新增独立的回归测试文件。
 - 不要把 benchmark 类测试放到这里。
-- 不要把 fixture 输入数据放到这里，测试输入应使用 `tests/fixtures/`。
+- 不要把 fixture 输入数据放到这里，测试输入统一使用根目录 `fixtures/`（经由 `cce_e2e_tests::fixture` 加载）。
 

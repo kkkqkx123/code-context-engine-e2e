@@ -1,3 +1,6 @@
+pub mod matrix;
+pub mod sorting;
+
 pub fn add(a: i32, b: i32) -> i32 {
     a + b
 }

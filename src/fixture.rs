@@ -402,7 +402,7 @@ pub trait FixtureAccess {
 
 /// Test fixture manager
 ///
-/// Loads fixtures from the tests/fixtures directory and copies them to a temporary directory.
+/// Loads fixtures from the crate-root fixtures directory and copies them to a temporary directory.
 pub struct TestFixture {
     /// Temporary directory where fixture is copied
     temp_dir: TempDir,

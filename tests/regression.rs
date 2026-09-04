@@ -6,6 +6,8 @@
 pub mod bm25_parity;
 #[path = "regression/e2e_outputs.rs"]
 pub mod e2e_outputs;
+#[path = "regression/fixture_single_tree.rs"]
+pub mod fixture_single_tree;
 #[path = "regression/helper.rs"]
 pub mod helper;
 #[path = "regression/rust_relation.rs"]

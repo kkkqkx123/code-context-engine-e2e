@@ -1,7 +1,7 @@
 //! Compatibility shim for workflow tests.
 //!
-//! The workflow suite keeps shared behavior here, while integration-test
-//! fixtures live under `tests/fixtures/`.
+//! The workflow suite keeps shared behavior here, while fixtures live in the
+//! single crate-root `fixtures/` tree loaded through `cce_e2e_tests::fixture`.
 
 #![allow(unused_imports)]
 

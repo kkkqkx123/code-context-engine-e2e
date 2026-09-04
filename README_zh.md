@@ -16,9 +16,8 @@
   - `regression.rs` 是回归测试入口（仅做断言，不写输出文件）。
   - `workflow.rs` 是工作流测试入口，场景和支撑模块放在 `tests/e2e/`。
   - `benchmark/` 仅保留索引效果对比说明，不放性能测试实现。
-  - `fixtures/` 是 integration tests 专用输入数据。
 - `crate root fixtures/`
-  - `src/` 侧和 `examples/` 使用的 fixture（与 `tests/fixtures/` 并行维护）。
+  - 唯一的夹具树，供 `src/`、`examples/`、`tests/` 共用（集成测试复用同一套库加载器，不再保留单独副本）。
 - `outputs/`
   - 由 `examples/` 生成，供人工审查。
 
@@ -27,7 +26,7 @@
 - 回归测试放在 `tests/regression/`，不要再散落在根目录。
 - 工作流场景放在 `tests/e2e/`，这里是内部支持树，不要把回归测试塞回这里。
 - `tests/benchmark/` 只放对比说明，不放性能测试代码。
-- `tests/fixtures/` 和根目录 `fixtures/` 维护指向同一份 fixture。
+- 只有 crate 根目录 `fixtures/` 一套夹具树；`tests/` 经由 `src/fixture.rs` 的库加载器加载，不保留单独副本。
 
 ## 入口约定
 

@@ -1,13 +1,12 @@
 # fixtures
 
-供 `src/`（lib 级测试、`examples/`）使用的 fixture 目录。
+供 `src/`（lib 级测试、`examples/`）与 `tests/`（集成测试）共用的唯一夹具目录。
 
-## 与 `tests/fixtures/` 的并行关系
+## 单树约定
 
-- `fixtures/` — 由 `src/fixture.rs` 加载，供 lib 测试和 examples 使用。
-- `tests/fixtures/` — 由 `tests/e2e/helper/fixture.rs` 加载，供 integration tests 使用。
-
-两个目录**保持同一份内容**。添加 fixture 时须同时创建或同步到两个位置。
+- 只有 crate 根目录 `fixtures/` 这一套夹具树，`tests/` 下不再保留单独副本。
+- `src/fixture.rs` 提供唯一的 `FixtureCategory`、`FixtureSpec`、`TestFixture` 加载器；`tests/e2e/helper/fixture.rs` 仅做重导出，不重复实现。
+- 添加 fixture 时只需在 `fixtures/<lang>/` 下创建目录，并在 `src/fixture.rs` 中注册对应的 `FixtureSpec`/`TestFixture` 方法。
 
 ## 目录结构
 
@@ -37,7 +36,7 @@
 
 - 可视化：运行 `cargo run -p cce-e2e-tests --example export_type_inference`，
   为全部 `type_inference` 用例生成 `outputs/scenarios/<lang>/structured/<case>/`
- （含 `SUMMARY.md`、按文件组织的 `<path>.txt` 与独立 `TYPE_INFERENCE.md`，
+  （含 `SUMMARY.md`、按文件组织的 `<path>.txt` 与独立 `TYPE_INFERENCE.md`，
   表格列为变量/返回/收窄/类型形状），输出目录被 `.gitignore` 忽略。
 - 机器断言：`src/type_inference_assert.rs` 提供
   `collect_type_bindings`（与可视化同引擎、同合并策略）与
@@ -48,6 +47,6 @@
 ## 添加新 fixture
 
 1. 在 `fixtures/<lang>/` 下创建 fixture 目录
-2. 在 `src/fixture.rs` 中注册 `TestFixture::<name>()` 方法
-3. 同步到 `tests/fixtures/<lang>/`
+2. 在 `src/fixture.rs` 中注册 `FixtureSpec::<name>()` / `TestFixture::<name>()` 方法
+3. 断言性测试控制范围：只对已在测试中使用的夹具补充断言，不要求覆盖全部夹具
 4. 如果需要对应示例，在 `examples/<lang>/` 下创建示例文件

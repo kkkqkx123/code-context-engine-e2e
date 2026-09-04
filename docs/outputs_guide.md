@@ -447,7 +447,7 @@ cargo run --example alignment_report -p cce-e2e-tests
 **来源文件:** `examples/rust/alignment_report.rs`
 
 **生成逻辑:**
-- 加载 `tests/fixtures/rust/basic` fixture，使用确定性 mock 嵌入服务（`src/mock_embedding_server.rs`），无需 LLM API
+- 加载 `fixtures/rust/basic` fixture，使用确定性 mock 嵌入服务（`src/mock_embedding_server.rs`），无需 LLM API
 - 探测 Qdrant 可用性：可用时执行 vector/BM25/hybrid 三路查询，不可用时降级为 BM25-only 并在 manifest 中记录
 - 使用 `OutputManager`（`Scenarios` 类别 + `rust` 语言 + `alignment` 场景）写入输出
 
