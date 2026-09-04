@@ -30,7 +30,7 @@ pub mod retrieval_method;
 pub mod storage;
 pub mod structured_output;
 pub mod stub_embedder;
-pub mod type_inference_output;
+
 pub use assertion::{ExpectedIndexResult, assert_index_result};
 pub use cleanup::init_minimal_logging;
 pub use embedding::{EmbeddingConfig, EmbeddingProviderType};

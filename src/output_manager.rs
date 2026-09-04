@@ -12,8 +12,6 @@ pub enum OutputCategory {
     Index,
     /// Query workflow results
     Query,
-    /// Relation query results
-    Relation,
     /// Scenario test results
     Scenarios,
     /// Hot update workflow results
@@ -26,7 +24,6 @@ impl OutputCategory {
         match self {
             OutputCategory::Index => "index",
             OutputCategory::Query => "query",
-            OutputCategory::Relation => "relation",
             OutputCategory::Scenarios => "scenarios",
             OutputCategory::HotUpdate => "hot_update",
         }
@@ -239,7 +236,6 @@ mod tests {
     fn test_output_category_dir_name() {
         assert_eq!(OutputCategory::Index.dir_name(), "index");
         assert_eq!(OutputCategory::Query.dir_name(), "query");
-        assert_eq!(OutputCategory::Relation.dir_name(), "relation");
         assert_eq!(OutputCategory::Scenarios.dir_name(), "scenarios");
         assert_eq!(OutputCategory::HotUpdate.dir_name(), "hot_update");
     }

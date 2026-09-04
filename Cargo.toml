@@ -14,10 +14,6 @@ name = "export_rs"
 path = "examples/rust/export_rs.rs"
 
 [[example]]
-name = "rust_relation"
-path = "examples/rust/relation.rs"
-
-[[example]]
 name = "java_spring_boot_export"
 path = "examples/java/spring_boot_export.rs"
 
@@ -138,14 +134,6 @@ tracing-subscriber = { workspace = true }
 [[example]]
 name = "debug_convert"
 path = "examples/rust/debug_convert.rs"
-
-[[example]]
-name = "type_inference_once_cell"
-path = "examples/rust/type_inference_once_cell.rs"
-
-[[example]]
-name = "type_inference_basic"
-path = "examples/python/type_inference_basic.rs"
 
 [[example]]
 name = "export_cs"
