@@ -15,19 +15,19 @@
 - `rust/` — Rust fixture
 - `java/` — Java fixture
 - `python/` — Python fixture
-- `typescript/` — TypeScript fixture
-- `javascript/` — JavaScript fixture
-- `csharp/` — C# fixture
-- `c/` — C fixture（含基础头源分离与类型推断专项）
-- `cpp/` — C++ fixture
+- `typescript/` — TypeScript fixture（含 basic、review/re_export、review/wildcard 与类型推断专项）
+- `javascript/` — JavaScript fixture（含 basic、review/express 与类型推断专项）
+- `csharp/` — C# fixture（含 basic、review/MediatR 与类型推断专项）
+- `c/` — C fixture（含 basic、review/macros 与类型推断专项）
+- `cpp/` — C++ fixture（含 basic、review/templates 与类型推断专项）
 - `go/` — Go fixture
-- `kotlin/` — Kotlin fixture
-- `scala/` — Scala fixture
-- `ruby/` — Ruby fixture
-- `php/` — PHP fixture
-- `dart/` — Dart fixture
-- `bash/` — Bash fixture（基础加载与函数用例）
-- `lua/` — Lua fixture（基础引用与函数用例）
+- `kotlin/` — Kotlin fixture（含 basic、review/coroutines 与类型推断专项）
+- `scala/` — Scala fixture（含 basic、review/case_class 与类型推断专项）
+- `ruby/` — Ruby fixture（含 basic、review/mixin 与类型推断专项）
+- `php/` — PHP fixture（含 basic、review/namespace_trait 与类型推断专项）
+- `dart/` — Dart fixture（含 basic、review/mixin_async 与类型推断专项）
+- `bash/` — Bash fixture（含 basic、review/pipeline 与类型推断专项）
+- `lua/` — Lua fixture（含 basic、review/closure 与类型推断专项）
 - `multi_language/` — 多语言混合 project fixture
 - `documents/` — 文档类 fixture
 

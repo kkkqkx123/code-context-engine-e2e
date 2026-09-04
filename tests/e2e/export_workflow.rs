@@ -311,7 +311,9 @@ async fn test_fixture_export_with_absolute_paths() {
         let relative = output_path
             .strip_prefix(&cce_dir)
             .expect("Output should be under .cce/nl_docs");
-        let source_file = project_root.join(relative).with_extension("rs");
+        // The exporter appends `.md` to the project-relative source path, so
+        // stripping the trailing extension recovers the source file.
+        let source_file = project_root.join(relative).with_extension("");
         assert!(
             source_file.exists(),
             "Source file {:?} should exist for output {:?}",

@@ -217,6 +217,31 @@ fn assert_unknown(chunks: &[ChunkData], file: &str) {
     }
 }
 
+/// A mixed file holds both test entities and production/counter-example
+/// entities (e.g. C++ `TEST(A, B)` macros next to wrong-arity shapes and
+/// plain functions). It must yield at least one `Test` chunk and at least
+/// one `Unknown` chunk, and no chunk may carry a third state.
+fn assert_file_has_test_and_unknown_chunks(chunks: &[ChunkData], file: &str) {
+    let per_file: Vec<&ChunkData> = chunks.iter().filter(|c| c.file_path == file).collect();
+    assert!(!per_file.is_empty(), "expected chunks from {file}");
+    assert!(
+        per_file.iter().any(|c| c.test_info.is_test()),
+        "expected a test chunk in {file}"
+    );
+    assert!(
+        per_file.iter().any(|c| c.test_info.is_unknown()),
+        "expected an unknown chunk in {file}"
+    );
+    for chunk in per_file {
+        assert!(
+            chunk.test_info.is_test() || chunk.test_info.is_unknown(),
+            "chunk {} in {file} must be test or unknown, got {:?}",
+            chunk.chunk_id,
+            chunk.test_info,
+        );
+    }
+}
+
 fn bm25_diagnostics(diags: &[TestDiagnostics]) -> &TestDiagnostics {
     diags
         .iter()
@@ -325,14 +350,16 @@ int latest(int x) { return x + 1; }
     chunks.extend(chunk_files(&php));
     chunks.extend(chunk_files(&cpp));
 
-    // Scala: `@Test` def + `*Spec` class marked; `Contest` never matches
-    assert_chunks_marked(&chunks, "src/main/scala/Foo.scala", true);
+    // Scala: `@Test` def + `*Spec` class marked, while the production
+    // `UserService` class in the same file stays Unknown.
+    assert_file_has_test_and_unknown_chunks(&chunks, "src/main/scala/Foo.scala");
     assert_unknown(&chunks, "src/Contest.scala");
     // PHP: `#[Test]` method + `@test` docblock + `*Test` class marked
     assert_chunks_marked(&chunks, "src/Calculator.php", true);
     assert_unknown(&chunks, "src/Contest.php");
-    // C++: `TEST(A, B)` / `TEST_F(A, B)` marked; wrong shapes stay Unknown
-    assert_chunks_marked(&chunks, "src/math.cpp", true);
+    // C++: `TEST(A, B)` / `TEST_F(A, B)` marked; wrong shapes
+    // (`TEST(SingleArg)`, `int TEST(...)`) and production code stay Unknown.
+    assert_file_has_test_and_unknown_chunks(&chunks, "src/math.cpp");
 }
 
 #[test]

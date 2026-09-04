@@ -9,6 +9,7 @@
 //! - Complex filtering workflow
 
 use crate::helper::{EmptyFixture, QueryWorkflowTest, init_minimal_logging, mock_embedding};
+use cce_orchestrator::SearchSources;
 
 /// Multi-query aggregation workflow
 ///
@@ -42,7 +43,8 @@ fn calculate_sum(a: i32, b: i32) -> i32 {
         )
         .expect("Failed to add file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     // Index first
     let index_result = query_test.index().await.expect("Index failed");
@@ -98,7 +100,8 @@ pub fn run() {
         )
         .expect("Failed to add file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     let index_result = query_test.index().await.expect("Index failed");
     assert!(
@@ -207,7 +210,8 @@ def python_helper():
         )
         .expect("Failed to add Python file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     // Index all files
     let index_result = query_test.index().await.expect("Index failed");
@@ -258,7 +262,8 @@ fn process_data() -> i32 {
         .expect("Failed to add main.rs");
 
     let mut rust_only_test =
-        QueryWorkflowTest::new(rust_fixture.into_test_fixture(), mock_embedding());
+        QueryWorkflowTest::new(rust_fixture.into_test_fixture(), mock_embedding())
+            .with_sources(SearchSources::none().with_bm25());
     rust_only_test.index().await.expect("Index failed");
 
     let rust_result = rust_only_test
@@ -300,7 +305,8 @@ fn test_main() {
         .expect("Failed to add test file");
 
     let mut content_test =
-        QueryWorkflowTest::new(content_fixture.into_test_fixture(), mock_embedding());
+        QueryWorkflowTest::new(content_fixture.into_test_fixture(), mock_embedding())
+            .with_sources(SearchSources::none().with_bm25());
     let content_index = content_test.index().await.expect("Index failed");
     assert!(
         content_index.total_files >= 2,
@@ -349,7 +355,8 @@ def python_helper():
         .expect("Failed to add Python file");
 
     let mut multi_lang_test =
-        QueryWorkflowTest::new(multi_lang_fixture.into_test_fixture(), mock_embedding());
+        QueryWorkflowTest::new(multi_lang_fixture.into_test_fixture(), mock_embedding())
+            .with_sources(SearchSources::none().with_bm25());
     let multi_index = multi_lang_test.index().await.expect("Index failed");
     assert!(
         multi_index.total_files >= 2,

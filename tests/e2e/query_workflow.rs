@@ -3,6 +3,7 @@
 //! Tests for the complete query workflow including vector, BM25, and relation searches.
 
 use crate::helper::{EmptyFixture, QueryWorkflowTest, init_minimal_logging, mock_embedding};
+use cce_orchestrator::SearchSources;
 
 /// Basic query workflow
 ///
@@ -24,7 +25,8 @@ fn main() {
         )
         .expect("Failed to add file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     let index_result = query_test.index().await.expect("Index failed");
     assert!(
@@ -82,7 +84,8 @@ pub fn subtract(a: i32, b: i32) -> i32 {
         )
         .expect("Failed to add file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     let index_result = query_test.index().await.expect("Index failed");
     assert!(
@@ -132,7 +135,8 @@ struct User {
         )
         .expect("Failed to add file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     let index_result = query_test.index().await.expect("Index failed");
     assert!(
@@ -207,7 +211,8 @@ fn transform(input: i32) -> i32 {
         )
         .expect("Failed to add service.rs");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     let index_result = query_test.index().await.expect("Index failed");
     assert!(
@@ -263,7 +268,8 @@ struct Item {
         )
         .expect("Failed to add file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     let index_result = query_test.index().await.expect("Index failed");
     assert!(
@@ -327,7 +333,8 @@ pub fn format(value: i32) -> String {
         )
         .expect("Failed to add utils.rs");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     let index_result = query_test.index().await.expect("Index failed");
     assert!(

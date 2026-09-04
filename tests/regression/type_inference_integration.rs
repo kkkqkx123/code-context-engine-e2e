@@ -515,6 +515,18 @@ async fn test_new_language_fixtures_index() {
             TestFixture::javascript_type_inference_narrowing().expect("Failed to load js fixture"),
             vec!["js".to_string()],
         ),
+        (
+            TestFixture::typescript_basic().expect("Failed to load typescript basic fixture"),
+            vec!["ts".to_string()],
+        ),
+        (
+            TestFixture::javascript_basic().expect("Failed to load javascript basic fixture"),
+            vec!["js".to_string()],
+        ),
+        (
+            TestFixture::cpp_basic().expect("Failed to load cpp basic fixture"),
+            vec!["cpp".to_string(), "h".to_string()],
+        ),
     ] {
         let orchestrator = run_index(fixture, extensions).await;
         let relation_index = orchestrator
@@ -523,6 +535,382 @@ async fn test_new_language_fixtures_index() {
         assert!(
             relation_index.file_count() >= 1,
             "Should have at least one file indexed"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_typescript_basic_resolves_cross_file_calls() {
+    init_minimal_logging();
+
+    let fixture = TestFixture::typescript_basic().expect("Failed to load typescript basic fixture");
+    let orchestrator = run_index(fixture, vec!["ts".to_string()]).await;
+    let relation_index = orchestrator
+        .get_relation_index()
+        .expect("Relation index should be available");
+
+    assert!(
+        relation_index.file_count() >= 3,
+        "typescript basic should index calculator, string_utils and main"
+    );
+    assert!(
+        !relation_index.function_index().is_empty(),
+        "typescript basic should extract function entities"
+    );
+}
+
+#[tokio::test]
+async fn test_javascript_basic_resolves_cross_file_calls() {
+    init_minimal_logging();
+
+    let fixture = TestFixture::javascript_basic().expect("Failed to load javascript basic fixture");
+    let orchestrator = run_index(fixture, vec!["js".to_string()]).await;
+    let relation_index = orchestrator
+        .get_relation_index()
+        .expect("Relation index should be available");
+
+    assert!(
+        relation_index.file_count() >= 3,
+        "javascript basic should index calculator, stringUtils and main"
+    );
+    assert!(
+        !relation_index.function_index().is_empty(),
+        "javascript basic should extract function entities"
+    );
+}
+
+#[tokio::test]
+async fn test_cpp_basic_resolves_header_source_calls() {
+    init_minimal_logging();
+
+    let fixture = TestFixture::cpp_basic().expect("Failed to load cpp basic fixture");
+    let orchestrator = run_index(fixture, vec!["cpp".to_string(), "h".to_string()]).await;
+    let relation_index = orchestrator
+        .get_relation_index()
+        .expect("Relation index should be available");
+
+    assert!(
+        relation_index.file_count() >= 3,
+        "cpp basic should index header, implementation and main"
+    );
+    assert!(
+        !relation_index.function_index().is_empty(),
+        "cpp basic should extract function entities"
+    );
+}
+
+#[test]
+fn test_typescript_cross_file_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_return_has_type;
+
+    init_minimal_logging();
+    let fixture = TestFixture::typescript_type_inference_cross_file()
+        .expect("Failed to load typescript cross-file fixture");
+    let bindings = snapshot_for(&fixture);
+
+    assert_return_has_type(&bindings, "loadUser", "User");
+    assert_return_has_type(&bindings, "renderGreeting", "string");
+}
+
+#[tokio::test]
+async fn test_typescript_cross_file_resolves_calls() {
+    init_minimal_logging();
+
+    let fixture = TestFixture::typescript_type_inference_cross_file()
+        .expect("Failed to load typescript cross-file fixture");
+    let orchestrator = run_index(fixture, vec!["ts".to_string()]).await;
+    let relation_index = orchestrator
+        .get_relation_index()
+        .expect("Relation index should be available");
+
+    assert!(
+        relation_index.file_count() >= 2,
+        "typescript cross-file should index models and service"
+    );
+    assert!(
+        !relation_index.function_index().is_empty(),
+        "typescript cross-file should extract function entities"
+    );
+    assert!(
+        relation_index.resolved_relation_count() >= 1,
+        "typescript cross-file should resolve at least one call edge"
+    );
+}
+
+#[tokio::test]
+async fn test_javascript_cross_file_resolves_calls() {
+    init_minimal_logging();
+
+    let fixture = TestFixture::javascript_type_inference_cross_file()
+        .expect("Failed to load javascript cross-file fixture");
+    let orchestrator = run_index(fixture, vec!["js".to_string()]).await;
+    let relation_index = orchestrator
+        .get_relation_index()
+        .expect("Relation index should be available");
+
+    assert!(
+        relation_index.file_count() >= 2,
+        "javascript cross-file should index models and service"
+    );
+    assert!(
+        !relation_index.function_index().is_empty(),
+        "javascript cross-file should extract function entities"
+    );
+    assert!(
+        relation_index.resolved_relation_count() >= 1,
+        "javascript cross-file should resolve at least one call edge"
+    );
+}
+
+#[tokio::test]
+async fn test_scala_basic_resolves_calls() {
+    init_minimal_logging();
+
+    let fixture = TestFixture::scala_basic().expect("Failed to load scala basic fixture");
+    let orchestrator = run_index(fixture, vec!["scala".to_string()]).await;
+    let relation_index = orchestrator
+        .get_relation_index()
+        .expect("Relation index should be available");
+
+    assert!(
+        relation_index.file_count() >= 2,
+        "scala basic should index Models and Main"
+    );
+    assert!(
+        !relation_index.function_index().is_empty(),
+        "scala basic should extract function entities"
+    );
+}
+
+#[tokio::test]
+async fn test_dart_basic_resolves_calls() {
+    init_minimal_logging();
+
+    let fixture = TestFixture::dart_basic().expect("Failed to load dart basic fixture");
+    let orchestrator = run_index(fixture, vec!["dart".to_string()]).await;
+    let relation_index = orchestrator
+        .get_relation_index()
+        .expect("Relation index should be available");
+
+    assert!(
+        relation_index.file_count() >= 2,
+        "dart basic should index lib and bin entrypoint"
+    );
+    assert!(
+        !relation_index.function_index().is_empty(),
+        "dart basic should extract function entities"
+    );
+}
+
+#[tokio::test]
+async fn test_review_fixtures_index() {
+    init_minimal_logging();
+
+    for (fixture, extensions) in [
+        (
+            TestFixture::kotlin_review_coroutines().expect("Failed to load kotlin review fixture"),
+            vec!["kt".to_string()],
+        ),
+        (
+            TestFixture::scala_review_case_class().expect("Failed to load scala review fixture"),
+            vec!["scala".to_string()],
+        ),
+        (
+            TestFixture::ruby_review_mixin().expect("Failed to load ruby review fixture"),
+            vec!["rb".to_string()],
+        ),
+        (
+            TestFixture::php_review_namespace_trait().expect("Failed to load php review fixture"),
+            vec!["php".to_string()],
+        ),
+        (
+            TestFixture::typescript_review_re_export()
+                .expect("Failed to load typescript re-export fixture"),
+            vec!["ts".to_string()],
+        ),
+        (
+            TestFixture::typescript_review_wildcard()
+                .expect("Failed to load typescript wildcard fixture"),
+            vec!["ts".to_string()],
+        ),
+        (
+            TestFixture::python_review_re_export()
+                .expect("Failed to load python re-export fixture"),
+            vec!["py".to_string()],
+        ),
+        (
+            TestFixture::python_review_wildcard().expect("Failed to load python wildcard fixture"),
+            vec!["py".to_string()],
+        ),
+    ] {
+        let orchestrator = run_index(fixture, extensions).await;
+        let relation_index = orchestrator
+            .get_relation_index()
+            .expect("Relation index should be available");
+        assert!(
+            relation_index.file_count() >= 2,
+            "review fixture should index at least two files"
+        );
+        assert!(
+            !relation_index.function_index().is_empty(),
+            "review fixture should extract function entities"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_re_export_chain_resolves_calls() {
+    init_minimal_logging();
+
+    for (fixture, extensions) in [
+        (
+            TestFixture::typescript_review_re_export()
+                .expect("Failed to load typescript re-export fixture"),
+            vec!["ts".to_string()],
+        ),
+        (
+            TestFixture::python_review_re_export()
+                .expect("Failed to load python re-export fixture"),
+            vec!["py".to_string()],
+        ),
+    ] {
+        let orchestrator = run_index(fixture, extensions).await;
+        let relation_index = orchestrator
+            .get_relation_index()
+            .expect("Relation index should be available");
+        assert!(
+            relation_index.file_count() >= 3,
+            "re-export fixture should index origin, middle and consumer"
+        );
+        assert!(
+            relation_index.resolved_relation_count() >= 1,
+            "re-export chain should resolve at least one call edge"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_wildcard_import_resolves_calls() {
+    init_minimal_logging();
+
+    for (fixture, extensions) in [
+        (
+            TestFixture::typescript_review_wildcard()
+                .expect("Failed to load typescript wildcard fixture"),
+            vec!["ts".to_string()],
+        ),
+        (
+            TestFixture::python_review_wildcard().expect("Failed to load python wildcard fixture"),
+            vec!["py".to_string()],
+        ),
+    ] {
+        let orchestrator = run_index(fixture, extensions).await;
+        let relation_index = orchestrator
+            .get_relation_index()
+            .expect("Relation index should be available");
+        assert!(
+            relation_index.file_count() >= 2,
+            "wildcard fixture should index utils and consumer"
+        );
+        assert!(
+            relation_index.resolved_relation_count() >= 1,
+            "wildcard import should resolve at least one call edge"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_shell_and_c_review_fixtures_index() {
+    init_minimal_logging();
+
+    for (fixture, extensions) in [
+        (
+            TestFixture::bash_type_inference_variables()
+                .expect("Failed to load bash type inference fixture"),
+            vec!["sh".to_string()],
+        ),
+        (
+            TestFixture::lua_type_inference_variables()
+                .expect("Failed to load lua type inference fixture"),
+            vec!["lua".to_string()],
+        ),
+        (
+            TestFixture::c_review_macros().expect("Failed to load c review fixture"),
+            vec!["c".to_string(), "h".to_string()],
+        ),
+        (
+            TestFixture::cpp_review_templates().expect("Failed to load cpp review fixture"),
+            vec!["cpp".to_string(), "h".to_string()],
+        ),
+        (
+            TestFixture::bash_review_pipeline().expect("Failed to load bash review fixture"),
+            vec!["sh".to_string()],
+        ),
+        (
+            TestFixture::lua_review_closure().expect("Failed to load lua review fixture"),
+            vec!["lua".to_string()],
+        ),
+        (
+            TestFixture::dart_review_mixin_async().expect("Failed to load dart review fixture"),
+            vec!["dart".to_string()],
+        ),
+    ] {
+        let orchestrator = run_index(fixture, extensions).await;
+        let relation_index = orchestrator
+            .get_relation_index()
+            .expect("Relation index should be available");
+        assert!(
+            relation_index.file_count() >= 1,
+            "fixture should index at least one file"
+        );
+        assert!(
+            !relation_index.function_index().is_empty(),
+            "fixture should extract function entities"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_visibility_and_overload_fixtures_index() {
+    init_minimal_logging();
+
+    for (fixture, extensions) in [
+        (
+            TestFixture::java_type_inference_visibility()
+                .expect("Failed to load java visibility fixture"),
+            vec!["java".to_string()],
+        ),
+        (
+            TestFixture::java_type_inference_overloads()
+                .expect("Failed to load java overloads fixture"),
+            vec!["java".to_string()],
+        ),
+        (
+            TestFixture::csharp_type_inference_overloads()
+                .expect("Failed to load csharp overloads fixture"),
+            vec!["cs".to_string()],
+        ),
+        (
+            TestFixture::typescript_type_inference_overloads()
+                .expect("Failed to load typescript overloads fixture"),
+            vec!["ts".to_string()],
+        ),
+    ] {
+        let orchestrator = run_index(fixture, extensions).await;
+        let relation_index = orchestrator
+            .get_relation_index()
+            .expect("Relation index should be available");
+        assert!(
+            relation_index.file_count() >= 1,
+            "visibility/overload fixture should index at least one file"
+        );
+        assert!(
+            !relation_index.function_index().is_empty(),
+            "visibility/overload fixture should extract function entities"
+        );
+        assert!(
+            relation_index.resolved_relation_count() >= 1,
+            "visibility/overload fixture should resolve at least one call edge"
         );
     }
 }

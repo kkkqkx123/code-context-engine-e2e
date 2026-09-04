@@ -7,6 +7,7 @@
 //! - Error recovery flow through retry queue
 
 use crate::helper::{EmptyFixture, QueryWorkflowTest, init_minimal_logging, mock_embedding};
+use cce_orchestrator::SearchSources;
 
 /// Basic index workflow
 ///
@@ -26,7 +27,8 @@ pub fn test_func() -> i32 { 42 }
         )
         .expect("Failed to add file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     // Index first
     query_test.index().await.expect("Index failed");
@@ -60,7 +62,8 @@ pub fn process() -> String { "done".to_string() }
         )
         .expect("Failed to add file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     query_test.index().await.expect("Index failed");
 
@@ -91,7 +94,8 @@ pub fn hello() -> &'static str { "world" }
         )
         .expect("Failed to add file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     query_test.index().await.expect("Index failed");
 
@@ -124,7 +128,8 @@ pub fn gamma() -> i32 { 3 }
         )
         .expect("Failed to add file");
 
-    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding());
+    let mut query_test = QueryWorkflowTest::new(fixture.into_test_fixture(), mock_embedding())
+        .with_sources(SearchSources::none().with_bm25());
 
     query_test.index().await.expect("Index failed");
 

@@ -176,6 +176,16 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Java, "type_inference/control_flow")
     }
 
+    /// Java type inference visibility fixture
+    pub fn java_type_inference_visibility() -> Self {
+        Self::new(FixtureCategory::Java, "type_inference/visibility")
+    }
+
+    /// Java type inference overloads fixture
+    pub fn java_type_inference_overloads() -> Self {
+        Self::new(FixtureCategory::Java, "type_inference/overloads")
+    }
+
     /// Java Spring Boot minimal demo fixture
     pub fn java_spring_boot() -> Self {
         Self::java_review("springboot-minimal-demo")
@@ -211,6 +221,21 @@ impl FixtureSpec {
         Self::python_review("flask")
     }
 
+    /// Python re-export chain review fixture
+    pub fn python_review_re_export() -> Self {
+        Self::python_review("re_export")
+    }
+
+    /// Python wildcard import review fixture
+    pub fn python_review_wildcard() -> Self {
+        Self::python_review("wildcard")
+    }
+
+    /// TypeScript basic project fixture (class, functions, module imports)
+    pub fn typescript_basic() -> Self {
+        Self::new(FixtureCategory::TypeScript, "basic")
+    }
+
     /// TypeScript review fixture group
     pub fn typescript_review(name: impl Into<String>) -> Self {
         Self::new(
@@ -234,6 +259,26 @@ impl FixtureSpec {
         Self::new(FixtureCategory::TypeScript, "type_inference/unions")
     }
 
+    /// TypeScript type inference cross-file fixture
+    pub fn typescript_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::TypeScript, "type_inference/cross_file")
+    }
+
+    /// TypeScript re-export chain review fixture
+    pub fn typescript_review_re_export() -> Self {
+        Self::typescript_review("re_export")
+    }
+
+    /// TypeScript wildcard import review fixture
+    pub fn typescript_review_wildcard() -> Self {
+        Self::typescript_review("wildcard")
+    }
+
+    /// TypeScript type inference overloads fixture
+    pub fn typescript_type_inference_overloads() -> Self {
+        Self::new(FixtureCategory::TypeScript, "type_inference/overloads")
+    }
+
     /// Multi-language project fixture
     pub fn multi_language() -> Self {
         Self::new(FixtureCategory::MultiLanguage, "")
@@ -252,6 +297,11 @@ impl FixtureSpec {
     /// C# type inference control flow fixture
     pub fn csharp_type_inference_control_flow() -> Self {
         Self::new(FixtureCategory::CSharp, "type_inference/control_flow")
+    }
+
+    /// C# type inference overloads fixture
+    pub fn csharp_type_inference_overloads() -> Self {
+        Self::new(FixtureCategory::CSharp, "type_inference/overloads")
     }
 
     /// C# review fixture group
@@ -294,14 +344,49 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Kotlin, "basic")
     }
 
+    /// Kotlin review fixture group
+    pub fn kotlin_review(name: impl Into<String>) -> Self {
+        Self::new(FixtureCategory::Kotlin, format!("review/{}", name.into()))
+    }
+
+    /// Kotlin coroutines review fixture
+    pub fn kotlin_review_coroutines() -> Self {
+        Self::kotlin_review("coroutines")
+    }
+
     /// PHP basic project fixture
     pub fn php_basic() -> Self {
         Self::new(FixtureCategory::Php, "basic")
     }
 
+    /// PHP review fixture group
+    pub fn php_review(name: impl Into<String>) -> Self {
+        Self::new(FixtureCategory::Php, format!("review/{}", name.into()))
+    }
+
+    /// PHP namespace/trait review fixture
+    pub fn php_review_namespace_trait() -> Self {
+        Self::php_review("namespace_trait")
+    }
+
     /// Ruby basic project fixture
     pub fn ruby_basic() -> Self {
         Self::new(FixtureCategory::Ruby, "basic")
+    }
+
+    /// Ruby review fixture group
+    pub fn ruby_review(name: impl Into<String>) -> Self {
+        Self::new(FixtureCategory::Ruby, format!("review/{}", name.into()))
+    }
+
+    /// Ruby mixin review fixture
+    pub fn ruby_review_mixin() -> Self {
+        Self::ruby_review("mixin")
+    }
+
+    /// JavaScript basic project fixture (class, functions, CommonJS imports)
+    pub fn javascript_basic() -> Self {
+        Self::new(FixtureCategory::JavaScript, "basic")
     }
 
     /// JavaScript review fixture group
@@ -327,6 +412,16 @@ impl FixtureSpec {
         Self::new(FixtureCategory::C, "basic")
     }
 
+    /// C review fixture group
+    pub fn c_review(name: impl Into<String>) -> Self {
+        Self::new(FixtureCategory::C, format!("review/{}", name.into()))
+    }
+
+    /// C macros review fixture
+    pub fn c_review_macros() -> Self {
+        Self::c_review("macros")
+    }
+
     /// C type inference declarations fixture
     pub fn c_type_inference_declarations() -> Self {
         Self::new(FixtureCategory::C, "type_inference/declarations")
@@ -337,9 +432,54 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Bash, "basic")
     }
 
+    /// Bash review fixture group
+    pub fn bash_review(name: impl Into<String>) -> Self {
+        Self::new(FixtureCategory::Bash, format!("review/{}", name.into()))
+    }
+
+    /// Bash pipeline review fixture
+    pub fn bash_review_pipeline() -> Self {
+        Self::bash_review("pipeline")
+    }
+
+    /// Bash type inference variables fixture
+    pub fn bash_type_inference_variables() -> Self {
+        Self::new(FixtureCategory::Bash, "type_inference/variables")
+    }
+
     /// Lua basic project fixture (require/function)
     pub fn lua_basic() -> Self {
         Self::new(FixtureCategory::Lua, "basic")
+    }
+
+    /// Lua review fixture group
+    pub fn lua_review(name: impl Into<String>) -> Self {
+        Self::new(FixtureCategory::Lua, format!("review/{}", name.into()))
+    }
+
+    /// Lua closure review fixture
+    pub fn lua_review_closure() -> Self {
+        Self::lua_review("closure")
+    }
+
+    /// Lua type inference variables fixture
+    pub fn lua_type_inference_variables() -> Self {
+        Self::new(FixtureCategory::Lua, "type_inference/variables")
+    }
+
+    /// C++ basic project fixture (header/source separation, class, calls)
+    pub fn cpp_basic() -> Self {
+        Self::new(FixtureCategory::Cpp, "basic")
+    }
+
+    /// C++ review fixture group
+    pub fn cpp_review(name: impl Into<String>) -> Self {
+        Self::new(FixtureCategory::Cpp, format!("review/{}", name.into()))
+    }
+
+    /// C++ templates review fixture
+    pub fn cpp_review_templates() -> Self {
+        Self::cpp_review("templates")
     }
 
     /// C++ type inference declarations fixture
@@ -367,6 +507,21 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Scala, "type_inference/control_flow")
     }
 
+    /// Scala basic project fixture (class, object, trait)
+    pub fn scala_basic() -> Self {
+        Self::new(FixtureCategory::Scala, "basic")
+    }
+
+    /// Scala review fixture group
+    pub fn scala_review(name: impl Into<String>) -> Self {
+        Self::new(FixtureCategory::Scala, format!("review/{}", name.into()))
+    }
+
+    /// Scala case class review fixture
+    pub fn scala_review_case_class() -> Self {
+        Self::scala_review("case_class")
+    }
+
     /// Ruby type inference constructors fixture
     pub fn ruby_type_inference_constructors() -> Self {
         Self::new(FixtureCategory::Ruby, "type_inference/constructors")
@@ -387,9 +542,29 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Dart, "type_inference/control_flow")
     }
 
+    /// Dart basic project fixture (class, functions, imports)
+    pub fn dart_basic() -> Self {
+        Self::new(FixtureCategory::Dart, "basic")
+    }
+
+    /// Dart review fixture group
+    pub fn dart_review(name: impl Into<String>) -> Self {
+        Self::new(FixtureCategory::Dart, format!("review/{}", name.into()))
+    }
+
+    /// Dart mixin/async review fixture
+    pub fn dart_review_mixin_async() -> Self {
+        Self::dart_review("mixin_async")
+    }
+
     /// JavaScript type inference narrowing fixture
     pub fn javascript_type_inference_narrowing() -> Self {
         Self::new(FixtureCategory::JavaScript, "type_inference/narrowing")
+    }
+
+    /// JavaScript type inference cross-file fixture
+    pub fn javascript_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::JavaScript, "type_inference/cross_file")
     }
 }
 
@@ -579,6 +754,16 @@ impl TestFixture {
         Self::load(FixtureSpec::java_type_inference_control_flow())
     }
 
+    /// Load Java type inference visibility fixture
+    pub fn java_type_inference_visibility() -> io::Result<Self> {
+        Self::load(FixtureSpec::java_type_inference_visibility())
+    }
+
+    /// Load Java type inference overloads fixture
+    pub fn java_type_inference_overloads() -> io::Result<Self> {
+        Self::load(FixtureSpec::java_type_inference_overloads())
+    }
+
     /// Load Java Spring Boot minimal demo fixture
     pub fn java_spring_boot() -> io::Result<Self> {
         Self::load(FixtureSpec::java_spring_boot())
@@ -599,6 +784,21 @@ impl TestFixture {
         Self::load(FixtureSpec::python_index_sidecar())
     }
 
+    /// Load Python re-export chain review fixture
+    pub fn python_review_re_export() -> io::Result<Self> {
+        Self::load(FixtureSpec::python_review_re_export())
+    }
+
+    /// Load Python wildcard import review fixture
+    pub fn python_review_wildcard() -> io::Result<Self> {
+        Self::load(FixtureSpec::python_review_wildcard())
+    }
+
+    /// Load TypeScript basic project fixture
+    pub fn typescript_basic() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_basic())
+    }
+
     /// Load TypeScript index_sidecar review fixture
     pub fn typescript_index_sidecar() -> io::Result<Self> {
         Self::load(FixtureSpec::typescript_index_sidecar())
@@ -614,6 +814,26 @@ impl TestFixture {
         Self::load(FixtureSpec::typescript_type_inference_unions())
     }
 
+    /// Load TypeScript type inference cross-file fixture
+    pub fn typescript_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_type_inference_cross_file())
+    }
+
+    /// Load TypeScript re-export chain review fixture
+    pub fn typescript_review_re_export() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_review_re_export())
+    }
+
+    /// Load TypeScript wildcard import review fixture
+    pub fn typescript_review_wildcard() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_review_wildcard())
+    }
+
+    /// Load TypeScript type inference overloads fixture
+    pub fn typescript_type_inference_overloads() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_type_inference_overloads())
+    }
+
     /// Load C# basic project fixture
     pub fn csharp_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::csharp_basic())
@@ -627,6 +847,11 @@ impl TestFixture {
     /// Load C# type inference control flow fixture
     pub fn csharp_type_inference_control_flow() -> io::Result<Self> {
         Self::load(FixtureSpec::csharp_type_inference_control_flow())
+    }
+
+    /// Load C# type inference overloads fixture
+    pub fn csharp_type_inference_overloads() -> io::Result<Self> {
+        Self::load(FixtureSpec::csharp_type_inference_overloads())
     }
 
     /// Load C# MediatR review fixture
@@ -659,14 +884,34 @@ impl TestFixture {
         Self::load(FixtureSpec::kotlin_basic())
     }
 
+    /// Load Kotlin coroutines review fixture
+    pub fn kotlin_review_coroutines() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_review_coroutines())
+    }
+
     /// Load PHP basic project fixture
     pub fn php_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::php_basic())
     }
 
+    /// Load PHP namespace/trait review fixture
+    pub fn php_review_namespace_trait() -> io::Result<Self> {
+        Self::load(FixtureSpec::php_review_namespace_trait())
+    }
+
     /// Load Ruby basic project fixture
     pub fn ruby_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::ruby_basic())
+    }
+
+    /// Load Ruby mixin review fixture
+    pub fn ruby_review_mixin() -> io::Result<Self> {
+        Self::load(FixtureSpec::ruby_review_mixin())
+    }
+
+    /// Load JavaScript basic project fixture
+    pub fn javascript_basic() -> io::Result<Self> {
+        Self::load(FixtureSpec::javascript_basic())
     }
 
     /// Load JavaScript Express review fixture
@@ -684,6 +929,11 @@ impl TestFixture {
         Self::load(FixtureSpec::c_basic())
     }
 
+    /// Load C macros review fixture
+    pub fn c_review_macros() -> io::Result<Self> {
+        Self::load(FixtureSpec::c_review_macros())
+    }
+
     /// Load C type inference declarations fixture
     pub fn c_type_inference_declarations() -> io::Result<Self> {
         Self::load(FixtureSpec::c_type_inference_declarations())
@@ -694,9 +944,39 @@ impl TestFixture {
         Self::load(FixtureSpec::bash_basic())
     }
 
+    /// Load Bash pipeline review fixture
+    pub fn bash_review_pipeline() -> io::Result<Self> {
+        Self::load(FixtureSpec::bash_review_pipeline())
+    }
+
+    /// Load Bash type inference variables fixture
+    pub fn bash_type_inference_variables() -> io::Result<Self> {
+        Self::load(FixtureSpec::bash_type_inference_variables())
+    }
+
     /// Load Lua basic project fixture
     pub fn lua_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::lua_basic())
+    }
+
+    /// Load Lua closure review fixture
+    pub fn lua_review_closure() -> io::Result<Self> {
+        Self::load(FixtureSpec::lua_review_closure())
+    }
+
+    /// Load Lua type inference variables fixture
+    pub fn lua_type_inference_variables() -> io::Result<Self> {
+        Self::load(FixtureSpec::lua_type_inference_variables())
+    }
+
+    /// Load C++ basic project fixture
+    pub fn cpp_basic() -> io::Result<Self> {
+        Self::load(FixtureSpec::cpp_basic())
+    }
+
+    /// Load C++ templates review fixture
+    pub fn cpp_review_templates() -> io::Result<Self> {
+        Self::load(FixtureSpec::cpp_review_templates())
     }
 
     /// Load C++ type inference declarations fixture
@@ -724,6 +1004,16 @@ impl TestFixture {
         Self::load(FixtureSpec::scala_type_inference_control_flow())
     }
 
+    /// Load Scala basic project fixture
+    pub fn scala_basic() -> io::Result<Self> {
+        Self::load(FixtureSpec::scala_basic())
+    }
+
+    /// Load Scala case class review fixture
+    pub fn scala_review_case_class() -> io::Result<Self> {
+        Self::load(FixtureSpec::scala_review_case_class())
+    }
+
     /// Load Ruby type inference constructors fixture
     pub fn ruby_type_inference_constructors() -> io::Result<Self> {
         Self::load(FixtureSpec::ruby_type_inference_constructors())
@@ -744,9 +1034,24 @@ impl TestFixture {
         Self::load(FixtureSpec::dart_type_inference_control_flow())
     }
 
+    /// Load Dart basic project fixture
+    pub fn dart_basic() -> io::Result<Self> {
+        Self::load(FixtureSpec::dart_basic())
+    }
+
+    /// Load Dart mixin/async review fixture
+    pub fn dart_review_mixin_async() -> io::Result<Self> {
+        Self::load(FixtureSpec::dart_review_mixin_async())
+    }
+
     /// Load JavaScript type inference narrowing fixture
     pub fn javascript_type_inference_narrowing() -> io::Result<Self> {
         Self::load(FixtureSpec::javascript_type_inference_narrowing())
+    }
+
+    /// Load JavaScript type inference cross-file fixture
+    pub fn javascript_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::javascript_type_inference_cross_file())
     }
 
     /// Load the document fixture group

@@ -454,10 +454,14 @@ async fn test_build_config_change_triggers_relation_rebuild() {
         after_relation_epoch,
     )
     .expect("rebuilt relation snapshot must load");
+    assert!(
+        rebuilt.contains_file("src/lib.rs") && rebuilt.contains_file("src/util.rs"),
+        "both relation files must be present after the rebuild"
+    );
     assert_eq!(
         rebuilt.file_count(),
-        2,
-        "both relation files must be present after the rebuild"
+        3,
+        "two source files plus the synthetic Cargo.toml governance node must be present"
     );
 
     // The config change must be fully consumed.

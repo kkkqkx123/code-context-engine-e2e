@@ -1,7 +1,8 @@
 //! Plugin system workflow tests
 //!
 //! Tests for the complete plugin system workflow from loading to execution.
-//! These tests verify that the flask_routes.lua plugin works correctly with plugins.json configuration.
+//! Demo plugins are registered inline from Lua scripts so the suite is
+//! self-contained and needs no developer-local registry file.
 
 use crate::helper::{
     EmptyFixture, ExpectedIndexResult, IndexWorkflowTest, assert_index_result, init_minimal_logging,
@@ -14,26 +15,114 @@ use compact_str::CompactString;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Basic plugin loading from plugins.json
+/// Self-contained demo plugins (the suite must not depend on a
+/// developer-local `.cce/plugins.json` registry file).
+///
+/// Flask route plugin: TextGen + EntityExtract for `*.py`, priority 10.
+/// Its BM25 text carries the "Flask route handler function" marker and its
+/// patterns inject `@app.route` paths as standalone entities.
+fn flask_route_script() -> &'static str {
+    r#"
+plugin = {
+    id = "flask_route_plugin",
+    name = "Flask Route Plugin",
+    version = "1.0.0",
+    priority = 10,
+    capabilities = { "text_gen", "entity_extract" },
+    patterns = {
+        {
+            name = "route",
+            regex = "@app\\.route\\('(?P<name>[^']+)'\\)[\\s\\S]*?\\n\\s*def\\s+(?P<signature>[\\w_]+)\\(",
+            kind = "route"
+        }
+    },
+    generate_bm25 = function(group)
+        return "Flask route handler function " .. group.name
+    end,
+    generate_embedding = function(group)
+        return "Flask endpoint " .. group.name
+    end
+}
+"#
+}
+
+/// Query hooks plugin: rewrite + fusion weights + result filter.
+fn query_hooks_script() -> &'static str {
+    r#"
+plugin = {
+    id = "query_hooks_plugin",
+    name = "Query Hooks Plugin",
+    version = "1.0.0",
+    capabilities = { "query_rewrite", "fusion", "result_filter" },
+    rewrite_query = function(query)
+        return { rewritten_query = query:gsub("tf", "tensorflow"), expansion_terms = { "tensorflow" } }
+    end,
+    fusion_weights = function(query, vector_count, bm25_count)
+        return { vector_weight = 0.3, bm25_weight = 0.7 }
+    end,
+    filter_results = function(query, results)
+        local out = {}
+        for i = 1, #results do
+            if results[i].file_path:find("generated%-code") then
+                out[#out + 1] = { id = results[i].id, remove = true }
+            else
+                out[#out + 1] = { id = results[i].id, remove = false }
+            end
+        end
+        return out
+    end
+}
+"#
+}
+
+/// Zig symbol extraction plugin: `@import` paths + `pub fn` exports.
+fn zig_symbol_extract_script() -> &'static str {
+    r#"
+plugin = {
+    id = "zig_symbol_extract_plugin",
+    name = "Zig Symbol Extract Plugin",
+    version = "1.0.0",
+    capabilities = { "symbol_extract" },
+    extract_imports = function(content, file_path, language)
+        local imports = {}
+        for line in content:gmatch("[^\r\n]+") do
+            local path = line:match("const%s+%w+%s*=%s*@import%(\"([^\"]+)\"%)")
+            if path then
+                imports[#imports + 1] = { path = path, is_wildcard = false }
+            end
+        end
+        if #imports == 0 then return nil end
+        return imports
+    end,
+    extract_exports = function(content, file_path, language)
+        local exports = {}
+        for line in content:gmatch("[^\r\n]+") do
+            local name = line:match("pub%s+fn%s+(%w+)%s*%(")
+            if name then
+                exports[#exports + 1] = { name = name, kind = "function", visibility = "public" }
+            end
+        end
+        if #exports == 0 then return nil end
+        return exports
+    end
+}
+"#
+}
+
+/// Register an inline Lua script into a fresh registry.
+fn registry_with_script(script: &str) -> PluginRegistry {
+    let plugin = LuaPlugin::from_script(script).expect("inline plugin script must load");
+    let mut registry = PluginRegistry::new();
+    registry.register(std::sync::Arc::new(plugin));
+    registry
+}
+
+/// Basic plugin loading from an inline Lua script
 #[tokio::test]
 async fn test_plugin_loading_from_json() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-
-    // Load plugins from .cce/plugins.json via FilePluginSource
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    let result = registry.load_source(&source);
-    assert!(
-        result.is_ok(),
-        "Failed to load plugins from source: {:?}",
-        result.err()
-    );
+    let registry = registry_with_script(flask_route_script());
 
     // Verify that the flask_route_plugin is loaded
     let bm25_generators = registry.get_bm25_generators(Some("app.py"), Some("python"));
@@ -49,17 +138,7 @@ async fn test_plugin_loading_from_json() {
 async fn test_plugin_nl_generation() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(flask_route_script());
 
     // Create an EntityGroup with Flask metadata
     let mut metadata = HashMap::new();
@@ -119,17 +198,7 @@ async fn test_plugin_nl_generation() {
 async fn test_plugin_file_filtering() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(flask_route_script());
 
     // Verify generators are loaded from plugin configuration
     let generators = registry.get_bm25_generators(Some("app.py"), Some("python"));
@@ -183,17 +252,8 @@ def get_user(user_id):
         )
         .expect("Failed to add Python file");
 
-    // Load the real demo plugins (flask_route_plugin TextGen/EntityExtract).
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins from source");
+    // Load the inline flask_route_plugin (TextGen/EntityExtract).
+    let registry = registry_with_script(flask_route_script());
     assert!(
         !registry
             .get_plugins(
@@ -418,16 +478,7 @@ async fn test_plugin_disable_functionality() {
 async fn test_plugin_entity_extract_routes() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(flask_route_script());
 
     let pipeline = cce_parser::grouper::PreprocessingPipeline::new()
         .with_plugin_registry(std::sync::Arc::new(registry));
@@ -460,16 +511,7 @@ async fn test_plugin_entity_extract_routes() {
 async fn test_plugin_format_parse_proto() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(flask_route_script());
 
     let router = cce_parser::document::PipelineRouter::new();
     let config = cce_config::modules::ChunkingConfig::default();
@@ -498,16 +540,30 @@ async fn test_plugin_format_parse_proto() {
 async fn test_plugin_rerank() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(
+        r#"
+plugin = {
+    id = "rerank_plugin",
+    name = "Rerank Plugin",
+    version = "1.0.0",
+    capabilities = { "rerank" },
+    rerank = function(query, candidates)
+        local out = {}
+        for i = 1, #candidates do
+            out[i] = {
+                id = candidates[i].id,
+                rerank_score = 0.9,
+                initial_score = candidates[i].initial_score,
+                final_score = 0.9,
+                rank_change = 0,
+                reasoning = "demo"
+            }
+        end
+        return { reranked_candidates = out }
+    end
+}
+"#,
+    );
 
     let rerankers = registry.get_plugins(cce_plugin::PluginCapability::Rerank, None, None);
     assert!(
@@ -539,16 +595,23 @@ async fn test_plugin_rerank() {
 async fn test_plugin_group_override() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(
+        r#"
+plugin = {
+    id = "group_override_plugin",
+    name = "Group Override Plugin",
+    version = "1.0.0",
+    capabilities = { "group_override" },
+    group = function(context)
+        local groups = {}
+        for i = 1, #context.entities do
+            groups[i] = { group_id = "override_" .. i, name = context.entities[i].name }
+        end
+        return groups
+    end
+}
+"#,
+    );
 
     let overriders = registry.get_plugins(
         cce_plugin::PluginCapability::GroupOverride,
@@ -587,16 +650,22 @@ async fn test_plugin_group_override() {
 async fn test_plugin_relation_extract() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(
+        r#"
+plugin = {
+    id = "spring_relations_plugin",
+    name = "Spring Relations Plugin",
+    version = "1.0.0",
+    capabilities = { "relation_extract" },
+    extract_symbols = function(content, file_path, language)
+        return { { id = "UserService", name = "UserService", kind = "class", visibility = "public" } }
+    end,
+    extract_relations = function(content, file_path, language)
+        return { { from = "UserService", to = "UserRepository", relation_type = "injects" } }
+    end
+}
+"#,
+    );
 
     let extractors = registry.get_plugins(
         cce_plugin::PluginCapability::RelationExtract,
@@ -631,16 +700,7 @@ async fn test_plugin_relation_extract() {
 async fn test_plugin_query_rewrite() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(query_hooks_script());
 
     let rewritters = registry.get_plugins(cce_plugin::PluginCapability::QueryRewrite, None, None);
     assert!(
@@ -663,16 +723,7 @@ async fn test_plugin_query_rewrite() {
 async fn test_plugin_fusion_weights() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(query_hooks_script());
 
     let fusion = registry.get_plugins(cce_plugin::PluginCapability::Fusion, None, None);
     assert!(
@@ -693,16 +744,7 @@ async fn test_plugin_fusion_weights() {
 async fn test_plugin_result_filter() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(query_hooks_script());
 
     let filters = registry.get_plugins(cce_plugin::PluginCapability::ResultFilter, None, None);
     assert!(
@@ -746,16 +788,21 @@ async fn test_plugin_result_filter() {
 async fn test_plugin_file_filter() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(
+        r#"
+plugin = {
+    id = "file_filter_plugin",
+    name = "File Filter Plugin",
+    version = "1.0.0",
+    capabilities = { "file_filter" },
+    filter_file = function(file_path, is_directory, size)
+        if file_path:find("scratch") then return "exclude" end
+        if file_path:find("%.cconf$") then return "include" end
+        return nil
+    end
+}
+"#,
+    );
 
     let filters = registry.get_plugins(
         cce_plugin::PluginCapability::FileFilter,
@@ -792,16 +839,7 @@ async fn test_plugin_file_filter() {
 async fn test_plugin_symbol_extract() {
     init_minimal_logging();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(zig_symbol_extract_script());
 
     let extractors = registry.get_plugins(
         cce_plugin::PluginCapability::SymbolExtract,
@@ -986,16 +1024,7 @@ async fn test_plugin_symbol_extract_relation_index() {
         .expect("add io.zig");
     let fixture = fixture.into_test_fixture();
 
-    let mut registry = PluginRegistry::new();
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let source = FilePluginSource::from_project(project_root, Some(".cce/plugins.json"));
-    registry
-        .load_source(&source)
-        .expect("Failed to load plugins");
+    let registry = registry_with_script(zig_symbol_extract_script());
     assert!(
         !registry
             .get_plugins(

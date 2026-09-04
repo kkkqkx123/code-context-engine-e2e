@@ -94,6 +94,18 @@ async fn main() {
             patterns: vec!["*.ts"],
         },
         Case {
+            language: "typescript",
+            scenario: "cross_file",
+            spec: FixtureSpec::typescript_type_inference_cross_file(),
+            patterns: vec!["*.ts"],
+        },
+        Case {
+            language: "typescript",
+            scenario: "overloads",
+            spec: FixtureSpec::typescript_type_inference_overloads(),
+            patterns: vec!["*.ts"],
+        },
+        Case {
             language: "java",
             scenario: "generics",
             spec: FixtureSpec::java_type_inference_generics(),
@@ -103,6 +115,18 @@ async fn main() {
             language: "java",
             scenario: "control_flow",
             spec: FixtureSpec::java_type_inference_control_flow(),
+            patterns: vec!["*.java"],
+        },
+        Case {
+            language: "java",
+            scenario: "visibility",
+            spec: FixtureSpec::java_type_inference_visibility(),
+            patterns: vec!["*.java"],
+        },
+        Case {
+            language: "java",
+            scenario: "overloads",
+            spec: FixtureSpec::java_type_inference_overloads(),
             patterns: vec!["*.java"],
         },
         Case {
@@ -118,6 +142,12 @@ async fn main() {
             patterns: vec!["*.cs"],
         },
         Case {
+            language: "csharp",
+            scenario: "overloads",
+            spec: FixtureSpec::csharp_type_inference_overloads(),
+            patterns: vec!["*.cs"],
+        },
+        Case {
             language: "go",
             scenario: "interfaces",
             spec: FixtureSpec::go_type_inference_interfaces(),
@@ -128,6 +158,12 @@ async fn main() {
             scenario: "control_flow",
             spec: FixtureSpec::go_type_inference_control_flow(),
             patterns: vec!["*.go"],
+        },
+        Case {
+            language: "c",
+            scenario: "declarations",
+            spec: FixtureSpec::c_type_inference_declarations(),
+            patterns: vec!["*.c", "*.h"],
         },
         Case {
             language: "cpp",
@@ -188,6 +224,24 @@ async fn main() {
             scenario: "narrowing",
             spec: FixtureSpec::javascript_type_inference_narrowing(),
             patterns: vec!["*.js"],
+        },
+        Case {
+            language: "javascript",
+            scenario: "cross_file",
+            spec: FixtureSpec::javascript_type_inference_cross_file(),
+            patterns: vec!["*.js"],
+        },
+        Case {
+            language: "bash",
+            scenario: "variables",
+            spec: FixtureSpec::bash_type_inference_variables(),
+            patterns: vec!["*.sh"],
+        },
+        Case {
+            language: "lua",
+            scenario: "variables",
+            spec: FixtureSpec::lua_type_inference_variables(),
+            patterns: vec!["*.lua"],
         },
     ];
 

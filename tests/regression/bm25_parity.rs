@@ -138,6 +138,9 @@ fn offline_scorer_matches_production_tantivy_bm25() {
             fields.insert("title".to_string(), title.to_string());
             fields.insert("keywords".to_string(), keywords.to_string());
             fields.insert("content".to_string(), content.to_string());
+            // Production search always enforces the project_id isolation
+            // filter; indexed docs must carry it or nothing matches.
+            fields.insert("project_id".to_string(), "1".to_string());
             (id.to_string(), fields)
         })
         .collect();
