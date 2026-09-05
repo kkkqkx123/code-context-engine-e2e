@@ -15,8 +15,11 @@
 
 use std::collections::BTreeMap;
 
+use cce_relation::type_inference::CrossFilePropagator;
 use cce_relation::type_inference::TypeInferenceEngine;
+use cce_relation::type_inference::propagate_variable_types;
 use cce_relation::type_inference::traits::InferenceContext;
+use cce_relation::type_inference::types::ScopedTypeContext;
 use cce_relation::type_inference::types::origin_priority;
 use cce_types::ParsedFile;
 
@@ -54,19 +57,61 @@ pub struct CanonicalTypeBinding {
     pub shape: String,
 }
 
-/// Collect a sorted snapshot of inferred types for the given parsed files.
+/// Run project-wide type inference for the given parsed files.
 ///
-/// Runs both single-pass and two-pass inference and merges them, mirroring
-/// [`render_type_inference`](crate::structured_output::render_type_inference)
+/// Phase 1 runs per-file single-pass + two-pass inference and merges them.
+/// Phase 2 feeds every file context into a shared propagator and propagates
+/// cross-file call-target return types (`x = f()` with `f` in a sibling
+/// file) back into variable bindings, mirroring the production
+/// `SymbolTableBuilder` cross-file path.
+///
+/// Returns one final context per file, aligned with `files` order.
+/// Shared with [`render_type_inference`](crate::structured_output::render_type_inference)
 /// so snapshot assertions and visualized markdown never diverge.
-pub fn collect_type_bindings(files: &[ParsedFile]) -> Vec<CanonicalTypeBinding> {
-    let mut out = Vec::new();
+pub fn infer_project_contexts(files: &[ParsedFile]) -> Vec<ScopedTypeContext> {
+    let mut merged_by_file = Vec::with_capacity(files.len());
     for file in files {
         let ctx = TypeInferenceEngine::infer_types(file, &InferenceContext::default());
         let ctx_two = TypeInferenceEngine::infer_types_two_pass(file, &InferenceContext::default());
         let mut merged = ctx.clone();
         merged.merge_from(&ctx_two);
+        merged_by_file.push(merged);
+    }
 
+    let propagator = CrossFilePropagator::new();
+    let contexts: dashmap::DashMap<String, ScopedTypeContext> = dashmap::DashMap::new();
+    for (file, merged) in files.iter().zip(merged_by_file.iter()) {
+        propagator.insert_file(&file.path, merged, &file.entities);
+        contexts.insert(
+            cce_types::normalize_project_path(&file.path),
+            merged.clone(),
+        );
+    }
+    {
+        let file_refs: Vec<&ParsedFile> = files.iter().collect();
+        propagate_variable_types(&file_refs, &propagator, &contexts);
+    }
+
+    files
+        .iter()
+        .zip(merged_by_file.iter())
+        .map(|(file, merged)| {
+            contexts
+                .get(&cce_types::normalize_project_path(&file.path))
+                .map(|r| r.value().clone())
+                .unwrap_or_else(|| merged.clone())
+        })
+        .collect()
+}
+
+/// Collect a sorted snapshot of inferred types for the given parsed files.
+///
+/// Uses [`infer_project_contexts`], mirroring
+/// [`render_type_inference`](crate::structured_output::render_type_inference)
+/// so snapshot assertions and visualized markdown never diverge.
+pub fn collect_type_bindings(files: &[ParsedFile]) -> Vec<CanonicalTypeBinding> {
+    let mut out = Vec::new();
+    for (file, merged) in files.iter().zip(infer_project_contexts(files).iter()) {
         let returns: BTreeMap<u64, String> = merged
             .return_types_iter()
             .map(|(eid, _)| {
@@ -289,5 +334,70 @@ mod tests {
     fn test_origin_priority_helper() {
         assert_origin_priority_higher("TypeAnnotation", "LiteralType");
         assert_origin_priority_higher("ControlFlowNarrowing", "ConstructorCall");
+    }
+
+    /// ISSUE-06: tuple unpacking resolves element types from the
+    /// annotated parameter; `except E as e` binds the exception type.
+    #[test]
+    fn test_destructuring_element_types() {
+        use cce_parser::parser::ast_parser::AstParser;
+        use cce_parser::parser::extractor::EntityExtractor;
+        use cce_types::Language;
+
+        let src = "def split_pair(pair: tuple[int, str]) -> str:\n    first, second = pair\n    return first\n\ntry:\n    pass\nexcept ValueError as e:\n    print(e)\n";
+        let mut ast_parser = AstParser::new();
+        let entity_extractor = EntityExtractor::new();
+        let tree = ast_parser
+            .parse_with_tree(src, &Language::Python)
+            .expect("parse")
+            .0;
+        let entities = entity_extractor
+            .extract(&tree, src, &Language::Python)
+            .expect("extract");
+        let mut file = ParsedFile::new(Language::Python, "m.py".to_string(), src.to_string());
+        file.entities = entities;
+
+        let bindings = collect_type_bindings(std::slice::from_ref(&file));
+        assert_variable_has_type(&bindings, "first", "int");
+        assert_variable_has_type(&bindings, "second", "str");
+        assert_variable_has_type(&bindings, "e", "ValueError");
+    }
+
+    /// ISSUE-05: `user = load_user(...)` with `load_user` defined in a
+    /// sibling file must resolve to `User` via cross-file propagation.
+    #[test]
+    fn test_cross_file_return_propagation() {
+        use cce_parser::parser::ast_parser::AstParser;
+        use cce_parser::parser::extractor::EntityExtractor;
+        use cce_types::Language;
+
+        let models_src =
+            "class User:\n    pass\n\n\ndef load_user(name: str) -> User:\n    return User()\n";
+        let service_src = "from models import load_user\n\n\ndef main() -> None:\n    user = load_user(\"Alice\")\n";
+
+        let mut ast_parser = AstParser::new();
+        let entity_extractor = EntityExtractor::new();
+        let mut files = Vec::new();
+        for (path, src) in [("models.py", models_src), ("service.py", service_src)] {
+            let tree = ast_parser
+                .parse_with_tree(src, &Language::Python)
+                .expect("parse")
+                .0;
+            let entities = entity_extractor
+                .extract(&tree, src, &Language::Python)
+                .expect("extract");
+            let mut file = ParsedFile::new(Language::Python, path.to_string(), src.to_string());
+            file.entities = entities;
+            files.push(file);
+        }
+
+        let bindings = collect_type_bindings(&files);
+        assert_variable_has_type(&bindings, "user", "User");
+        let hits = find_bindings(&bindings, "user", TypeBindingKind::Variable);
+        assert!(
+            hits.iter()
+                .any(|b| b.origin.contains("CrossFilePropagation")),
+            "expected CrossFilePropagation origin, got: {hits:#?}"
+        );
     }
 }

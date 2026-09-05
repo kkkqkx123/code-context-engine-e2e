@@ -141,6 +141,36 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Rust, "type_inference/control_flow")
     }
 
+    /// Rust type inference wildcard import fixture
+    pub fn rust_type_inference_wildcard() -> Self {
+        Self::new(FixtureCategory::Rust, "type_inference/wildcard")
+    }
+
+    /// Rust type inference closure fixture
+    pub fn rust_type_inference_closure() -> Self {
+        Self::new(FixtureCategory::Rust, "type_inference/closure")
+    }
+
+    /// Rust type inference destructuring fixture
+    pub fn rust_type_inference_destructuring() -> Self {
+        Self::new(FixtureCategory::Rust, "type_inference/destructuring")
+    }
+
+    /// Rust type inference lifetime fixture
+    pub fn rust_type_inference_lifetime() -> Self {
+        Self::new(FixtureCategory::Rust, "type_inference/lifetime")
+    }
+
+    /// Rust type inference impl-Self fixture
+    pub fn rust_type_inference_impl_self() -> Self {
+        Self::new(FixtureCategory::Rust, "type_inference/impl_self")
+    }
+
+    /// Rust type inference reference fixture
+    pub fn rust_type_inference_reference() -> Self {
+        Self::new(FixtureCategory::Rust, "type_inference/reference")
+    }
+
     /// Python basic project fixture
     pub fn python_basic() -> Self {
         Self::new(FixtureCategory::Python, "basic")
@@ -159,6 +189,34 @@ impl FixtureSpec {
     /// Python type inference cross-file fixture
     pub fn python_type_inference_cross_file() -> Self {
         Self::new(FixtureCategory::Python, "type_inference/cross_file")
+    }
+
+    /// Python type inference visibility fixture
+    pub fn python_type_inference_visibility() -> Self {
+        Self::new(FixtureCategory::Python, "type_inference/visibility")
+    }
+
+    /// Python type inference lambda fixture
+    pub fn python_type_inference_lambda() -> Self {
+        Self::new(FixtureCategory::Python, "type_inference/lambda")
+    }
+
+    /// Python type inference discriminated union fixture
+    pub fn python_type_inference_discriminated_union() -> Self {
+        Self::new(
+            FixtureCategory::Python,
+            "type_inference/discriminated_union",
+        )
+    }
+
+    /// Python type inference destructuring fixture
+    pub fn python_type_inference_destructuring() -> Self {
+        Self::new(FixtureCategory::Python, "type_inference/destructuring")
+    }
+
+    /// Python type inference negated checks fixture
+    pub fn python_type_inference_negated_checks() -> Self {
+        Self::new(FixtureCategory::Python, "type_inference/negated_checks")
     }
 
     /// Java basic project fixture
@@ -184,6 +242,41 @@ impl FixtureSpec {
     /// Java type inference overloads fixture
     pub fn java_type_inference_overloads() -> Self {
         Self::new(FixtureCategory::Java, "type_inference/overloads")
+    }
+
+    /// Java type inference cross-file fixture
+    pub fn java_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::Java, "type_inference/cross_file")
+    }
+
+    /// Java type inference lambda fixture
+    pub fn java_type_inference_lambda() -> Self {
+        Self::new(FixtureCategory::Java, "type_inference/lambda")
+    }
+
+    /// Java type inference discriminated union fixture
+    pub fn java_type_inference_discriminated_union() -> Self {
+        Self::new(FixtureCategory::Java, "type_inference/discriminated_union")
+    }
+
+    /// Java type inference pattern matching fixture
+    pub fn java_type_inference_pattern_matching() -> Self {
+        Self::new(FixtureCategory::Java, "type_inference/pattern_matching")
+    }
+
+    /// Java type inference var inference fixture
+    pub fn java_type_inference_var_inference() -> Self {
+        Self::new(FixtureCategory::Java, "type_inference/var_inference")
+    }
+
+    /// Java type inference negated checks fixture
+    pub fn java_type_inference_negated_checks() -> Self {
+        Self::new(FixtureCategory::Java, "type_inference/negated_checks")
+    }
+
+    /// Java type inference control positions fixture
+    pub fn java_type_inference_control_positions() -> Self {
+        Self::new(FixtureCategory::Java, "type_inference/control_positions")
     }
 
     /// Java Spring Boot minimal demo fixture
@@ -279,6 +372,34 @@ impl FixtureSpec {
         Self::new(FixtureCategory::TypeScript, "type_inference/overloads")
     }
 
+    /// TypeScript type inference visibility fixture
+    pub fn typescript_type_inference_visibility() -> Self {
+        Self::new(FixtureCategory::TypeScript, "type_inference/visibility")
+    }
+
+    /// TypeScript type inference lambda fixture
+    pub fn typescript_type_inference_lambda() -> Self {
+        Self::new(FixtureCategory::TypeScript, "type_inference/lambda")
+    }
+
+    /// TypeScript type inference destructuring fixture
+    pub fn typescript_type_inference_destructuring() -> Self {
+        Self::new(FixtureCategory::TypeScript, "type_inference/destructuring")
+    }
+
+    /// TypeScript type inference negated checks fixture
+    pub fn typescript_type_inference_negated_checks() -> Self {
+        Self::new(FixtureCategory::TypeScript, "type_inference/negated_checks")
+    }
+
+    /// TypeScript type inference control positions fixture
+    pub fn typescript_type_inference_control_positions() -> Self {
+        Self::new(
+            FixtureCategory::TypeScript,
+            "type_inference/control_positions",
+        )
+    }
+
     /// Multi-language project fixture
     pub fn multi_language() -> Self {
         Self::new(FixtureCategory::MultiLanguage, "")
@@ -304,6 +425,39 @@ impl FixtureSpec {
         Self::new(FixtureCategory::CSharp, "type_inference/overloads")
     }
 
+    /// C# type inference cross-file fixture
+    pub fn csharp_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::CSharp, "type_inference/cross_file")
+    }
+
+    /// C# type inference visibility fixture
+    pub fn csharp_type_inference_visibility() -> Self {
+        Self::new(FixtureCategory::CSharp, "type_inference/visibility")
+    }
+
+    /// C# type inference lambda fixture
+    pub fn csharp_type_inference_lambda() -> Self {
+        Self::new(FixtureCategory::CSharp, "type_inference/lambda")
+    }
+
+    /// C# type inference discriminated union fixture
+    pub fn csharp_type_inference_discriminated_union() -> Self {
+        Self::new(
+            FixtureCategory::CSharp,
+            "type_inference/discriminated_union",
+        )
+    }
+
+    /// C# type inference is-not fixture
+    pub fn csharp_type_inference_is_not() -> Self {
+        Self::new(FixtureCategory::CSharp, "type_inference/is_not")
+    }
+
+    /// C# type inference control positions fixture
+    pub fn csharp_type_inference_control_positions() -> Self {
+        Self::new(FixtureCategory::CSharp, "type_inference/control_positions")
+    }
+
     /// C# review fixture group
     pub fn csharp_review(name: impl Into<String>) -> Self {
         Self::new(FixtureCategory::CSharp, format!("review/{}", name.into()))
@@ -327,6 +481,21 @@ impl FixtureSpec {
     /// Go type inference control flow fixture
     pub fn go_type_inference_control_flow() -> Self {
         Self::new(FixtureCategory::Go, "type_inference/control_flow")
+    }
+
+    /// Go type inference cross-file fixture
+    pub fn go_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::Go, "type_inference/cross_file")
+    }
+
+    /// Go type inference visibility fixture
+    pub fn go_type_inference_visibility() -> Self {
+        Self::new(FixtureCategory::Go, "type_inference/visibility")
+    }
+
+    /// Go type inference type assertion fixture
+    pub fn go_type_inference_type_assertion() -> Self {
+        Self::new(FixtureCategory::Go, "type_inference/type_assertion")
     }
 
     /// Go review fixture group
@@ -487,6 +656,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Cpp, "type_inference/declarations")
     }
 
+    /// C++ type inference overloads fixture
+    pub fn cpp_type_inference_overloads() -> Self {
+        Self::new(FixtureCategory::Cpp, "type_inference/overloads")
+    }
+
     /// Kotlin type inference generics fixture
     pub fn kotlin_type_inference_generics() -> Self {
         Self::new(FixtureCategory::Kotlin, "type_inference/generics")
@@ -497,6 +671,49 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Kotlin, "type_inference/control_flow")
     }
 
+    /// Kotlin type inference cross-file fixture
+    pub fn kotlin_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::Kotlin, "type_inference/cross_file")
+    }
+
+    /// Kotlin type inference overloads fixture
+    pub fn kotlin_type_inference_overloads() -> Self {
+        Self::new(FixtureCategory::Kotlin, "type_inference/overloads")
+    }
+
+    /// Kotlin type inference visibility fixture
+    pub fn kotlin_type_inference_visibility() -> Self {
+        Self::new(FixtureCategory::Kotlin, "type_inference/visibility")
+    }
+
+    /// Kotlin type inference lambda fixture
+    pub fn kotlin_type_inference_lambda() -> Self {
+        Self::new(FixtureCategory::Kotlin, "type_inference/lambda")
+    }
+
+    /// Kotlin type inference discriminated union fixture
+    pub fn kotlin_type_inference_discriminated_union() -> Self {
+        Self::new(
+            FixtureCategory::Kotlin,
+            "type_inference/discriminated_union",
+        )
+    }
+
+    /// Kotlin type inference null safety fixture
+    pub fn kotlin_type_inference_null_safety() -> Self {
+        Self::new(FixtureCategory::Kotlin, "type_inference/null_safety")
+    }
+
+    /// Kotlin type inference scope functions fixture
+    pub fn kotlin_type_inference_scope_functions() -> Self {
+        Self::new(FixtureCategory::Kotlin, "type_inference/scope_functions")
+    }
+
+    /// Kotlin type inference negated is fixture
+    pub fn kotlin_type_inference_negated_is() -> Self {
+        Self::new(FixtureCategory::Kotlin, "type_inference/negated_is")
+    }
+
     /// Scala type inference declarations fixture
     pub fn scala_type_inference_declarations() -> Self {
         Self::new(FixtureCategory::Scala, "type_inference/declarations")
@@ -505,6 +722,26 @@ impl FixtureSpec {
     /// Scala type inference control flow fixture
     pub fn scala_type_inference_control_flow() -> Self {
         Self::new(FixtureCategory::Scala, "type_inference/control_flow")
+    }
+
+    /// Scala type inference cross-file fixture
+    pub fn scala_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::Scala, "type_inference/cross_file")
+    }
+
+    /// Scala type inference overloads fixture
+    pub fn scala_type_inference_overloads() -> Self {
+        Self::new(FixtureCategory::Scala, "type_inference/overloads")
+    }
+
+    /// Scala type inference visibility fixture
+    pub fn scala_type_inference_visibility() -> Self {
+        Self::new(FixtureCategory::Scala, "type_inference/visibility")
+    }
+
+    /// Scala type inference for-comprehension fixture
+    pub fn scala_type_inference_for_comprehension() -> Self {
+        Self::new(FixtureCategory::Scala, "type_inference/for_comprehension")
     }
 
     /// Scala basic project fixture (class, object, trait)
@@ -527,9 +764,24 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Ruby, "type_inference/constructors")
     }
 
+    /// Ruby type inference cross-file fixture
+    pub fn ruby_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::Ruby, "type_inference/cross_file")
+    }
+
     /// PHP type inference phpdoc fixture
     pub fn php_type_inference_phpdoc() -> Self {
         Self::new(FixtureCategory::Php, "type_inference/phpdoc")
+    }
+
+    /// PHP type inference cross-file fixture
+    pub fn php_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::Php, "type_inference/cross_file")
+    }
+
+    /// PHP type inference overloads fixture
+    pub fn php_type_inference_overloads() -> Self {
+        Self::new(FixtureCategory::Php, "type_inference/overloads")
     }
 
     /// Dart type inference declarations fixture
@@ -540,6 +792,31 @@ impl FixtureSpec {
     /// Dart type inference control flow fixture
     pub fn dart_type_inference_control_flow() -> Self {
         Self::new(FixtureCategory::Dart, "type_inference/control_flow")
+    }
+
+    /// Dart type inference cross-file fixture
+    pub fn dart_type_inference_cross_file() -> Self {
+        Self::new(FixtureCategory::Dart, "type_inference/cross_file")
+    }
+
+    /// Dart type inference overloads fixture
+    pub fn dart_type_inference_overloads() -> Self {
+        Self::new(FixtureCategory::Dart, "type_inference/overloads")
+    }
+
+    /// Dart type inference discriminated union fixture
+    pub fn dart_type_inference_discriminated_union() -> Self {
+        Self::new(FixtureCategory::Dart, "type_inference/discriminated_union")
+    }
+
+    /// Dart type inference is-negated fixture
+    pub fn dart_type_inference_is_negated() -> Self {
+        Self::new(FixtureCategory::Dart, "type_inference/is_negated")
+    }
+
+    /// Dart type inference control positions fixture
+    pub fn dart_type_inference_control_positions() -> Self {
+        Self::new(FixtureCategory::Dart, "type_inference/control_positions")
     }
 
     /// Dart basic project fixture (class, functions, imports)
@@ -565,6 +842,11 @@ impl FixtureSpec {
     /// JavaScript type inference cross-file fixture
     pub fn javascript_type_inference_cross_file() -> Self {
         Self::new(FixtureCategory::JavaScript, "type_inference/cross_file")
+    }
+
+    /// JavaScript type inference wildcard import fixture
+    pub fn javascript_type_inference_wildcard() -> Self {
+        Self::new(FixtureCategory::JavaScript, "type_inference/wildcard")
     }
 }
 
@@ -719,6 +1001,36 @@ impl TestFixture {
         Self::load(FixtureSpec::rust_type_inference_control_flow())
     }
 
+    /// Load Rust type inference wildcard import fixture
+    pub fn rust_type_inference_wildcard() -> io::Result<Self> {
+        Self::load(FixtureSpec::rust_type_inference_wildcard())
+    }
+
+    /// Load Rust type inference closure fixture
+    pub fn rust_type_inference_closure() -> io::Result<Self> {
+        Self::load(FixtureSpec::rust_type_inference_closure())
+    }
+
+    /// Load Rust type inference destructuring fixture
+    pub fn rust_type_inference_destructuring() -> io::Result<Self> {
+        Self::load(FixtureSpec::rust_type_inference_destructuring())
+    }
+
+    /// Load Rust type inference lifetime fixture
+    pub fn rust_type_inference_lifetime() -> io::Result<Self> {
+        Self::load(FixtureSpec::rust_type_inference_lifetime())
+    }
+
+    /// Load Rust type inference impl-Self fixture
+    pub fn rust_type_inference_impl_self() -> io::Result<Self> {
+        Self::load(FixtureSpec::rust_type_inference_impl_self())
+    }
+
+    /// Load Rust type inference reference fixture
+    pub fn rust_type_inference_reference() -> io::Result<Self> {
+        Self::load(FixtureSpec::rust_type_inference_reference())
+    }
+
     /// Load Python basic project fixture
     pub fn python_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::python_basic())
@@ -737,6 +1049,31 @@ impl TestFixture {
     /// Load Python type inference cross-file fixture
     pub fn python_type_inference_cross_file() -> io::Result<Self> {
         Self::load(FixtureSpec::python_type_inference_cross_file())
+    }
+
+    /// Load Python type inference visibility fixture
+    pub fn python_type_inference_visibility() -> io::Result<Self> {
+        Self::load(FixtureSpec::python_type_inference_visibility())
+    }
+
+    /// Load Python type inference lambda fixture
+    pub fn python_type_inference_lambda() -> io::Result<Self> {
+        Self::load(FixtureSpec::python_type_inference_lambda())
+    }
+
+    /// Load Python type inference discriminated union fixture
+    pub fn python_type_inference_discriminated_union() -> io::Result<Self> {
+        Self::load(FixtureSpec::python_type_inference_discriminated_union())
+    }
+
+    /// Load Python type inference destructuring fixture
+    pub fn python_type_inference_destructuring() -> io::Result<Self> {
+        Self::load(FixtureSpec::python_type_inference_destructuring())
+    }
+
+    /// Load Python type inference negated checks fixture
+    pub fn python_type_inference_negated_checks() -> io::Result<Self> {
+        Self::load(FixtureSpec::python_type_inference_negated_checks())
     }
 
     /// Load Java basic project fixture
@@ -762,6 +1099,41 @@ impl TestFixture {
     /// Load Java type inference overloads fixture
     pub fn java_type_inference_overloads() -> io::Result<Self> {
         Self::load(FixtureSpec::java_type_inference_overloads())
+    }
+
+    /// Load Java type inference cross-file fixture
+    pub fn java_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::java_type_inference_cross_file())
+    }
+
+    /// Load Java type inference lambda fixture
+    pub fn java_type_inference_lambda() -> io::Result<Self> {
+        Self::load(FixtureSpec::java_type_inference_lambda())
+    }
+
+    /// Load Java type inference discriminated union fixture
+    pub fn java_type_inference_discriminated_union() -> io::Result<Self> {
+        Self::load(FixtureSpec::java_type_inference_discriminated_union())
+    }
+
+    /// Load Java type inference pattern matching fixture
+    pub fn java_type_inference_pattern_matching() -> io::Result<Self> {
+        Self::load(FixtureSpec::java_type_inference_pattern_matching())
+    }
+
+    /// Load Java type inference var inference fixture
+    pub fn java_type_inference_var_inference() -> io::Result<Self> {
+        Self::load(FixtureSpec::java_type_inference_var_inference())
+    }
+
+    /// Load Java type inference negated checks fixture
+    pub fn java_type_inference_negated_checks() -> io::Result<Self> {
+        Self::load(FixtureSpec::java_type_inference_negated_checks())
+    }
+
+    /// Load Java type inference control positions fixture
+    pub fn java_type_inference_control_positions() -> io::Result<Self> {
+        Self::load(FixtureSpec::java_type_inference_control_positions())
     }
 
     /// Load Java Spring Boot minimal demo fixture
@@ -834,6 +1206,31 @@ impl TestFixture {
         Self::load(FixtureSpec::typescript_type_inference_overloads())
     }
 
+    /// Load TypeScript type inference visibility fixture
+    pub fn typescript_type_inference_visibility() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_type_inference_visibility())
+    }
+
+    /// Load TypeScript type inference lambda fixture
+    pub fn typescript_type_inference_lambda() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_type_inference_lambda())
+    }
+
+    /// Load TypeScript type inference destructuring fixture
+    pub fn typescript_type_inference_destructuring() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_type_inference_destructuring())
+    }
+
+    /// Load TypeScript type inference negated checks fixture
+    pub fn typescript_type_inference_negated_checks() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_type_inference_negated_checks())
+    }
+
+    /// Load TypeScript type inference control positions fixture
+    pub fn typescript_type_inference_control_positions() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_type_inference_control_positions())
+    }
+
     /// Load C# basic project fixture
     pub fn csharp_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::csharp_basic())
@@ -854,6 +1251,36 @@ impl TestFixture {
         Self::load(FixtureSpec::csharp_type_inference_overloads())
     }
 
+    /// Load C# type inference cross-file fixture
+    pub fn csharp_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::csharp_type_inference_cross_file())
+    }
+
+    /// Load C# type inference visibility fixture
+    pub fn csharp_type_inference_visibility() -> io::Result<Self> {
+        Self::load(FixtureSpec::csharp_type_inference_visibility())
+    }
+
+    /// Load C# type inference lambda fixture
+    pub fn csharp_type_inference_lambda() -> io::Result<Self> {
+        Self::load(FixtureSpec::csharp_type_inference_lambda())
+    }
+
+    /// Load C# type inference discriminated union fixture
+    pub fn csharp_type_inference_discriminated_union() -> io::Result<Self> {
+        Self::load(FixtureSpec::csharp_type_inference_discriminated_union())
+    }
+
+    /// Load C# type inference is-not fixture
+    pub fn csharp_type_inference_is_not() -> io::Result<Self> {
+        Self::load(FixtureSpec::csharp_type_inference_is_not())
+    }
+
+    /// Load C# type inference control positions fixture
+    pub fn csharp_type_inference_control_positions() -> io::Result<Self> {
+        Self::load(FixtureSpec::csharp_type_inference_control_positions())
+    }
+
     /// Load C# MediatR review fixture
     pub fn csharp_mediatr() -> io::Result<Self> {
         Self::load(FixtureSpec::csharp_mediatr())
@@ -872,6 +1299,21 @@ impl TestFixture {
     /// Load Go type inference control flow fixture
     pub fn go_type_inference_control_flow() -> io::Result<Self> {
         Self::load(FixtureSpec::go_type_inference_control_flow())
+    }
+
+    /// Load Go type inference cross-file fixture
+    pub fn go_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::go_type_inference_cross_file())
+    }
+
+    /// Load Go type inference visibility fixture
+    pub fn go_type_inference_visibility() -> io::Result<Self> {
+        Self::load(FixtureSpec::go_type_inference_visibility())
+    }
+
+    /// Load Go type inference type assertion fixture
+    pub fn go_type_inference_type_assertion() -> io::Result<Self> {
+        Self::load(FixtureSpec::go_type_inference_type_assertion())
     }
 
     /// Load Go gin review fixture
@@ -984,6 +1426,11 @@ impl TestFixture {
         Self::load(FixtureSpec::cpp_type_inference_declarations())
     }
 
+    /// Load C++ type inference overloads fixture
+    pub fn cpp_type_inference_overloads() -> io::Result<Self> {
+        Self::load(FixtureSpec::cpp_type_inference_overloads())
+    }
+
     /// Load Kotlin type inference generics fixture
     pub fn kotlin_type_inference_generics() -> io::Result<Self> {
         Self::load(FixtureSpec::kotlin_type_inference_generics())
@@ -994,6 +1441,46 @@ impl TestFixture {
         Self::load(FixtureSpec::kotlin_type_inference_control_flow())
     }
 
+    /// Load Kotlin type inference cross-file fixture
+    pub fn kotlin_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_type_inference_cross_file())
+    }
+
+    /// Load Kotlin type inference overloads fixture
+    pub fn kotlin_type_inference_overloads() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_type_inference_overloads())
+    }
+
+    /// Load Kotlin type inference visibility fixture
+    pub fn kotlin_type_inference_visibility() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_type_inference_visibility())
+    }
+
+    /// Load Kotlin type inference lambda fixture
+    pub fn kotlin_type_inference_lambda() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_type_inference_lambda())
+    }
+
+    /// Load Kotlin type inference discriminated union fixture
+    pub fn kotlin_type_inference_discriminated_union() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_type_inference_discriminated_union())
+    }
+
+    /// Load Kotlin type inference null safety fixture
+    pub fn kotlin_type_inference_null_safety() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_type_inference_null_safety())
+    }
+
+    /// Load Kotlin type inference scope functions fixture
+    pub fn kotlin_type_inference_scope_functions() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_type_inference_scope_functions())
+    }
+
+    /// Load Kotlin type inference negated is fixture
+    pub fn kotlin_type_inference_negated_is() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_type_inference_negated_is())
+    }
+
     /// Load Scala type inference declarations fixture
     pub fn scala_type_inference_declarations() -> io::Result<Self> {
         Self::load(FixtureSpec::scala_type_inference_declarations())
@@ -1002,6 +1489,26 @@ impl TestFixture {
     /// Load Scala type inference control flow fixture
     pub fn scala_type_inference_control_flow() -> io::Result<Self> {
         Self::load(FixtureSpec::scala_type_inference_control_flow())
+    }
+
+    /// Load Scala type inference cross-file fixture
+    pub fn scala_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::scala_type_inference_cross_file())
+    }
+
+    /// Load Scala type inference overloads fixture
+    pub fn scala_type_inference_overloads() -> io::Result<Self> {
+        Self::load(FixtureSpec::scala_type_inference_overloads())
+    }
+
+    /// Load Scala type inference visibility fixture
+    pub fn scala_type_inference_visibility() -> io::Result<Self> {
+        Self::load(FixtureSpec::scala_type_inference_visibility())
+    }
+
+    /// Load Scala type inference for-comprehension fixture
+    pub fn scala_type_inference_for_comprehension() -> io::Result<Self> {
+        Self::load(FixtureSpec::scala_type_inference_for_comprehension())
     }
 
     /// Load Scala basic project fixture
@@ -1019,9 +1526,24 @@ impl TestFixture {
         Self::load(FixtureSpec::ruby_type_inference_constructors())
     }
 
+    /// Load Ruby type inference cross-file fixture
+    pub fn ruby_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::ruby_type_inference_cross_file())
+    }
+
     /// Load PHP type inference phpdoc fixture
     pub fn php_type_inference_phpdoc() -> io::Result<Self> {
         Self::load(FixtureSpec::php_type_inference_phpdoc())
+    }
+
+    /// Load PHP type inference cross-file fixture
+    pub fn php_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::php_type_inference_cross_file())
+    }
+
+    /// Load PHP type inference overloads fixture
+    pub fn php_type_inference_overloads() -> io::Result<Self> {
+        Self::load(FixtureSpec::php_type_inference_overloads())
     }
 
     /// Load Dart type inference declarations fixture
@@ -1032,6 +1554,31 @@ impl TestFixture {
     /// Load Dart type inference control flow fixture
     pub fn dart_type_inference_control_flow() -> io::Result<Self> {
         Self::load(FixtureSpec::dart_type_inference_control_flow())
+    }
+
+    /// Load Dart type inference cross-file fixture
+    pub fn dart_type_inference_cross_file() -> io::Result<Self> {
+        Self::load(FixtureSpec::dart_type_inference_cross_file())
+    }
+
+    /// Load Dart type inference overloads fixture
+    pub fn dart_type_inference_overloads() -> io::Result<Self> {
+        Self::load(FixtureSpec::dart_type_inference_overloads())
+    }
+
+    /// Load Dart type inference discriminated union fixture
+    pub fn dart_type_inference_discriminated_union() -> io::Result<Self> {
+        Self::load(FixtureSpec::dart_type_inference_discriminated_union())
+    }
+
+    /// Load Dart type inference is-negated fixture
+    pub fn dart_type_inference_is_negated() -> io::Result<Self> {
+        Self::load(FixtureSpec::dart_type_inference_is_negated())
+    }
+
+    /// Load Dart type inference control positions fixture
+    pub fn dart_type_inference_control_positions() -> io::Result<Self> {
+        Self::load(FixtureSpec::dart_type_inference_control_positions())
     }
 
     /// Load Dart basic project fixture
@@ -1052,6 +1599,11 @@ impl TestFixture {
     /// Load JavaScript type inference cross-file fixture
     pub fn javascript_type_inference_cross_file() -> io::Result<Self> {
         Self::load(FixtureSpec::javascript_type_inference_cross_file())
+    }
+
+    /// Load JavaScript type inference wildcard import fixture
+    pub fn javascript_type_inference_wildcard() -> io::Result<Self> {
+        Self::load(FixtureSpec::javascript_type_inference_wildcard())
     }
 
     /// Load the document fixture group

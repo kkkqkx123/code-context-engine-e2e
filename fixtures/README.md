@@ -45,7 +45,9 @@
   `collect_type_bindings`（与可视化同引擎、同合并策略）与
   `assert_variable_has_type` / `assert_narrowed_has_type` /
   `assert_return_has_type` / `assert_type_snapshot_eq!`，
-  在 `tests/regression/type_inference_integration.rs` 中使用。
+  在 `tests/regression/type_inference/<lang>.rs` 中使用。
+  断言全部基于内存 bindings，测试不读写任何输出文件；
+  仓库不保留版本化基线快照，唯一输出位置是被 `.gitignore` 忽略的 `outputs/`。
 
 ## 添加新 fixture
 

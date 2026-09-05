@@ -29,6 +29,8 @@ use std::path::Path;
 
 use cce_relation::RelationIndex;
 use cce_relation::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
+use cce_relation::policy::{cpp, csharp, dart, go, java, javascript, python, rust};
+use cce_relation::symbol::Visibility;
 use cce_types::{Entity, EntityId, EntityKind, ParsedFile};
 
 use crate::output_manager::{OutputCategory, OutputManager};
@@ -82,13 +84,143 @@ pub struct ProjectSummary {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn visibility_of(entity: &Entity) -> String {
-    if entity.modifiers.is_empty() {
-        "private".to_string()
-    } else {
-        // Keep the original ordering but join for display
-        entity.modifiers.join(" ")
+fn visibility_display(vis: &Visibility) -> String {
+    match vis {
+        Visibility::Public => "public",
+        Visibility::Package | Visibility::Module | Visibility::Super => "package",
+        Visibility::Private => "private",
+        Visibility::Restricted { .. } => "restricted",
+        Visibility::Protected => "protected",
+        Visibility::Internal => "internal",
+        Visibility::ProtectedInternal => "protected internal",
+        Visibility::PrivateProtected => "private protected",
+        Visibility::Friend { .. } => "friend",
     }
+    .to_string()
+}
+
+/// Fallback signal mapping for languages without a dedicated policy module
+/// (C, PHP, Ruby and unknown languages). Mirrors the generic branch of
+/// `cce-parser::relation_helpers`.
+fn fallback_signal_to_visibility(signal: &str) -> Option<Visibility> {
+    let t = signal.trim();
+    if t == "pub" || t == "public" || t == "export" || t == "exported" {
+        Some(Visibility::Public)
+    } else if t == "pub(crate)" || t == "crate" || t == "internal" || t == "package" {
+        Some(Visibility::Package)
+    } else if t == "protected" || t == "protected internal" || t == "private protected" {
+        Some(Visibility::Protected)
+    } else if t == "private" {
+        Some(Visibility::Private)
+    } else {
+        None
+    }
+}
+
+fn policy_signal_to_visibility(signal: &str, lang: &str) -> Option<Visibility> {
+    match lang {
+        "rust" => rust::visibility_from_signal(signal),
+        "go" => go::visibility_from_signal(signal),
+        "python" | "py" => python::visibility_from_signal(signal),
+        "dart" => dart::visibility_from_signal(signal),
+        "java" | "kotlin" | "scala" => java::visibility_from_signal(signal),
+        "c#" | "csharp" => csharp::visibility_from_signal(signal),
+        "c++" | "cpp" | "c" | "h" => cpp::visibility_from_signal(signal),
+        "javascript" | "js" | "jsx" | "typescript" | "ts" | "tsx" => {
+            javascript::visibility_from_signal(signal)
+        }
+        _ => fallback_signal_to_visibility(signal),
+    }
+}
+
+/// Language-aware visibility for display.
+///
+/// Dispatch mirrors `cce-parser::relation_helpers::detect_entity_visibility`
+/// and the authoritative `cce-relation::policy` modules: explicit modifier
+/// signals first, then the `metadata.visibility` signal, then Python
+/// `__all__` membership, then naming rules, finally the language default.
+/// The previous implementation returned `"private"` whenever `modifiers` was
+/// empty, which contradicted every language default except Rust/C++.
+fn visibility_of(entity: &Entity, language: &str) -> String {
+    let lang = language.to_lowercase();
+    let lang = lang.as_str();
+    for modifier in &entity.modifiers {
+        if let Some(vis) = policy_signal_to_visibility(&modifier.to_lowercase(), lang) {
+            return visibility_display(&vis);
+        }
+    }
+    if let Some(signal) = entity.metadata.get("visibility") {
+        if let Some(vis) = policy_signal_to_visibility(&signal.to_lowercase(), lang) {
+            return visibility_display(&vis);
+        }
+    }
+    if matches!(lang, "python" | "py") {
+        if let Some(flag) = entity.metadata.get("is_exported_by_all") {
+            if flag == "true" {
+                return "public".to_string();
+            } else if flag == "false" {
+                return "private".to_string();
+            }
+        }
+    }
+    let name_vis = match lang {
+        "go" => go::visibility_from_name(&entity.name),
+        "python" | "py" => python::visibility_from_name(&entity.name),
+        "dart" => dart::visibility_from_name(&entity.name),
+        "javascript" | "js" | "jsx" | "typescript" | "ts" | "tsx" => {
+            javascript::visibility_from_name(&entity.name)
+        }
+        _ => None,
+    };
+    if let Some(vis) = name_vis {
+        return visibility_display(&vis);
+    }
+    let default = match lang {
+        "rust" => rust::default_visibility(),
+        "go" => go::default_visibility(&entity.name),
+        "python" | "py" => python::default_visibility(&entity.name),
+        "dart" => dart::default_visibility(&entity.name),
+        "java" | "kotlin" | "scala" => java::default_visibility(),
+        "c#" | "csharp" => csharp::default_visibility(),
+        // C globals and PHP symbols are implicitly public. C++ members under
+        // an access section should carry a modifier upstream; the extractor
+        // does not record access sections yet, so namespace-scope entities
+        // default to public while members default to private.
+        "c" | "h" | "php" | "ruby" => Visibility::Public,
+        "c++" | "cpp" => {
+            if entity.parent.is_some() {
+                Visibility::Private
+            } else {
+                Visibility::Public
+            }
+        }
+        "javascript" | "js" | "jsx" | "typescript" | "ts" | "tsx" => {
+            javascript::default_visibility()
+        }
+        _ => Visibility::Public,
+    };
+    visibility_display(&default)
+}
+
+/// String literals (`"Alice"`, `'go'`) are call arguments, not modules.
+/// They leak into dependency/reference edges when argument extraction
+/// mistakes a literal for a symbol reference; drop them at render time.
+fn is_string_literal_ref(name: &str) -> bool {
+    let t = name.trim();
+    t.len() >= 2
+        && ((t.starts_with('"') && t.ends_with('"'))
+            || (t.starts_with('\'') && t.ends_with('\''))
+            || (t.starts_with('`') && t.ends_with('`')))
+}
+
+/// Resolve the language string for a file in the index.
+fn file_language(index: &RelationIndex, file_path: &str) -> String {
+    index
+        .file_records()
+        .read()
+        .get(file_path)
+        .map(|r| r.info.language.clone())
+        .unwrap_or_default()
 }
 
 fn span_str(entity: &Entity) -> String {
@@ -197,6 +329,8 @@ pub fn render_symbol_table(index: &RelationIndex, project_name: &str) -> String 
         writeln!(out, "## File: {file}").expect("write");
         writeln!(out).expect("write");
 
+        let lang = file_language(index, file);
+
         // Group by kind domain for readable sections
         let mut by_kind: BTreeMap<String, Vec<&Entity>> = BTreeMap::new();
         for (_, e) in entities {
@@ -264,7 +398,7 @@ pub fn render_symbol_table(index: &RelationIndex, project_name: &str) -> String 
                         escape_md(&e.name),
                         escape_md(&sig),
                         escape_md(&fields),
-                        escape_md(&visibility_of(e)),
+                        escape_md(&visibility_of(e, &lang)),
                         span_str(e)
                     )
                     .expect("write");
@@ -291,7 +425,7 @@ pub fn render_symbol_table(index: &RelationIndex, project_name: &str) -> String 
                         "| {} | {} | {} | {} |",
                         escape_md(&e.name),
                         escape_md(&sig),
-                        escape_md(&visibility_of(e)),
+                        escape_md(&visibility_of(e, &lang)),
                         span_str(e)
                     )
                     .expect("write");
@@ -348,7 +482,7 @@ pub fn render_symbol_table(index: &RelationIndex, project_name: &str) -> String 
                             kind,
                             escape_md(&params),
                             escape_md(ret),
-                            escape_md(&visibility_of(e)),
+                            escape_md(&visibility_of(e, &lang)),
                             span_str(e)
                         )
                         .expect("write");
@@ -395,7 +529,7 @@ pub fn render_symbol_table(index: &RelationIndex, project_name: &str) -> String 
                             escape_md(&e.name),
                             kind,
                             escape_md(&ty),
-                            escape_md(&visibility_of(e)),
+                            escape_md(&visibility_of(e, &lang)),
                             span_str(e),
                             escape_md(&parent_name)
                         )
@@ -452,7 +586,7 @@ pub fn render_symbol_table(index: &RelationIndex, project_name: &str) -> String 
                         escape_md(&e.name),
                         escape_md(kind),
                         escape_md(&sig),
-                        escape_md(&visibility_of(e)),
+                        escape_md(&visibility_of(e, &lang)),
                         span_str(e)
                     )
                     .expect("write");
@@ -485,13 +619,14 @@ pub fn collect_symbols(index: &RelationIndex) -> Vec<SymbolEntry> {
         }
     }
     for (file, entities) in files {
+        let lang = file_language(index, &file);
         for (id, e) in entities {
             entries.push(SymbolEntry {
                 name: e.name.clone(),
                 kind: e.kind.to_string(),
                 signature: e.signature.clone(),
                 file_path: file.clone(),
-                visibility: visibility_of(&e),
+                visibility: visibility_of(&e, &lang),
                 span: span_str(&e),
                 parent: id_to_parent.get(&id).cloned(),
                 return_type: e.return_type.clone(),
@@ -646,8 +781,12 @@ pub fn render_relations(index: &RelationIndex, project_name: &str) -> String {
             }
         }
     }
+    // The same call is contributed by both the resolved-relation index and
+    // the file-level relations; drop exact duplicates for display.
     internal_calls.sort();
+    internal_calls.dedup();
     external_calls.sort();
+    external_calls.dedup();
 
     writeln!(out, "### Internal Calls ({})", internal_calls.len()).expect("write");
     writeln!(out).expect("write");
@@ -774,7 +913,9 @@ pub fn render_relations(index: &RelationIndex, project_name: &str) -> String {
             }
         }
     }
+    hierarchy_rels.retain(|(_, callee, _, _)| !is_string_literal_ref(callee));
     hierarchy_rels.sort();
+    hierarchy_rels.dedup();
     writeln!(
         out,
         "### Inheritance / Implementation ({})",
@@ -1009,21 +1150,12 @@ pub fn render_type_inference_with_index(
     let mut total_narrowed = 0usize;
     let mut total_shapes: HashSet<String> = HashSet::new();
 
-    for file in files {
-        // Run inference
-        let ctx = cce_relation::type_inference::TypeInferenceEngine::infer_types(
-            file,
-            &cce_relation::type_inference::traits::InferenceContext::default(),
-        );
-        // Alternative two-pass for richer results if file has many functions
-        let ctx_two = cce_relation::type_inference::TypeInferenceEngine::infer_types_two_pass(
-            file,
-            &cce_relation::type_inference::traits::InferenceContext::default(),
-        );
-        // Merge both contexts for maximum coverage (two-pass may have forward refs)
-        let mut merged = ctx.clone();
-        merged.merge_from(&ctx_two);
+    // Project-wide inference: per-file merged contexts plus cross-file
+    // return propagation (`x = f()` with `f` in a sibling file).
+    // Shared with `collect_type_bindings` so markdown and assertions agree.
+    let project_contexts = crate::type_inference_assert::infer_project_contexts(files);
 
+    for (file, merged) in files.iter().zip(project_contexts.iter()) {
         writeln!(out, "## File: {}", file.path).expect("write");
         writeln!(out).expect("write");
         writeln!(out, "- Language: {}", file.language).expect("write");
@@ -1441,6 +1573,17 @@ pub fn render_file_report(
     .expect("write");
     writeln!(out).expect("write");
 
+    let lang = parsed_file
+        .map(|pf| pf.language.to_string())
+        .or_else(|| {
+            index
+                .file_records()
+                .read()
+                .get(file_path)
+                .map(|r| r.info.language.clone())
+        })
+        .unwrap_or_default();
+
     // Build parent -> children for this file only (for field inline rendering)
     let mut parent_to_children: BTreeMap<EntityId, Vec<&Entity>> = BTreeMap::new();
     for (_, e) in entities {
@@ -1521,7 +1664,7 @@ pub fn render_file_report(
                         escape_md(&e.name),
                         escape_md(&sig),
                         escape_md(&fields),
-                        escape_md(&visibility_of(e)),
+                        escape_md(&visibility_of(e, &lang)),
                         span_str(e)
                     )
                     .expect("write");
@@ -1547,7 +1690,7 @@ pub fn render_file_report(
                         "| {} | {} | {} | {} |",
                         escape_md(&e.name),
                         escape_md(&sig),
-                        escape_md(&visibility_of(e)),
+                        escape_md(&visibility_of(e, &lang)),
                         span_str(e)
                     )
                     .expect("write");
@@ -1597,7 +1740,7 @@ pub fn render_file_report(
                             kind,
                             escape_md(&params),
                             escape_md(ret),
-                            escape_md(&visibility_of(e)),
+                            escape_md(&visibility_of(e, &lang)),
                             span_str(e)
                         )
                         .expect("write");
@@ -1636,7 +1779,7 @@ pub fn render_file_report(
                             escape_md(&e.name),
                             kind,
                             escape_md(&ty),
-                            escape_md(&visibility_of(e)),
+                            escape_md(&visibility_of(e, &lang)),
                             span_str(e),
                             escape_md(&parent_name)
                         )
@@ -1692,7 +1835,7 @@ pub fn render_file_report(
                         escape_md(&e.name),
                         escape_md(kind),
                         escape_md(&sig),
-                        escape_md(&visibility_of(e)),
+                        escape_md(&visibility_of(e, &lang)),
                         span_str(e)
                     )
                     .expect("write");
@@ -1807,9 +1950,15 @@ pub fn render_file_report(
             }
         }
     }
+    // See the aggregated renderer above: identical rows arrive from both
+    // the resolved-relation index and the file-level relations.
     internal_calls.sort();
+    internal_calls.dedup();
     external_calls.sort();
+    external_calls.dedup();
+    hierarchy_rels.retain(|(_, callee, _)| !is_string_literal_ref(callee));
     hierarchy_rels.sort();
+    hierarchy_rels.dedup();
 
     writeln!(out, "### Internal Calls ({})", internal_calls.len()).expect("write");
     writeln!(out).expect("write");

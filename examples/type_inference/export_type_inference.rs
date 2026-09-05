@@ -20,7 +20,11 @@
 //! Shape | Span`, `Function Returns`, `Control-Flow Narrowing`,
 //! `Type Shapes`) are the human-readable counterpart of the machine-checked
 //! [`collect_type_bindings`](cce_e2e_tests::type_inference_assert::collect_type_bindings)
-//! snapshot used by `tests/regression/type_inference_integration.rs`.
+//! snapshot used by `tests/regression/type_inference/`.
+//!
+//! All output goes to the gitignored `outputs/` tree for human inspection
+//! only. Regression tests never read these files; they assert on in-memory
+//! bindings instead (see `tests/regression/type_inference/common.rs`).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -34,216 +38,14 @@ use cce_scanner::{FSScanner, ScanOptions};
 use cce_types::{OutputMode, ParsedFile};
 
 use cce_e2e_tests::structured_output::StructuredOutputWriter;
-use cce_e2e_tests::type_inference_assert::collect_type_bindings;
-use cce_e2e_tests::{
-    FixtureSpec, OutputCategory, OutputManager, TestFixture, init_minimal_logging,
-};
-
-struct Case {
-    language: &'static str,
-    scenario: &'static str,
-    spec: FixtureSpec,
-    patterns: Vec<&'static str>,
-}
+use cce_e2e_tests::type_inference_cases::{TypeInferenceCase, all_type_inference_cases};
+use cce_e2e_tests::{OutputCategory, OutputManager, TestFixture, init_minimal_logging};
 
 #[tokio::main]
 async fn main() {
     init_minimal_logging();
 
-    let cases = vec![
-        Case {
-            language: "rust",
-            scenario: "generics",
-            spec: FixtureSpec::rust_type_inference_generics(),
-            patterns: vec!["*.rs"],
-        },
-        Case {
-            language: "rust",
-            scenario: "control_flow",
-            spec: FixtureSpec::rust_type_inference_control_flow(),
-            patterns: vec!["*.rs"],
-        },
-        Case {
-            language: "python",
-            scenario: "type_hints",
-            spec: FixtureSpec::python_type_inference_type_hints(),
-            patterns: vec!["*.py"],
-        },
-        Case {
-            language: "python",
-            scenario: "control_flow",
-            spec: FixtureSpec::python_type_inference_control_flow(),
-            patterns: vec!["*.py"],
-        },
-        Case {
-            language: "python",
-            scenario: "cross_file",
-            spec: FixtureSpec::python_type_inference_cross_file(),
-            patterns: vec!["*.py"],
-        },
-        Case {
-            language: "typescript",
-            scenario: "generics",
-            spec: FixtureSpec::typescript_type_inference_generics(),
-            patterns: vec!["*.ts"],
-        },
-        Case {
-            language: "typescript",
-            scenario: "unions",
-            spec: FixtureSpec::typescript_type_inference_unions(),
-            patterns: vec!["*.ts"],
-        },
-        Case {
-            language: "typescript",
-            scenario: "cross_file",
-            spec: FixtureSpec::typescript_type_inference_cross_file(),
-            patterns: vec!["*.ts"],
-        },
-        Case {
-            language: "typescript",
-            scenario: "overloads",
-            spec: FixtureSpec::typescript_type_inference_overloads(),
-            patterns: vec!["*.ts"],
-        },
-        Case {
-            language: "java",
-            scenario: "generics",
-            spec: FixtureSpec::java_type_inference_generics(),
-            patterns: vec!["*.java"],
-        },
-        Case {
-            language: "java",
-            scenario: "control_flow",
-            spec: FixtureSpec::java_type_inference_control_flow(),
-            patterns: vec!["*.java"],
-        },
-        Case {
-            language: "java",
-            scenario: "visibility",
-            spec: FixtureSpec::java_type_inference_visibility(),
-            patterns: vec!["*.java"],
-        },
-        Case {
-            language: "java",
-            scenario: "overloads",
-            spec: FixtureSpec::java_type_inference_overloads(),
-            patterns: vec!["*.java"],
-        },
-        Case {
-            language: "csharp",
-            scenario: "generics",
-            spec: FixtureSpec::csharp_type_inference_generics(),
-            patterns: vec!["*.cs"],
-        },
-        Case {
-            language: "csharp",
-            scenario: "control_flow",
-            spec: FixtureSpec::csharp_type_inference_control_flow(),
-            patterns: vec!["*.cs"],
-        },
-        Case {
-            language: "csharp",
-            scenario: "overloads",
-            spec: FixtureSpec::csharp_type_inference_overloads(),
-            patterns: vec!["*.cs"],
-        },
-        Case {
-            language: "go",
-            scenario: "interfaces",
-            spec: FixtureSpec::go_type_inference_interfaces(),
-            patterns: vec!["*.go"],
-        },
-        Case {
-            language: "go",
-            scenario: "control_flow",
-            spec: FixtureSpec::go_type_inference_control_flow(),
-            patterns: vec!["*.go"],
-        },
-        Case {
-            language: "c",
-            scenario: "declarations",
-            spec: FixtureSpec::c_type_inference_declarations(),
-            patterns: vec!["*.c", "*.h"],
-        },
-        Case {
-            language: "cpp",
-            scenario: "declarations",
-            spec: FixtureSpec::cpp_type_inference_declarations(),
-            patterns: vec!["*.cpp", "*.hpp"],
-        },
-        Case {
-            language: "kotlin",
-            scenario: "generics",
-            spec: FixtureSpec::kotlin_type_inference_generics(),
-            patterns: vec!["*.kt"],
-        },
-        Case {
-            language: "kotlin",
-            scenario: "control_flow",
-            spec: FixtureSpec::kotlin_type_inference_control_flow(),
-            patterns: vec!["*.kt"],
-        },
-        Case {
-            language: "scala",
-            scenario: "declarations",
-            spec: FixtureSpec::scala_type_inference_declarations(),
-            patterns: vec!["*.scala"],
-        },
-        Case {
-            language: "scala",
-            scenario: "control_flow",
-            spec: FixtureSpec::scala_type_inference_control_flow(),
-            patterns: vec!["*.scala"],
-        },
-        Case {
-            language: "ruby",
-            scenario: "constructors",
-            spec: FixtureSpec::ruby_type_inference_constructors(),
-            patterns: vec!["*.rb"],
-        },
-        Case {
-            language: "php",
-            scenario: "phpdoc",
-            spec: FixtureSpec::php_type_inference_phpdoc(),
-            patterns: vec!["*.php"],
-        },
-        Case {
-            language: "dart",
-            scenario: "declarations",
-            spec: FixtureSpec::dart_type_inference_declarations(),
-            patterns: vec!["*.dart"],
-        },
-        Case {
-            language: "dart",
-            scenario: "control_flow",
-            spec: FixtureSpec::dart_type_inference_control_flow(),
-            patterns: vec!["*.dart"],
-        },
-        Case {
-            language: "javascript",
-            scenario: "narrowing",
-            spec: FixtureSpec::javascript_type_inference_narrowing(),
-            patterns: vec!["*.js"],
-        },
-        Case {
-            language: "javascript",
-            scenario: "cross_file",
-            spec: FixtureSpec::javascript_type_inference_cross_file(),
-            patterns: vec!["*.js"],
-        },
-        Case {
-            language: "bash",
-            scenario: "variables",
-            spec: FixtureSpec::bash_type_inference_variables(),
-            patterns: vec!["*.sh"],
-        },
-        Case {
-            language: "lua",
-            scenario: "variables",
-            spec: FixtureSpec::lua_type_inference_variables(),
-            patterns: vec!["*.lua"],
-        },
-    ];
+    let cases = all_type_inference_cases();
 
     for case in &cases {
         match TestFixture::load(case.spec.clone()) {
@@ -255,7 +57,7 @@ async fn main() {
     println!("\n=== All type-inference visualizations generated ===");
 }
 
-async fn export_case(case: &Case, fixture: TestFixture) {
+async fn export_case(case: &TypeInferenceCase, fixture: TestFixture) {
     println!("\n=== Exporting {}/{} ===", case.language, case.scenario);
     let project_root = fixture.root_path().to_path_buf();
 
@@ -350,12 +152,9 @@ async fn export_case(case: &Case, fixture: TestFixture) {
         Ok(path) => println!("  type inference: {}", path.display()),
         Err(e) => eprintln!("  type inference error: {e}"),
     }
-
-    let bindings = collect_type_bindings(&parsed_files);
-    println!("  canonical bindings: {}", bindings.len());
 }
 
-fn copy_nl_docs_to_output(case: &Case, project_root: &Path, indexed_files: usize) {
+fn copy_nl_docs_to_output(case: &TypeInferenceCase, project_root: &Path, indexed_files: usize) {
     let cce_dir = project_root.join(".cce").join("nl_docs");
     let output_mgr = OutputManager::builder()
         .category(OutputCategory::Scenarios)

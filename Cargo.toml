@@ -118,6 +118,7 @@ cce-plugin-runtime = { path = "../cce-plugin-runtime" }
 cce-orchestrator = { path = "../cce-orchestrator" }
 chrono = { workspace = true }
 compact_str = { workspace = true }
+dashmap = { workspace = true }
 dotenvy = { workspace = true }
 rkyv = { workspace = true }
 reqwest = { workspace = true }
