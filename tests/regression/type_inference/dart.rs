@@ -60,9 +60,11 @@ fn test_dart_declarations_snapshot() {
         .expect("Failed to load dart declarations fixture");
     let bindings = snapshot_for(&fixture);
 
-    assert_variable_has_type(&bindings, "count", "number");
+    // `var count = 42` infers Dart `int` (the `num` supertype was an
+    // artifact of the language-agnostic `number` vocabulary).
+    assert_variable_has_type(&bindings, "count", "int");
     assert_variable_has_type(&bindings, "explicit", "String");
-    assert_variable_has_type(&bindings, "name", "string");
+    assert_variable_has_type(&bindings, "name", "String");
     assert_return_has_type(&bindings, "greet", "String");
     assert_return_has_type(&bindings, "identity", "T");
     assert_return_has_type(&bindings, "wrapInList", "List<T>");

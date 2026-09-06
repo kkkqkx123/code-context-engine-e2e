@@ -88,6 +88,59 @@ fn test_go_interfaces_snapshot() {
     assert_return_has_type(&bindings, "wrapInSlice", "[]T");
     assert_variable_has_type(&bindings, "s", "Stringer");
     assert_variable_has_type(&bindings, "n", "Named");
+    // Call-site generic substitution through composite literals.
+    assert_variable_has_type(&bindings, "wrapped", "string[]");
+    assert_variable_has_type(&bindings, "firstItem", "int");
+}
+
+#[tokio::test]
+async fn test_go_interfaces_method_set_satisfaction() {
+    use cce_relation::index::HierarchyQueryOps;
+    use cce_types::entity::EntityKind;
+
+    init_minimal_logging();
+
+    let fixture =
+        TestFixture::go_type_inference_interfaces().expect("Failed to load go interfaces fixture");
+    let orchestrator = run_index(fixture, vec!["go".to_string()]).await;
+
+    let relation_index = orchestrator
+        .get_relation_index()
+        .expect("Relation index should be available");
+
+    let entity_id_by_kind = |name: &str, kind: EntityKind| {
+        relation_index
+            .get_function_ids_by_name(name)
+            .into_iter()
+            .find(|id| {
+                relation_index
+                    .get_function_by_entity_id(*id)
+                    .is_some_and(|entity| entity.kind == kind)
+            })
+            .unwrap_or_else(|| panic!("Should extract {kind:?} entity named {name}"))
+    };
+    let person = entity_id_by_kind("Person", EntityKind::Struct);
+    let stringer = entity_id_by_kind("Stringer", EntityKind::Interface);
+    let named = entity_id_by_kind("Named", EntityKind::Interface);
+    let formatter = entity_id_by_kind("Formatter", EntityKind::Interface);
+
+    // Person implements all three interfaces (Formatter's direct method
+    // set is {Format}; the embedded Stringer edge is covered separately).
+    for iface in [stringer, named, formatter] {
+        assert!(
+            relation_index
+                .get_implementing_classes(iface)
+                .contains(&person),
+            "Person should implement interface {iface:?}"
+        );
+    }
+    let implemented = relation_index.get_implemented_interfaces(person);
+    for iface in [stringer, named, formatter] {
+        assert!(
+            implemented.contains(&iface),
+            "Person should list interface {iface:?} as implemented"
+        );
+    }
 }
 
 #[test]

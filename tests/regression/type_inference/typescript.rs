@@ -50,7 +50,7 @@ async fn test_typescript_unions_type_inference() {
 
 #[test]
 fn test_typescript_generics_snapshot() {
-    use cce_e2e_tests::type_inference_assert::assert_return_has_type;
+    use cce_e2e_tests::type_inference_assert::{assert_return_has_type, assert_variable_has_type};
 
     init_minimal_logging();
     let fixture = TestFixture::typescript_type_inference_generics()
@@ -62,6 +62,13 @@ fn test_typescript_generics_snapshot() {
     assert_return_has_type(&bindings, "makePair", "Pair<A, B>");
     assert_return_has_type(&bindings, "swap", "Pair<B, A>");
     assert_return_has_type(&bindings, "collectToMap", "Map<K, V>");
+    // Call-site generic substitution.
+    assert_variable_has_type(&bindings, "pair", "Pair<number, string>");
+    assert_variable_has_type(&bindings, "swapped", "Pair<string, number>");
+    assert_variable_has_type(&bindings, "wrapped", "number[]");
+    assert_variable_has_type(&bindings, "map", "Map<string, number>");
+    // Explicit annotations must not be downgraded by generic machinery.
+    assert_variable_has_type(&bindings, "container", "Container<string>");
 }
 
 #[test]
@@ -132,6 +139,8 @@ fn test_typescript_destructuring_snapshot() {
 
     assert_variable_has_type(&bindings, "name", "string");
     assert_variable_has_type(&bindings, "age", "number");
+    assert_variable_has_type(&bindings, "first", "string");
+    assert_variable_has_type(&bindings, "second", "string");
     assert_return_has_type(&bindings, "greet", "string");
 }
 

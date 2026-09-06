@@ -116,6 +116,8 @@ fn test_rust_destructuring_snapshot() {
     assert_variable_has_type(&bindings, "pair", "(i32");
     assert_variable_has_type(&bindings, "p", "Point");
     assert_variable_has_type(&bindings, "x", "i32");
+    assert_variable_has_type(&bindings, "num", "i32");
+    assert_variable_has_type(&bindings, "text", "String");
 }
 
 #[test]

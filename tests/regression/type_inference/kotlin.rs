@@ -34,6 +34,22 @@ async fn test_kotlin_cross_file_type_inference() {
     assert!(relation_index.resolved_relation_count() >= 1);
 }
 
+#[test]
+fn test_kotlin_overloads_resolve_by_argument_shapes() {
+    use cce_e2e_tests::type_inference_assert::assert_variable_has_type;
+
+    init_minimal_logging();
+    let fixture = TestFixture::kotlin_type_inference_overloads()
+        .expect("Failed to load kotlin overloads fixture");
+    let bindings = snapshot_for(&fixture);
+
+    // Same-file overloads dispatch on call-site shapes, not on the
+    // most recently declared overload.
+    assert_variable_has_type(&bindings, "ints", "Int");
+    assert_variable_has_type(&bindings, "strs", "String");
+    assert_variable_has_type(&bindings, "mixed", "String");
+}
+
 #[tokio::test]
 async fn test_kotlin_overloads_type_inference() {
     init_minimal_logging();

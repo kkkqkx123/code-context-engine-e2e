@@ -115,12 +115,12 @@ pub fn collect_type_bindings(files: &[ParsedFile]) -> Vec<CanonicalTypeBinding> 
         let returns: BTreeMap<u64, String> = merged
             .return_types_iter()
             .map(|(eid, _)| {
-                let func_name = file
-                    .entities
-                    .iter()
-                    .find(|e| e.id == *eid)
-                    .map(|e| e.name.clone())
-                    .unwrap_or_else(|| format!("EntityId({})", eid.0));
+                let func_name = crate::structured_output::types::resolve_inferred_return_name(
+                    eid,
+                    Some(file),
+                    &[],
+                    &BTreeMap::new(),
+                );
                 (eid.0, func_name)
             })
             .collect();
@@ -336,8 +336,8 @@ mod tests {
         assert_origin_priority_higher("ControlFlowNarrowing", "ConstructorCall");
     }
 
-    /// ISSUE-06: tuple unpacking resolves element types from the
-    /// annotated parameter; `except E as e` binds the exception type.
+    /// Tuple unpacking resolves element types from the annotated
+    /// parameter; exception bindings resolve to the caught type.
     #[test]
     fn test_destructuring_element_types() {
         use cce_parser::parser::ast_parser::AstParser;
@@ -363,8 +363,8 @@ mod tests {
         assert_variable_has_type(&bindings, "e", "ValueError");
     }
 
-    /// ISSUE-05: `user = load_user(...)` with `load_user` defined in a
-    /// sibling file must resolve to `User` via cross-file propagation.
+    /// Call assignments resolve through sibling file return types
+    /// via cross-file propagation.
     #[test]
     fn test_cross_file_return_propagation() {
         use cce_parser::parser::ast_parser::AstParser;

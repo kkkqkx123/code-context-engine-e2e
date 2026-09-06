@@ -15,11 +15,12 @@ fn test_javascript_narrowing_snapshot() {
         TestFixture::javascript_type_inference_narrowing().expect("Failed to load js fixture");
     let bindings = snapshot_for(&fixture);
 
-    // Return-type harvesting works; `typeof`/`instanceof` narrowing does not
-    // produce bindings for this fixture yet.
-    assert_return_has_type(&bindings, "handleResult", "unknown");
-    assert_return_has_type(&bindings, "process", "falsy");
-    assert_return_has_type(&bindings, "createUser", "kind");
+    // Return expressions are normalized to type vocabulary (`'empty'` /
+    // `'unknown'` -> `string`, `{...}` -> `object`); `typeof`/`instanceof`
+    // narrowing does not produce bindings for this fixture yet.
+    assert_return_has_type(&bindings, "handleResult", "string");
+    assert_return_has_type(&bindings, "process", "string");
+    assert_return_has_type(&bindings, "createUser", "object");
 }
 
 #[tokio::test]

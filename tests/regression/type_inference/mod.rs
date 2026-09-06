@@ -10,6 +10,7 @@
 //! Run `cargo run -p cce-e2e-tests --example export_type_inference` to regenerate
 //! the human-readable `TYPE_INFERENCE.md` reports for visual inspection.
 
+pub mod bash;
 pub mod c_cpp;
 pub mod common;
 pub mod csharp;
@@ -19,6 +20,7 @@ pub mod index_smoke;
 pub mod java;
 pub mod javascript;
 pub mod kotlin;
+pub mod lua;
 pub mod php;
 pub mod python;
 pub mod ruby;

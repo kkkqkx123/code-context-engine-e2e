@@ -142,7 +142,7 @@ fn test_python_negated_checks_snapshot() {
         .expect("Failed to load python negated checks fixture");
     let bindings = snapshot_for(&fixture);
 
-    // ISSUE-07: negated guards narrow against the declared annotation.
+    // Negated guards narrow against the declared annotation.
     // `not isinstance(value, str)` on `Union[str, int]` leaves `int`;
     // `value is not None` on `Optional[str]` leaves `str`;
     // `not value` on `Optional[str]` leaves `falsy`.
