@@ -12,8 +12,8 @@ use cce_relation::type_inference::types::ScopedTypeContext;
 use cce_types::{Entity, EntityId, EntityKind, ParsedFile};
 
 use super::types::{
-    escape_md, is_noise_module_target, is_string_literal_ref, local_value_names, span_str,
-    span_str_from_span, visibility_of,
+    escape_md, is_noise_module_target, is_string_literal_ref, local_value_names,
+    normalize_nullable_display, span_str, span_str_from_span, visibility_of,
 };
 
 /// Render a per-file report that colocates symbols, relations, and type
@@ -652,6 +652,12 @@ pub fn render_file_report(
             writeln!(out, "_No inferred types_").expect("write");
             writeln!(out).expect("write");
         } else {
+            // Canonical nullable display keeps `str | None` and
+            // `Optional[str]` (or `String | null` and `String?`) on one
+            // spelling in this report, mirroring the aggregated export.
+            let report_lang = parsed_file
+                .map(|pf| pf.language)
+                .unwrap_or(cce_types::language::Language::Unknown);
             writeln!(out, "### Variables").expect("write");
             writeln!(out).expect("write");
             writeln!(
@@ -681,13 +687,13 @@ pub fn render_file_report(
                     let shape = binding
                         .shape
                         .as_ref()
-                        .map(|s| s.to_type_string())
+                        .map(|s| normalize_nullable_display(report_lang, &s.to_type_string()))
                         .unwrap_or_else(|| "-".to_string());
                     writeln!(
                         out,
                         "| {} | {} | {} | {} | {} | {} |",
                         escape_md(name),
-                        escape_md(&binding.type_name),
+                        escape_md(&normalize_nullable_display(report_lang, &binding.type_name)),
                         escape_md(&origin),
                         priority,
                         escape_md(&shape),
@@ -699,6 +705,22 @@ pub fn render_file_report(
             }
             if var_count == 0 {
                 writeln!(out, "| - | - | - | - | - | - |").expect("write");
+                // Distinguish "nothing to bind" (no variable entities) from
+                // inference failure, mirroring the aggregated export.
+                let has_variable_entities = parsed_file.is_some_and(|pf| {
+                    pf.entities
+                        .iter()
+                        .any(|e| matches!(e.kind, cce_types::EntityKind::Variable))
+                }) || entities
+                    .iter()
+                    .any(|(_, e)| matches!(e.kind, cce_types::EntityKind::Variable));
+                if !has_variable_entities {
+                    writeln!(
+                        out,
+                        "_No variable entities: all values are annotated parameters or returns._"
+                    )
+                    .expect("write");
+                }
             }
             writeln!(out).expect("write");
 
@@ -715,7 +737,7 @@ pub fn render_file_report(
                 let shape = binding
                     .shape
                     .as_ref()
-                    .map(|s| s.to_type_string())
+                    .map(|s| normalize_nullable_display(report_lang, &s.to_type_string()))
                     .unwrap_or_else(|| "-".to_string());
                 let origin = binding
                     .origin
@@ -735,7 +757,7 @@ pub fn render_file_report(
                     "| {} ({}) | {} | {} | {} |",
                     escape_md(&func_name),
                     eid.0,
-                    escape_md(&binding.type_name),
+                    escape_md(&normalize_nullable_display(report_lang, &binding.type_name)),
                     escape_md(&origin),
                     escape_md(&shape)
                 )
@@ -763,7 +785,7 @@ pub fn render_file_report(
                             out,
                             "| {} | {} | {} | {} |",
                             escape_md(name),
-                            escape_md(&binding.type_name),
+                            escape_md(&normalize_nullable_display(report_lang, &binding.type_name)),
                             escape_md(&origin),
                             span_str_from_span(&binding.span)
                         )
@@ -774,6 +796,18 @@ pub fn render_file_report(
             }
             if narrow_count == 0 {
                 writeln!(out, "| - | - | - | - |").expect("write");
+                // Distinguish "nothing to narrow" (no control-flow facts)
+                // from conservative no-guess narrowing.
+                let has_facts = parsed_file.is_some_and(|pf| !pf.control_flow.is_empty());
+                if !has_facts {
+                    writeln!(out, "_No control-flow facts._").expect("write");
+                } else {
+                    writeln!(
+                        out,
+                        "_No narrowable conditions: guards carry no supported type tests._"
+                    )
+                    .expect("write");
+                }
             }
             writeln!(out).expect("write");
 
@@ -782,16 +816,18 @@ pub fn render_file_report(
             let mut shapes: Vec<String> = merged
                 .frames_iter()
                 .flat_map(|f| {
-                    f.bindings
-                        .values()
-                        .filter_map(|b| b.shape.as_ref().map(|s| s.to_type_string()))
+                    f.bindings.values().filter_map(|b| {
+                        b.shape
+                            .as_ref()
+                            .map(|s| normalize_nullable_display(report_lang, &s.to_type_string()))
+                    })
                 })
                 .collect();
-            shapes.extend(
-                merged
-                    .return_types_iter()
-                    .filter_map(|(_, b)| b.shape.as_ref().map(|s| s.to_type_string())),
-            );
+            shapes.extend(merged.return_types_iter().filter_map(|(_, b)| {
+                b.shape
+                    .as_ref()
+                    .map(|s| normalize_nullable_display(report_lang, &s.to_type_string()))
+            }));
             shapes.sort();
             shapes.dedup();
             if shapes.is_empty() {

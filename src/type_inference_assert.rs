@@ -69,10 +69,31 @@ pub struct CanonicalTypeBinding {
 /// Shared with [`render_type_inference`](crate::structured_output::render_type_inference)
 /// so snapshot assertions and visualized markdown never diverge.
 pub fn infer_project_contexts(files: &[ParsedFile]) -> Vec<ScopedTypeContext> {
+    // Build a per-file member index so discriminated-union narrowing sees
+    // the same field information as the production `SymbolTableBuilder`
+    // path, which passes its module type index via `InferenceContext`.
+    // Without this the export used `InferenceContext::default()` (no
+    // index) and every field-discriminated narrowing rendered empty.
+    let indexes: Vec<cce_relation::symbol_table::TypeMemberIndex> = files
+        .iter()
+        .map(|file| {
+            let mut index = cce_relation::symbol_table::TypeMemberIndex::new();
+            cce_relation::policy::type_member::build_type_index_for_file(
+                &file.entities,
+                "",
+                &file.path,
+                "",
+                file.language,
+                &mut index,
+            );
+            index
+        })
+        .collect();
     let mut merged_by_file = Vec::with_capacity(files.len());
-    for file in files {
-        let ctx = TypeInferenceEngine::infer_types(file, &InferenceContext::default());
-        let ctx_two = TypeInferenceEngine::infer_types_two_pass(file, &InferenceContext::default());
+    for (file, index) in files.iter().zip(indexes.iter()) {
+        let inference_ctx = InferenceContext::new().with_type_index(index);
+        let ctx = TypeInferenceEngine::infer_types(file, &inference_ctx);
+        let ctx_two = TypeInferenceEngine::infer_types_two_pass(file, &inference_ctx);
         let mut merged = ctx.clone();
         merged.merge_from(&ctx_two);
         merged_by_file.push(merged);

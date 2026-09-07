@@ -153,7 +153,7 @@ fn test_typescript_negated_checks_snapshot() {
         .expect("Failed to load typescript negated checks fixture");
     let bindings = snapshot_for(&fixture);
 
-    assert_narrowed_has_type(&bindings, "value", "falsy");
+    assert_narrowed_has_type(&bindings, "value", "undefined");
     assert_return_has_type(&bindings, "handleNotNull", "string");
     assert_return_has_type(&bindings, "handleNegated", "string");
 }
@@ -243,4 +243,26 @@ async fn test_typescript_visibility_type_inference() {
         .get_relation_index()
         .expect("Relation index should be available");
     assert!(relation_index.file_count() >= 1);
+}
+
+#[test]
+fn test_typescript_overloads_resolve_per_callsite() {
+    use cce_e2e_tests::type_inference_assert::{TypeBindingKind, find_bindings};
+
+    init_minimal_logging();
+    let fixture = TestFixture::typescript_type_inference_overloads()
+        .expect("Failed to load ts overloads fixture");
+    let bindings = snapshot_for(&fixture);
+
+    // Each call site binds exactly to its matching overload signature,
+    // not the implementation's union return.
+    for (var, expected) in [("ints", "number"), ("strs", "string"), ("mixed", "string")] {
+        let hits = find_bindings(&bindings, var, TypeBindingKind::Variable);
+        assert_eq!(
+            hits.len(),
+            1,
+            "expected one binding for '{var}', got {hits:#?}"
+        );
+        assert_eq!(hits[0].inferred_type, expected);
+    }
 }

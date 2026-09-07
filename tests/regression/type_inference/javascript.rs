@@ -68,6 +68,19 @@ async fn test_javascript_cross_file_resolves_calls() {
     );
 }
 
+#[test]
+fn test_javascript_cross_file_snapshot() {
+    use cce_e2e_tests::type_inference_assert::{assert_return_has_type, assert_variable_has_type};
+
+    init_minimal_logging();
+    let fixture = TestFixture::javascript_type_inference_cross_file()
+        .expect("Failed to load javascript cross-file fixture");
+    let bindings = snapshot_for(&fixture);
+
+    assert_return_has_type(&bindings, "loadUser", "User");
+    assert_variable_has_type(&bindings, "user", "User");
+}
+
 #[tokio::test]
 async fn test_javascript_wildcard_type_inference() {
     init_minimal_logging();
@@ -79,4 +92,22 @@ async fn test_javascript_wildcard_type_inference() {
         .expect("Relation index should be available");
     assert!(relation_index.file_count() >= 1);
     assert!(relation_index.resolved_relation_count() >= 1);
+}
+
+#[test]
+fn test_javascript_wildcard_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_return_has_type;
+
+    init_minimal_logging();
+    let fixture = TestFixture::javascript_type_inference_wildcard()
+        .expect("Failed to load javascript wildcard fixture");
+    let bindings = snapshot_for(&fixture);
+
+    assert_return_has_type(&bindings, "alpha", "number");
+    assert_return_has_type(&bindings, "beta", "number");
+
+    // sum's return body is `utils.alpha() + utils.beta()` — an
+    // arithmetic expression over two known numeric calls.  The extractor
+    // intentionally drops compound expressions so the inferer falls back
+    // to unknown.
 }

@@ -105,4 +105,8 @@ fn test_scala_for_comprehension_snapshot() {
     assert_return_has_type(&bindings, "usernames", "List[String]");
     assert_return_has_type(&bindings, "pairs", "List[(Int, String)]");
     assert_variable_has_type(&bindings, "users", "List");
+
+    assert_variable_has_type(&bindings, "user", "User");
+    assert_variable_has_type(&bindings, "n", "Int");
+    assert_variable_has_type(&bindings, "label", "String");
 }

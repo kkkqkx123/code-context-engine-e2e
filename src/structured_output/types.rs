@@ -73,6 +73,63 @@ pub fn escape_md(s: &str) -> String {
     s.replace('|', "\\|").replace('\n', " ").replace('\r', "")
 }
 
+/// Normalize a nullable type spelling for report display.
+///
+/// The same nullable meaning surfaces in several spellings
+/// (`Optional[str]` vs `str | None`, `String?` vs `String | null`), which
+/// splits the `Shape` column and the distinct-shape count. This maps the
+/// two-member nullable union to the language's canonical display form and
+/// leaves everything else untouched. Display-only: raw bindings keep their
+/// source spelling.
+pub fn normalize_nullable_display(language: cce_types::language::Language, value: &str) -> String {
+    use cce_types::language::Language;
+    let trimmed = value.trim();
+    // Split a top-level `|` union into members.
+    let members: Vec<String> = trimmed
+        .split('|')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if members.len() != 2 {
+        return value.to_string();
+    }
+    let null_names: &[&str] = match language {
+        Language::Python => &["None", "NoneType"],
+        Language::TypeScript | Language::JavaScript | Language::Tsx | Language::Jsx => {
+            &["null", "undefined"]
+        }
+        Language::Rust => &["None"],
+        Language::Go => &["nil"],
+        Language::CSharp | Language::Kotlin | Language::Java => &["null"],
+        Language::Dart => &["Null", "null"],
+        Language::Scala => &["None", "Null", "null"],
+        _ => return value.to_string(),
+    };
+    let null_pos = members
+        .iter()
+        .position(|m| null_names.iter().any(|n| *m == **n));
+    let Some(null_idx) = null_pos else {
+        return value.to_string();
+    };
+    let inner = members[1 - null_idx].clone();
+    if inner.is_empty() {
+        return value.to_string();
+    }
+    match language {
+        Language::Python | Language::Scala => format!("Optional[{inner}]"),
+        Language::TypeScript | Language::JavaScript | Language::Tsx | Language::Jsx => {
+            value.to_string()
+        }
+        _ => {
+            if inner.contains([' ', '|', '&', '<', '>', '[', ']', '(', ')', ',']) {
+                value.to_string()
+            } else {
+                format!("{inner}?")
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Span helpers
 // ---------------------------------------------------------------------------
@@ -413,6 +470,31 @@ mod tests {
         assert_eq!(
             resolve_inferred_return_name(&EntityId(9), None, &index_entities, &global),
             "EntityId(9)"
+        );
+    }
+
+    #[test]
+    fn test_nullable_display_unifies_spellings() {
+        assert_eq!(
+            normalize_nullable_display(Language::Python, "str | None"),
+            "Optional[str]"
+        );
+        assert_eq!(
+            normalize_nullable_display(Language::Kotlin, "String | null"),
+            "String?"
+        );
+        assert_eq!(
+            normalize_nullable_display(Language::Dart, "String | Null"),
+            "String?"
+        );
+        // Non-nullable unions and other languages keep their spelling.
+        assert_eq!(
+            normalize_nullable_display(Language::Python, "str | int"),
+            "str | int"
+        );
+        assert_eq!(
+            normalize_nullable_display(Language::TypeScript, "string | null"),
+            "string | null"
         );
     }
 }

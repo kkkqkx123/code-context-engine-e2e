@@ -85,7 +85,7 @@ fn test_go_interfaces_snapshot() {
     assert_return_has_type(&bindings, "processStringer", "string");
     assert_return_has_type(&bindings, "processNamed", "string");
     assert_return_has_type(&bindings, "first", "T");
-    assert_return_has_type(&bindings, "wrapInSlice", "[]T");
+    assert_return_has_type(&bindings, "wrapInSlice", "T[]");
     assert_variable_has_type(&bindings, "s", "Stringer");
     assert_variable_has_type(&bindings, "n", "Named");
     // Call-site generic substitution through composite literals.
@@ -145,7 +145,9 @@ async fn test_go_interfaces_method_set_satisfaction() {
 
 #[test]
 fn test_go_control_flow_snapshot() {
-    use cce_e2e_tests::type_inference_assert::assert_return_has_type;
+    use cce_e2e_tests::type_inference_assert::{
+        TypeBindingKind, assert_return_has_type, find_bindings,
+    };
 
     init_minimal_logging();
     let fixture = TestFixture::go_type_inference_control_flow()
@@ -154,6 +156,17 @@ fn test_go_control_flow_snapshot() {
 
     assert_return_has_type(&bindings, "handleError", "string");
     assert_return_has_type(&bindings, "divide", "int");
+    // Guard narrowings never render as duplicated rows: identical
+    // (variable, type) entries collapse even when several statements share
+    // the entity-span fallback.
+    let err_narrowed = find_bindings(&bindings, "err", TypeBindingKind::Narrowed);
+    let mut seen = std::collections::HashSet::new();
+    for binding in &err_narrowed {
+        assert!(
+            seen.insert((binding.inferred_type.clone(), binding.shape.clone())),
+            "duplicate narrowed row for 'err': {binding:?}"
+        );
+    }
 }
 
 #[test]

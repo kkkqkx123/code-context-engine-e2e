@@ -105,7 +105,9 @@ fn test_csharp_control_flow_snapshot() {
 
 #[test]
 fn test_csharp_discriminated_union_snapshot() {
-    use cce_e2e_tests::type_inference_assert::assert_variable_has_type;
+    use cce_e2e_tests::type_inference_assert::{
+        assert_narrowed_has_type, assert_variable_has_type,
+    };
 
     init_minimal_logging();
     // NB: method returns are not captured by the C# extractor yet; the
@@ -117,6 +119,11 @@ fn test_csharp_discriminated_union_snapshot() {
     assert_variable_has_type(&bindings, "Radius", "double");
     assert_variable_has_type(&bindings, "Width", "double");
     assert_variable_has_type(&bindings, "Kind", "string");
+    // Switch-expression arms bind their designations.
+    assert_narrowed_has_type(&bindings, "c", "Circle");
+    assert_narrowed_has_type(&bindings, "r", "Rectangle");
+    // `shape.Kind == "Circle"` names the Circle case, so only it is kept.
+    assert_narrowed_has_type(&bindings, "shape", "Circle");
 }
 
 #[test]
@@ -130,4 +137,6 @@ fn test_csharp_is_not_snapshot() {
 
     // `value is not null` narrows the declared `string` parameter.
     assert_narrowed_has_type(&bindings, "value", "string");
+    // The `obj is not string` guard leaves `obj: string` behind.
+    assert_narrowed_has_type(&bindings, "obj", "string");
 }

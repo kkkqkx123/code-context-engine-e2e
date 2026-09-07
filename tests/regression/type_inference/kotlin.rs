@@ -154,6 +154,8 @@ fn test_kotlin_negated_is_snapshot() {
     let bindings = snapshot_for(&fixture);
 
     assert_narrowed_has_type(&bindings, "value", "String");
+    // Both `when` arms narrow, including the second one.
+    assert_narrowed_has_type(&bindings, "value", "Int");
     assert_return_has_type(&bindings, "handleNegated", "String");
     assert_return_has_type(&bindings, "classifyWhen", "String");
 }

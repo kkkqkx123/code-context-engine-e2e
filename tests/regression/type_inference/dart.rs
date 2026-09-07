@@ -112,9 +112,11 @@ fn test_dart_is_negated_snapshot() {
     assert_return_has_type(&bindings, "handleNotNull", "String");
     assert_return_has_type(&bindings, "handleNullCheck", "String");
     // `value != null` narrows the declared `String?` parameter (non-null
-    // branch). `is!` complements stay conservative for non-union declared
-    // types; else-branch/early-return modeling is deferred.
+    // branch). `is!` on `String?` leaves `Null` on the then side and
+    // `String` past the guard; `is!` on plain `Object` leaves the positive
+    // type past the guard.
     assert_narrowed_has_type(&bindings, "value", "String");
+    assert_narrowed_has_type(&bindings, "value", "Null");
 }
 
 #[test]

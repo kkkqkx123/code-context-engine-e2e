@@ -8,8 +8,46 @@ use std::fmt::Write as _;
 
 use cce_relation::RelationIndex;
 use cce_types::ParsedFile;
+use cce_types::language::Language;
 
-use super::types::{escape_md, span_str_from_span};
+use super::types::{escape_md, normalize_nullable_display, span_str_from_span};
+
+/// Normalize Scala generic brackets for report display.
+///
+/// Shapes already render with angle brackets (`Map<K, V>`), while raw
+/// inferred names may keep Scala square brackets (`Map[K, V]`). Convert
+/// balanced square-bracket generics to angle brackets for Scala only so
+/// both columns agree; other languages keep their own spelling.
+fn normalize_generic_brackets(language: Language, value: &str) -> String {
+    if language != Language::Scala {
+        return value.to_string();
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut depth = 0usize;
+    for ch in value.chars() {
+        match ch {
+            '[' => {
+                depth += 1;
+                out.push('<');
+            }
+            ']' if depth > 0 => {
+                depth -= 1;
+                out.push('>');
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Display form of an inferred type or shape for reports.
+///
+/// Applies Scala bracket normalization first, then the shared nullable
+/// spelling normalization, so `str | None` and `Optional[str]` (or
+/// `String | null` and `String?`) render identically.
+fn display_type_name(language: Language, value: &str) -> String {
+    normalize_nullable_display(language, &normalize_generic_brackets(language, value))
+}
 
 /// Render type inference results from parsed files.
 ///
@@ -94,14 +132,15 @@ pub fn render_type_inference_with_index(
                 let shape = binding
                     .shape
                     .as_ref()
-                    .map(|s| s.to_type_string())
+                    .map(|s| display_type_name(file.language, &s.to_type_string()))
                     .unwrap_or_else(|| "-".to_string());
                 total_shapes.insert(shape.clone());
+                let display_type = display_type_name(file.language, &binding.type_name);
                 writeln!(
                     out,
                     "| {} | {} | {} | {} | {} | {} |",
                     escape_md(name),
-                    escape_md(&binding.type_name),
+                    escape_md(&display_type),
                     escape_md(&origin),
                     priority,
                     escape_md(&shape),
@@ -113,6 +152,19 @@ pub fn render_type_inference_with_index(
         }
         if var_count == 0 {
             writeln!(out, "| - | - | - | - | - | - |").expect("write");
+            // Distinguish "nothing to bind" (no variable entities, e.g.
+            // all values are annotated parameters) from inference failure.
+            if !file
+                .entities
+                .iter()
+                .any(|e| matches!(e.kind, cce_types::EntityKind::Variable))
+            {
+                writeln!(
+                    out,
+                    "_No variable entities: all values are annotated parameters or returns._"
+                )
+                .expect("write");
+            }
         }
         total_bindings += var_count;
         writeln!(out).expect("write");
@@ -131,7 +183,7 @@ pub fn render_type_inference_with_index(
             let shape = binding
                 .shape
                 .as_ref()
-                .map(|s| s.to_type_string())
+                .map(|s| display_type_name(file.language, &s.to_type_string()))
                 .unwrap_or_else(|| "-".to_string());
             total_shapes.insert(shape.clone());
             let origin = binding
@@ -144,12 +196,13 @@ pub fn render_type_inference_with_index(
                 &[],
                 &std::collections::BTreeMap::new(),
             );
+            let display_return = display_type_name(file.language, &binding.type_name);
             writeln!(
                 out,
                 "| {} ({}) | {} | {} | {} |",
                 escape_md(&func_name),
                 eid.0,
-                escape_md(&binding.type_name),
+                escape_md(&display_return),
                 escape_md(&origin),
                 escape_md(&shape)
             )
@@ -174,11 +227,19 @@ pub fn render_type_inference_with_index(
                         .origin
                         .map(|o| format!("{:?}", o))
                         .unwrap_or_else(|| "-".to_string());
+                    let display_narrowed = display_type_name(file.language, &binding.type_name);
+                    if let Some(shape) = binding
+                        .shape
+                        .as_ref()
+                        .map(|s| display_type_name(file.language, &s.to_type_string()))
+                    {
+                        total_shapes.insert(shape);
+                    }
                     writeln!(
                         out,
                         "| {} | {} | {} | {} |",
                         escape_md(name),
-                        escape_md(&binding.type_name),
+                        escape_md(&display_narrowed),
                         escape_md(&origin),
                         span_str_from_span(&binding.span)
                     )
@@ -189,6 +250,17 @@ pub fn render_type_inference_with_index(
         }
         if narrow_count == 0 {
             writeln!(out, "| - | - | - | - |").expect("write");
+            // Distinguish "nothing to narrow" (no control-flow facts) from
+            // conservative no-guess narrowing.
+            if file.control_flow.is_empty() {
+                writeln!(out, "_No control-flow facts._").expect("write");
+            } else {
+                writeln!(
+                    out,
+                    "_No narrowable conditions: guards carry no supported type tests._"
+                )
+                .expect("write");
+            }
         }
         total_narrowed += narrow_count;
         writeln!(out).expect("write");
@@ -199,16 +271,25 @@ pub fn render_type_inference_with_index(
         let mut shapes: Vec<String> = merged
             .frames_iter()
             .flat_map(|f| {
-                f.bindings
-                    .values()
-                    .filter_map(|b| b.shape.as_ref().map(|s| s.to_type_string()))
+                f.bindings.values().filter_map(|b| {
+                    b.shape
+                        .as_ref()
+                        .map(|s| display_type_name(file.language, &s.to_type_string()))
+                })
             })
             .collect();
-        shapes.extend(
-            merged
-                .return_types_iter()
-                .filter_map(|(_, b)| b.shape.as_ref().map(|s| s.to_type_string())),
-        );
+        shapes.extend(merged.return_types_iter().filter_map(|(_, b)| {
+            b.shape
+                .as_ref()
+                .map(|s| display_type_name(file.language, &s.to_type_string()))
+        }));
+        shapes.extend(merged.frames_iter().flat_map(|f| {
+            f.narrowed.values().flatten().filter_map(|b| {
+                b.shape
+                    .as_ref()
+                    .map(|s| display_type_name(file.language, &s.to_type_string()))
+            })
+        }));
         shapes.sort();
         shapes.dedup();
         if shapes.is_empty() {

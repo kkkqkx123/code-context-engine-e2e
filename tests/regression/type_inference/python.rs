@@ -81,7 +81,7 @@ fn test_python_control_flow_snapshot() {
 
 #[test]
 fn test_python_visibility_snapshot() {
-    use cce_e2e_tests::type_inference_assert::assert_variable_has_type;
+    use cce_e2e_tests::type_inference_assert::{assert_return_has_type, assert_variable_has_type};
 
     init_minimal_logging();
     let fixture = TestFixture::python_type_inference_visibility()
@@ -89,6 +89,12 @@ fn test_python_visibility_snapshot() {
     let bindings = snapshot_for(&fixture);
 
     assert_variable_has_type(&bindings, "obj", "PublicClass");
+
+    assert_return_has_type(&bindings, "public_func", "str");
+    assert_return_has_type(&bindings, "_private_func", "str");
+    assert_return_has_type(&bindings, "__dunder_func__", "str");
+    assert_return_has_type(&bindings, "public_method", "str");
+    assert_return_has_type(&bindings, "_private_method", "str");
 }
 
 #[test]
@@ -115,6 +121,9 @@ fn test_python_discriminated_union_snapshot() {
     let bindings = snapshot_for(&fixture);
 
     assert_narrowed_has_type(&bindings, "shape", "Circle");
+    // Post-guard code observes the complement; the vacuous tuple check
+    // (`Union[Circle, Rectangle]` itself) emits no identity row.
+    assert_narrowed_has_type(&bindings, "shape", "Rectangle");
     assert_return_has_type(&bindings, "area", "float");
     assert_return_has_type(&bindings, "describe", "str");
 }
@@ -145,10 +154,10 @@ fn test_python_negated_checks_snapshot() {
     // Negated guards narrow against the declared annotation.
     // `not isinstance(value, str)` on `Union[str, int]` leaves `int`;
     // `value is not None` on `Optional[str]` leaves `str`;
-    // `not value` on `Optional[str]` leaves `falsy`.
+    // `not value` on `Optional[str]` leaves `None`.
     assert_narrowed_has_type(&bindings, "value", "int");
     assert_narrowed_has_type(&bindings, "value", "str");
-    assert_narrowed_has_type(&bindings, "value", "falsy");
+    assert_narrowed_has_type(&bindings, "value", "None");
     assert_return_has_type(&bindings, "handle_not_str", "str");
     assert_return_has_type(&bindings, "handle_is_not_none", "str");
 }

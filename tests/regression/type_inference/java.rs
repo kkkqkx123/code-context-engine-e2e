@@ -155,6 +155,8 @@ fn test_java_negated_checks_snapshot() {
 
     // `value != null` narrows the declared `String` parameter.
     assert_narrowed_has_type(&bindings, "value", "String");
+    // The `!(obj instanceof String)` guard leaves `obj: String` behind.
+    assert_narrowed_has_type(&bindings, "obj", "String");
     assert_return_has_type(&bindings, "handleNotInstance", "String");
     assert_return_has_type(&bindings, "handleNull", "String");
 }
@@ -170,4 +172,21 @@ fn test_java_control_positions_snapshot() {
 
     assert_return_has_type(&bindings, "handleWhile", "String");
     assert_return_has_type(&bindings, "handleElseIf", "String");
+}
+
+#[test]
+fn test_java_var_inference_snapshot() {
+    use cce_e2e_tests::type_inference_assert::assert_variable_has_type;
+
+    init_minimal_logging();
+    let fixture =
+        TestFixture::java_type_inference_var_inference().expect("Failed to load java var fixture");
+    let bindings = snapshot_for(&fixture);
+
+    assert_variable_has_type(&bindings, "names", "ArrayList<String>");
+    assert_variable_has_type(&bindings, "scores", "HashMap<String, Integer>");
+    // `names.get(0)` resolves to the element type, not the receiver.
+    assert_variable_has_type(&bindings, "first", "String");
+    // `first + first` follows string-concatenation semantics.
+    assert_variable_has_type(&bindings, "doubled", "String");
 }

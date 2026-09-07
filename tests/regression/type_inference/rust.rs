@@ -84,9 +84,12 @@ fn test_rust_control_flow_snapshot() {
 
     assert_return_has_type(&bindings, "handle_option", "String");
     assert_return_has_type(&bindings, "handle_result", "String");
-    assert_narrowed_has_type(&bindings, "value", "Option::Some");
-    assert_narrowed_has_type(&bindings, "val", "Result::Ok");
-    assert_narrowed_has_type(&bindings, "e", "Result::Err");
+    // Narrowing resolves to payload types, not variant names.
+    assert_narrowed_has_type(&bindings, "value", "String");
+    assert_narrowed_has_type(&bindings, "val", "i32");
+    assert_narrowed_has_type(&bindings, "e", "String");
+    assert_narrowed_has_type(&bindings, "name", "String");
+    assert_narrowed_has_type(&bindings, "age", "i32");
 }
 
 #[test]
