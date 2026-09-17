@@ -26,6 +26,7 @@ pub mod pipeline_debug;
 pub mod query_test;
 pub mod range_evaluator;
 pub mod relation_snapshot;
+pub mod rerank_benchmark;
 pub mod retrieval_method;
 pub mod storage;
 pub mod structured_output;

@@ -18,6 +18,8 @@ pub mod plugin_workflow;
 pub mod query_pipeline_workflow;
 #[path = "e2e/query_workflow.rs"]
 pub mod query_workflow;
+#[path = "e2e/rerank_benchmark.rs"]
+pub mod rerank_benchmark;
 #[path = "e2e/rerank_workflow.rs"]
 pub mod rerank_workflow;
 #[path = "e2e/tools_workflow.rs"]

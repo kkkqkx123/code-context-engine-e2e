@@ -228,15 +228,25 @@ struct MethodSink<'a> {
     relevance: &'a mut Vec<MethodRelevance>,
 }
 
-/// Evaluate every method family for one baseline across its queries.
-fn evaluate_baseline_methods(
-    baseline: &str,
-    bench: &BenchmarkData,
-    judgments: &[RelevanceJudgment],
-    results: &mut Vec<MethodResult>,
-    relevance: &mut Vec<MethodRelevance>,
-) {
-    let mut sink = MethodSink { results, relevance };
+/// Pre-scored recall rankings for one baseline dataset.
+///
+/// Shared by the retrieval-method benchmark and the rerank benchmark so both
+/// consume identical recall orderings (no drift between the two reports).
+pub struct RecallRankings {
+    /// Per query: `(embedding chunk index, cosine score)` sorted descending.
+    pub emb_ranked: Vec<Vec<(usize, f64)>>,
+    /// Per query: `(BM25 chunk index, BM25 score)` sorted descending.
+    pub bm25_ranked: Vec<Vec<(usize, f64)>>,
+    /// Number of embedding chunks covered by vectors.
+    pub n_emb_chunks: usize,
+}
+
+/// Score every query against both recall paths.
+///
+/// Embedding uses cosine similarity over the precomputed vectors; BM25 uses
+/// the production three-field weighted scorer with the `Or` operator. Queries
+/// without vectors/scores yield empty rankings, exactly as before.
+pub fn rank_recall(bench: &BenchmarkData) -> RecallRankings {
     let emb_dim = bench.embedding.dimension as usize;
     let n_emb_chunks = if emb_dim > 0 {
         match bench.embedding.vectors.len().checked_div(emb_dim) {
@@ -257,26 +267,25 @@ fn evaluate_baseline_methods(
         compute_bm25_scores(&bench.bm25_documents, &queries, TermOperator::Or)
     };
 
-    for (q_idx, query_data) in bench.queries.iter().enumerate() {
-        let Some(judgment) = judgments.iter().find(|j| j.id == query_data.id) else {
-            continue;
-        };
-
-        let mut emb_ranked: Vec<(usize, f64)> = Vec::new();
+    let mut emb_ranked = Vec::with_capacity(bench.queries.len());
+    let mut bm25_ranked = Vec::with_capacity(bench.queries.len());
+    for q_idx in 0..bench.queries.len() {
+        let mut emb: Vec<(usize, f64)> = Vec::new();
         if emb_dim > 0 && bench.embedding.query_vectors.len() >= (q_idx + 1) * emb_dim {
             let q_start = q_idx * emb_dim;
             let q_vec = &bench.embedding.query_vectors[q_start..q_start + emb_dim];
-            emb_ranked = (0..n_emb_chunks)
+            emb = (0..n_emb_chunks)
                 .map(|c| {
                     let c_start = c * emb_dim;
                     let c_vec = &bench.embedding.vectors[c_start..c_start + emb_dim];
                     (c, cosine_similarity(c_vec, q_vec))
                 })
                 .collect();
-            emb_ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+            emb.sort_by(|a, b| b.1.total_cmp(&a.1));
         }
+        emb_ranked.push(emb);
 
-        let bm25_ranked: Vec<(usize, f64)> = bm25_all
+        let bm25: Vec<(usize, f64)> = bm25_all
             .get(q_idx)
             .map(|scores| {
                 let mut ranked: Vec<(usize, f64)> = scores.iter().copied().enumerate().collect();
@@ -284,21 +293,56 @@ fn evaluate_baseline_methods(
                 ranked
             })
             .unwrap_or_default();
+        bm25_ranked.push(bm25);
+    }
+
+    RecallRankings {
+        emb_ranked,
+        bm25_ranked,
+        n_emb_chunks,
+    }
+}
+
+/// Evaluate every method family for one baseline across its queries.
+fn evaluate_baseline_methods(
+    baseline: &str,
+    bench: &BenchmarkData,
+    judgments: &[RelevanceJudgment],
+    results: &mut Vec<MethodResult>,
+    relevance: &mut Vec<MethodRelevance>,
+) {
+    let mut sink = MethodSink { results, relevance };
+    let recall = rank_recall(bench);
+
+    for (q_idx, query_data) in bench.queries.iter().enumerate() {
+        let Some(judgment) = judgments.iter().find(|j| j.id == query_data.id) else {
+            continue;
+        };
+
+        let Some(emb_ranked) = recall.emb_ranked.get(q_idx) else {
+            continue;
+        };
+        let Some(bm25_ranked) = recall.bm25_ranked.get(q_idx) else {
+            continue;
+        };
 
         // Single paths are measured on the raw chunk ranking (each chunk
         // exactly once), identical to the no-aggregation baseline benchmark.
         // Alignment-key deduplication applies only to the fused methods, which
         // internally collapse per key via `best_chunk_per_key`.
         let emb_path = RankedPath::new(
-            &bench.embedding.chunks[..n_emb_chunks],
-            dedup_ranked(&emb_ranked),
+            &bench.embedding.chunks[..recall.n_emb_chunks],
+            dedup_ranked(emb_ranked),
         );
-        let bm25_path = RankedPath::new(&bench.bm25.chunks, dedup_ranked(&bm25_ranked));
+        let bm25_path = RankedPath::new(&bench.bm25.chunks, dedup_ranked(bm25_ranked));
 
         // Fusion consumes the RAW top-k rankings, mirroring the production
         // searcher which fuses the un-deduplicated recall of each path.
-        let emb_path_raw = RankedPath::new(&bench.embedding.chunks[..n_emb_chunks], emb_ranked);
-        let bm25_path_raw = RankedPath::new(&bench.bm25.chunks, bm25_ranked);
+        let emb_path_raw = RankedPath::new(
+            &bench.embedding.chunks[..recall.n_emb_chunks],
+            emb_ranked.clone(),
+        );
+        let bm25_path_raw = RankedPath::new(&bench.bm25.chunks, bm25_ranked.clone());
 
         evaluate_query_methods(
             baseline,

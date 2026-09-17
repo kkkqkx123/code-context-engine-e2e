@@ -82,6 +82,14 @@ outputs/
 │   │       ├── weight_sensitivity.md
 │   │       ├── rrf_k_sensitivity.md
 │   │       └── relevance_top5.md
+│   │   └── rerank_{variant}/                     # 重排基准测试（对照/重排后对比，每个融合变体独立目录）
+│   │       ├── run_manifest.txt
+│   │       ├── aggregate_top{k}.md
+│   │       ├── aggregate_by_query_type_top{k}.md
+│   │       ├── per_query_top{k}.md
+│   │       ├── rerank_gain_by_query_type_top{k}.md
+│   │       ├── latency_cost.md
+│   │       └── relevance_top5.md
 │   ├── ripgrep/                             # ripgrep基准评估
 │   │   ├── (same structure as once_cell)
 │   │   └── bm25_parameter_sweep/
@@ -437,7 +445,41 @@ cargo run --example benchmark_retrieval_flask -p cce-e2e-tests
 - `rrf_k_sensitivity.md` - rrf 3 个 k 值对比（含 std）
 - `relevance_top5.md` - top-5 strong/related 命中明细
 
-#### 4.6 Hybrid对齐审查报告 (`scenarios/rust/alignment/`)
+#### 4.6 重排基准测试 (`benchmark/{once_cell}/rerank_{variant}/`)
+
+**生成命令（两步）:**
+```bash
+cargo run --example gen_rerank_oncecell -p cce-e2e-tests       # 调用真实重排模型，生成分数旁路文件
+cargo run --example benchmark_rerank_oncecell -p cce-e2e-tests # 纯离线评分，生成报告（默认使用 config 融合）
+# 离线融合变体（无需重新调用模型，旁路只存纯重排分）:
+cargo run --example benchmark_rerank_oncecell -p cce-e2e-tests -- rerank_only
+cargo run --example benchmark_rerank_oncecell -p cce-e2e-tests -- multiplicative
+cargo run --example benchmark_rerank_oncecell -p cce-e2e-tests -- linear_weighted --normalize-initial
+```
+
+**来源文件:**
+- `examples/rust/gen_rerank_oncecell.rs`（生成）
+- `examples/rust/benchmark_rerank_oncecell.rs`（评分）
+- 核心逻辑：`src/rerank_benchmark.rs`（旁路类型、候选构造、分数生成、离线评分）、`src/rerank_benchmark/report.rs`（报告）
+
+**生成逻辑:**
+- 直接复用 `data/benchmark/{baseline}/{fixture}/bge-m3/bench_data.rkyv`（不修改、不扩展其结构；通过 FNV-1a 源哈希校验一致性）
+- 评测矩阵：`emb`、`bm25`、`minmax-0.5`（固定均衡混合代表档）× 对照/重排后；候选为各召回排序头部固定 50 个
+- 候选文本规则：向量路取向量切块文本，BM25 路取三字段文档的 `content` 字段，混合档按代表切块归属路径取值；请求组装沿用生产侧 500 字符截断
+- 生成阶段逐查询串行调用 `/rerank` 端点（真实模型 `BAAI/bge-reranker-v2-m3`，`cross_encoder` 模式），失败样本记录 `failed` 而不阻塞；评分阶段只读旁路文件离线融合（`[rerank].score_fusion_strategy`，可用参数覆盖为 `rerank_only`/`multiplicative`/`linear_weighted`）+ `RankedScan` 评分，更换融合策略只需重跑评分
+- `--normalize-initial` 在融合前对每 query 的初始分做 min-max 归一化到 [0,1]（全等退化时全置 1.0），使 `alpha` 在 BM25 原始分/余弦窄带/归一化混合分之间可比；每个（融合，归一化）变体写入独立的 `rerank_{variant}/` 目录，互不覆盖
+- 对照组与重排组共享同一候选列表与评估映射，唯一差异是重排重排位；旁路文件过期（源哈希/方法/深度/候选/模型任一变化）则直接报错而非产出误导数字
+
+**输出内容（`outputs/benchmark/{fixture}/rerank_{variant}/`，如 `rerank_linear-weighted-alpha0.7/`、`rerank_rerank_only/`、`rerank_multiplicative/`、`rerank_linear-weighted-alpha0.7_norm-init/`）:**
+- `run_manifest.txt` - 运行清单（模型、深度、融合策略、文本规则、各基线源哈希与可用方法）
+- `aggregate_top{k}.md` - 按 (baseline, method) 聚合的 P/R/F1/1st_hit/redund（method 含 `emb`/`emb+rerank` 等对照对）
+- `aggregate_by_query_type_top{k}.md` - 按查询类型聚合
+- `per_query_top{k}.md` - 逐 query × 逐 method 明细
+- `rerank_gain_by_query_type_top{k}.md` - 重排相对对照的提升（ΔR/ΔF1、胜负统计、首命中排名变化）
+- `latency_cost.md` - 逐 (baseline, method) 的调用次数、失败率、耗时分布与平均候选数
+- `relevance_top5.md` - top-5 strong/related 命中明细
+
+#### 4.7 Hybrid对齐审查报告 (`scenarios/rust/alignment/`)
 
 **生成命令:**
 ```bash
@@ -525,6 +567,7 @@ cargo run --example gen_bench_flask -p cce-e2e-tests
 
 **输出内容:**
 - `data/benchmark/{baseline}/{fixture}/bge-m3/bench_data.rkyv`
+- `data/benchmark/{baseline}/{fixture}/bge-m3/rerank_{model}_{method}_depth{depth}.rkyv` - 重排分数旁路文件（由 `gen_rerank_*` 生成，评分阶段只读）
 
 ## 核心生成模块说明
 
@@ -609,6 +652,8 @@ NL文档导出器，用于导出Markdown格式的自然语言文档。
 | benchmark/flask/ | `cargo run --example benchmark_flask` | examples/python/benchmark_flask.rs | 是（使用预计算向量） |
 | benchmark/{once_cell,ripgrep,flask}/bm25_parameter_sweep/ | `cargo run --example bm25_para_{oncecell,ripgrep,flask}` | examples/rust|python/bm25_para_*.rs | 否 |
 | benchmark/{once_cell,ripgrep,flask}/retrieval_method/ | `cargo run --example benchmark_retrieval_{oncecell,ripgrep,flask}` | examples/rust|python/benchmark_retrieval_*.rs | 否（使用预计算向量与文本） |
+| benchmark/{once_cell}/rerank_{variant}/ | `cargo run --example benchmark_rerank_oncecell [-- fusion] [--normalize-initial]` | examples/rust/benchmark_rerank_oncecell.rs | 否（使用预计算向量、文本与重排旁路分数） |
+| data/benchmark/.../rerank_*.rkyv | `cargo run --example gen_rerank_oncecell` | examples/rust/gen_rerank_oncecell.rs | **是**（调用真实重排模型） |
 | scenarios/rust/alignment/ | `cargo run --example alignment_report` | examples/rust/alignment_report.rs | 否（确定性 mock 嵌入；hybrid 路需 Qdrant） |
 | debug/ | `cargo run --example debug_matrix` | examples/rust/debug_matrix.rs | 是（使用预计算向量） |
 | data/benchmark/ (once_cell) | `cargo run --example gen_bench_oncecell` | examples/rust/gen_bench_oncecell.rs | **可选**（无 API key 时仅生成 chunk） |

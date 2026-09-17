@@ -97,6 +97,18 @@ path = "examples/python/benchmark_retrieval_flask.rs"
 name = "alignment_report"
 path = "examples/rust/alignment_report.rs"
 
+[[example]]
+name = "gen_rerank_oncecell"
+path = "examples/rust/gen_rerank_oncecell.rs"
+
+[[example]]
+name = "benchmark_rerank_oncecell"
+path = "examples/rust/benchmark_rerank_oncecell.rs"
+
+[[example]]
+name = "zz_diag_rerank"
+path = "examples/rust/zz_diag_rerank.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }

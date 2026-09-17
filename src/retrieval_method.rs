@@ -16,7 +16,7 @@ pub mod report;
 
 pub use benchmark::{
     AlignmentStat, BenchmarkRun, MINMAX_WEIGHTS, MethodRelevance, MethodResult, RRF_K_VALUES,
-    RetrievalMethodScore, collect_alignment_stat, evaluate_baseline,
+    RecallRankings, RetrievalMethodScore, collect_alignment_stat, evaluate_baseline, rank_recall,
     run_retrieval_method_benchmark,
 };
 pub use fusion::{
