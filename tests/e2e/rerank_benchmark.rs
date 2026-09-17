@@ -10,7 +10,7 @@ use cce_e2e_tests::bench_data::{
     RelevanceJudgment, RelevanceLevel, RetrieverDataset, SourceRange,
 };
 use cce_e2e_tests::rerank_benchmark::{
-    CandidateIndex, RerankQueryOutcome, RerankRuntime, RerankScoring, build_candidates,
+    RerankQueryOutcome, RerankRuntime, RerankScoring, RerankTextSource, build_candidates,
     decode_sidecar, encode_sidecar, evaluate_query_rerank, generate_sidecar, score_query_outcome,
 };
 use cce_e2e_tests::retrieval_method::rank_recall;
@@ -158,6 +158,7 @@ fn test_runtime() -> RerankRuntime {
         depth: 50,
         fusion: ScoreFusionStrategy::LinearWeighted { alpha: 0.7 },
         timeout_ms: 1000,
+        text_source: RerankTextSource::EmbText,
     }
 }
 
@@ -167,6 +168,7 @@ fn test_scoring(normalize_initial: bool) -> RerankScoring {
         depth: 50,
         fusion: ScoreFusionStrategy::LinearWeighted { alpha: 0.7 },
         normalize_initial,
+        text_source: RerankTextSource::EmbText,
     }
 }
 
@@ -183,75 +185,67 @@ async fn test_mock_rerank_flips_first_hit() {
     let judgment = test_judgment();
     let runtime = test_runtime();
     let recall = rank_recall(&bench);
-    let index = CandidateIndex::new(&bench);
 
-    for method in ["emb", "bm25"] {
-        let candidates = build_candidates(&bench, &recall, &index, method, 0, runtime.depth);
-        assert_eq!(candidates.len(), 3, "{method} must rank all chunks");
-        assert!(
-            candidates[0].chunk_id.ends_with("_a"),
-            "{method} recall must rank chunk A first"
-        );
+    let candidates = build_candidates(
+        &bench,
+        &recall,
+        "emb",
+        RerankTextSource::EmbText,
+        0,
+        runtime.depth,
+    );
+    assert_eq!(candidates.len(), 3, "emb must rank all chunks");
+    assert!(
+        candidates[0].chunk_id.ends_with("_a"),
+        "emb recall must rank chunk A first"
+    );
 
-        let outcome =
-            score_query_outcome(&ReverseRerank, "TQ1", "alpha beta", &candidates, &runtime).await;
-        assert!(!outcome.failed, "{method} mock scoring must succeed");
-        assert_eq!(outcome.candidates.len(), 3);
-
-        let eval = evaluate_query_rerank(
-            "test",
-            method,
-            "TQ1",
-            &judgment,
-            &candidates,
-            &outcome,
-            &test_scoring(false),
-        );
-        // Control + reranked rows across the five top-k cutoffs.
-        assert_eq!(eval.rows.len(), 10, "{method} must score both orders");
-        let control_hit = first_hit(&eval.rows, method);
-        let reranked_hit = first_hit(&eval.rows, &format!("{method}+rerank"));
-        assert_eq!(
-            control_hit,
-            Some(3.0),
-            "{method} control first hit must be rank 3"
-        );
-        // The mock scores the last recall candidate highest, so the reranked
-        // first hit must improve. (No exact rank for BM25: its raw initial
-        // scores are unnormalized and keep weight in the linear blend,
-        // exactly as in production.)
-        assert!(
-            reranked_hit.is_some_and(|rank| rank < 3.0),
-            "{method} reranked first hit {reranked_hit:?} must beat control {control_hit:?}"
-        );
-    }
-}
-
-/// The hybrid representative path produces candidates and both row variants.
-#[tokio::test]
-async fn test_mock_rerank_hybrid_rows() {
-    let bench = test_bench();
-    let judgment = test_judgment();
-    let runtime = test_runtime();
-    let recall = rank_recall(&bench);
-    let index = CandidateIndex::new(&bench);
-
-    let candidates = build_candidates(&bench, &recall, &index, "minmax-0.5", 0, runtime.depth);
-    assert!(!candidates.is_empty(), "hybrid must fuse candidates");
     let outcome =
         score_query_outcome(&ReverseRerank, "TQ1", "alpha beta", &candidates, &runtime).await;
-    assert!(!outcome.failed);
+    assert!(!outcome.failed, "emb mock scoring must succeed");
+    assert_eq!(outcome.candidates.len(), 3);
+
     let eval = evaluate_query_rerank(
         "test",
-        "minmax-0.5",
+        "emb",
         "TQ1",
         &judgment,
         &candidates,
         &outcome,
         &test_scoring(false),
     );
-    assert_eq!(eval.rows.len(), 10);
-    assert_eq!(eval.relevance.len(), 2);
+    // Control + reranked rows across the five top-k cutoffs.
+    assert_eq!(eval.rows.len(), 10, "emb must score both orders");
+    let control_hit = first_hit(&eval.rows, "emb");
+    let reranked_hit = first_hit(&eval.rows, "emb+rerank");
+    assert_eq!(
+        control_hit,
+        Some(3.0),
+        "emb control first hit must be rank 3"
+    );
+    // The mock scores the last recall candidate highest, so the reranked
+    // first hit must improve.
+    assert!(
+        reranked_hit.is_some_and(|rank| rank < 3.0),
+        "emb reranked first hit {reranked_hit:?} must beat control {control_hit:?}"
+    );
+}
+
+/// Reranking is defined against the embedding path only: lexical and fused
+/// methods must not produce rerank candidates.
+#[test]
+fn test_non_emb_methods_produce_no_candidates() {
+    let bench = test_bench();
+    let recall = rank_recall(&bench);
+
+    for method in ["bm25", "minmax-0.5"] {
+        let candidates =
+            build_candidates(&bench, &recall, method, RerankTextSource::EmbText, 0, 50);
+        assert!(
+            candidates.is_empty(),
+            "{method} must not produce rerank candidates"
+        );
+    }
 }
 
 /// Sidecar generation and the rkyv round-trip preserve every stored score.
@@ -284,8 +278,14 @@ fn test_failed_outcome_yields_no_rows() {
     let judgment = test_judgment();
     let runtime = test_runtime();
     let recall = rank_recall(&bench);
-    let index = CandidateIndex::new(&bench);
-    let candidates = build_candidates(&bench, &recall, &index, "emb", 0, runtime.depth);
+    let candidates = build_candidates(
+        &bench,
+        &recall,
+        "emb",
+        RerankTextSource::EmbText,
+        0,
+        runtime.depth,
+    );
 
     let failed = RerankQueryOutcome {
         query_id: "TQ1".to_string(),
@@ -308,7 +308,7 @@ fn test_failed_outcome_yields_no_rows() {
 }
 
 /// Normalizing initial scores makes the rerank signal dominate the blend:
-/// with raw BM25-scale initials the mock flip only improves the first hit,
+/// with wide-scale raw initials the mock flip only improves the first hit,
 /// while normalized initials let the mock's top candidate take rank 1.
 #[tokio::test]
 async fn test_normalize_initial_lets_rerank_dominate() {
@@ -316,15 +316,21 @@ async fn test_normalize_initial_lets_rerank_dominate() {
     let judgment = test_judgment();
     let runtime = test_runtime();
     let recall = rank_recall(&bench);
-    let index = CandidateIndex::new(&bench);
-    let candidates = build_candidates(&bench, &recall, &index, "bm25", 0, runtime.depth);
+    let candidates = build_candidates(
+        &bench,
+        &recall,
+        "emb",
+        RerankTextSource::EmbText,
+        0,
+        runtime.depth,
+    );
     let outcome =
         score_query_outcome(&ReverseRerank, "TQ1", "alpha beta", &candidates, &runtime).await;
     assert!(!outcome.failed);
 
     let eval = evaluate_query_rerank(
         "test",
-        "bm25",
+        "emb",
         "TQ1",
         &judgment,
         &candidates,
@@ -332,7 +338,7 @@ async fn test_normalize_initial_lets_rerank_dominate() {
         &test_scoring(true),
     );
     assert_eq!(
-        first_hit(&eval.rows, "bm25+rerank"),
+        first_hit(&eval.rows, "emb+rerank"),
         Some(1.0),
         "normalized initials must let the mock top candidate take rank 1"
     );

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use cce_config::ConfigLoader;
 use cce_config::modules::RerankMode;
 use cce_e2e_tests::rerank_benchmark::{
-    RERANK_CANDIDATE_DEPTH, RerankRuntime, generate_all_sidecars,
+    RERANK_CANDIDATE_DEPTH, RerankRuntime, RerankTextSource, generate_all_sidecars,
 };
 
 fn workspace_root() -> PathBuf {
@@ -55,6 +55,11 @@ async fn main() -> anyhow::Result<()> {
         model_config.model
     );
 
+    let text_source = match std::env::args().nth(1).as_deref() {
+        None | Some("emb-text") => RerankTextSource::EmbText,
+        Some("raw-code") => RerankTextSource::RawCode,
+        Some(other) => anyhow::bail!("unknown text source '{other}': expected emb-text|raw-code"),
+    };
     let runtime = RerankRuntime {
         model_key,
         model_name: model_config.model.clone(),
@@ -62,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
         depth: RERANK_CANDIDATE_DEPTH,
         fusion: config.rerank.score_fusion_strategy,
         timeout_ms: config.rerank.timeout_ms,
+        text_source,
     };
     let written = generate_all_sidecars("once_cell", &provider, &runtime)
         .await

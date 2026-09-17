@@ -19,7 +19,7 @@ use cce_config::modules::search::ScoreFusionStrategy;
 use cce_e2e_tests::bench_data::EvaluationScope;
 use cce_e2e_tests::judgments::once_cell::once_cell_relevance_judgments;
 use cce_e2e_tests::rerank_benchmark::{
-    RERANK_CANDIDATE_DEPTH, RerankScoring, run_rerank_benchmark,
+    RERANK_CANDIDATE_DEPTH, RerankScoring, RerankTextSource, run_rerank_benchmark,
 };
 
 fn workspace_root() -> PathBuf {
@@ -36,7 +36,7 @@ fn workspace_root() -> PathBuf {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let all_judgments = once_cell_relevance_judgments();
-    let scope = EvaluationScope::All;
+    let scope = EvaluationScope::CoreRetrieval;
     let judgments: Vec<_> = all_judgments
         .iter()
         .filter(|j| scope.includes_query_type(j.query_type))
@@ -75,11 +75,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let normalize_initial = args.iter().any(|arg| arg == "--normalize-initial");
+    let text_source = match args
+        .iter()
+        .find(|arg| arg.starts_with("--text-source="))
+        .map(|arg| arg.trim_start_matches("--text-source=").to_string())
+        .as_deref()
+    {
+        None | Some("emb-text") => RerankTextSource::EmbText,
+        Some("raw-code") => RerankTextSource::RawCode,
+        Some(other) => {
+            return Err(
+                format!("unknown text source '{other}': expected emb-text|raw-code").into(),
+            );
+        }
+    };
     let scoring = RerankScoring {
         model_key: config.rerank.model.clone(),
         depth: RERANK_CANDIDATE_DEPTH,
         fusion,
         normalize_initial,
+        text_source,
     };
     println!(
         "Sidecars: model={} depth={} fusion={} output=rerank_{}",

@@ -1,25 +1,21 @@
 //! Rerank benchmark: recall + cross-encoder rerank comparison.
 //!
 //! Reuses `data/benchmark/{baseline}/{fixture}/bge-m3/bench_data.rkyv`
-//! (never modified) and evaluates the recall-method subset `emb`, `bm25`,
-//! `minmax-0.5` with and without cross-encoder reranking. Rerank scores are
+//! (never modified) and evaluates the embedding recall path with and without
+//! cross-encoder reranking. Rerank scores are
 //! generated once per (baseline, method) by calling a `RerankProvider` and
 //! stored as sidecar files `rerank_{model}_{method}_depth{depth}.rkyv` next to
 //! `bench_data.rkyv`; scoring is fully offline from the sidecars.
 //!
 //! Measurement semantics: for every (baseline, method, query) the control row
 //! and the reranked row share the exact same candidate list and evaluation
-//! mapping — the only difference is the rerank reorder. The hybrid
-//! representative is the fixed `minmax-0.5` fusion (balanced linear blend,
-//! single-path entries included), and hybrid rows evaluate the representative
-//! chunk in recall/fused order (the same chunks production would return).
+//! mapping — the only difference is the rerank reorder.
 //!
 //! Fusion semantics: sidecars store raw rerank scores only, so the final-score
 //! fusion is a pure scoring-time choice. Raw recall scores carry incompatible
-//! scales (unnormalized BM25 vs narrow-band cosine vs normalized minmax), so
-//! `RerankScoring::normalize_initial` optionally min-max normalizes the
-//! initial scores per query before blending, making `alpha` comparable across
-//! methods. Each (fusion, normalization) variant writes its own output
+//! scales, so `RerankScoring::normalize_initial` optionally min-max normalizes
+//! the initial scores per query before blending, making `alpha` comparable
+//! across methods. Each (fusion, normalization) variant writes its own output
 //! directory, so variants never overwrite each other.
 //!
 //! Sub-modules:
@@ -37,7 +33,6 @@ use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use crate::bench_data::{BenchmarkData, ChunkData, QueryType, RelevanceJudgment, RelevanceLevel};
 use crate::judgments::evaluate::{BASELINES, BenchmarkPaths, DEFAULT_TOP_K, TOP_K_VALUES};
 use crate::range_evaluator::RankedScan;
-use crate::retrieval_method::fusion::{PreparedFusion, RankedPath};
 use crate::retrieval_method::{RecallRankings, rank_recall};
 use cce_config::modules::search::ScoreFusionStrategy;
 
@@ -46,11 +41,15 @@ pub const RERANK_MODEL_KEY: &str = "bge-reranker";
 /// Fixed rerank candidate depth: head of each recall ranking.
 pub const RERANK_CANDIDATE_DEPTH: usize = 50;
 /// Recall methods covered by the rerank matrix.
-pub const RERANK_METHODS: &[&str] = &["emb", "bm25", "minmax-0.5"];
-/// Balanced linear blend used for the single hybrid representative.
-pub const HYBRID_WEIGHT: f64 = 0.5;
+///
+/// Only the embedding path participates: reranking is a semantic re-scoring
+/// step, so it is defined against the semantic recall path. The BM25 lexical
+/// path keeps its own lexical ordering (cross-encoder scoring over the hybrid
+/// expanded text measured strictly worse than recall order), and the fusion
+/// baseline is covered by the retrieval-method benchmark instead.
+pub const RERANK_METHODS: &[&str] = &["emb"];
 /// Documented candidate text rule (also recorded in every sidecar header).
-pub const TEXT_SOURCE_RULE: &str = "emb: embedding path text; bm25: BM25 document content field; hybrid: representative chunk resolved to its own path text";
+pub const TEXT_SOURCE_RULE: &str = "emb: embedding path text";
 /// Candidate truncation applied by the provider request (mirrors production).
 pub const RERANK_TRUNCATE_CHARS: usize = 500;
 
@@ -106,6 +105,7 @@ pub struct RerankSidecarHeader {
     pub mode: String,
     pub retrieval_method: String,
     pub candidate_depth: usize,
+    pub text_source: String,
     pub text_source_rule: String,
     pub truncate_chars: usize,
     pub source_hash: u64,
@@ -155,11 +155,99 @@ pub fn load_sidecar(path: &Path) -> Result<RerankSidecar, Box<dyn std::error::Er
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?)
 }
 
-/// Sidecar path for one (baseline, method) pair, next to `bench_data.rkyv`.
+/// Candidate text fed to the rerank model.
+///
+/// The BM25 hybrid-enhanced text is deliberately absent: its token-expanded
+/// repetition stream is tuned for lexical matching, not language-model
+/// consumption, and measured strictly worse than recall order under a
+/// cross-encoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SerdeSerialize, SerdeDeserialize)]
+pub enum RerankTextSource {
+    /// The embedding path's NL summary text (what the embedder consumed).
+    EmbText,
+    /// The chunk's raw source code, resolved from the fixture via chunk line
+    /// spans. Contrast baseline against `EmbText`.
+    RawCode,
+}
+
+impl RerankTextSource {
+    /// Registry label used in sidecar filenames and headers.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::EmbText => "emb-text",
+            Self::RawCode => "raw-code",
+        }
+    }
+
+    /// Resolve the candidate text for one embedding chunk.
+    ///
+    /// `EmbText` reads the stored embedding text; `RawCode` slices the
+    /// fixture source file by the chunk's navigation span (1-indexed,
+    /// inclusive). Missing files or spans fall back to the embedding text.
+    pub fn resolve(&self, bench: &BenchmarkData, chunk_idx: usize) -> Option<String> {
+        let chunk = bench.embedding.chunks.get(chunk_idx)?;
+        let emb_text = bench.embedding.texts.get(chunk_idx)?;
+        match self {
+            Self::EmbText => Some(emb_text.clone()),
+            Self::RawCode => {
+                if chunk.start_line == 0 || chunk.end_line < chunk.start_line {
+                    return Some(emb_text.clone());
+                }
+                let source = fixture_source(&chunk.file_path)?;
+                let selected: Vec<&str> = source
+                    .lines()
+                    .skip(chunk.start_line - 1)
+                    .take(chunk.end_line - chunk.start_line + 1)
+                    .collect();
+                if selected.is_empty() {
+                    Some(emb_text.clone())
+                } else {
+                    Some(selected.join("\n"))
+                }
+            }
+        }
+    }
+}
+
+/// Load one fixture source file by its repo-relative path.
+///
+/// Fixture roots live under `crates/app/cce-e2e-tests/fixtures/<category>/...`
+/// and chunk `file_path` values are relative to the fixture root, so the
+/// lookup scans the fixture tree for the first matching suffix.
+fn fixture_source(file_path: &str) -> Option<String> {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    let relative = Path::new(file_path);
+    for dir in std::fs::read_dir(&base).ok()?.flatten() {
+        let candidate = dir.path().join(relative);
+        if let Ok(source) = std::fs::read_to_string(&candidate) {
+            return Some(source);
+        }
+    }
+    // Fall back to a suffix walk for paths with fixture-specific prefixes.
+    let mut stack = vec![base];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.ends_with(relative) {
+                return std::fs::read_to_string(&path).ok();
+            }
+        }
+    }
+    None
+}
+
+/// Sidecar path for one (baseline, method, text-source) triple, next to
+/// `bench_data.rkyv`.
 pub fn sidecar_path(
     project: &'static str,
     baseline: &str,
     method: &str,
+    text_source: RerankTextSource,
     model_key: &str,
     depth: usize,
 ) -> PathBuf {
@@ -168,7 +256,10 @@ pub fn sidecar_path(
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    dir.join(format!("rerank_{model_key}_{method}_depth{depth}.rkyv"))
+    dir.join(format!(
+        "rerank_{model_key}_{method}_{}_depth{depth}.rkyv",
+        text_source.label()
+    ))
 }
 
 /// Runtime parameters for rerank score generation and offline scoring.
@@ -186,6 +277,8 @@ pub struct RerankRuntime {
     pub fusion: ScoreFusionStrategy,
     /// Per-call timeout in milliseconds.
     pub timeout_ms: u64,
+    /// Candidate text fed to the rerank model.
+    pub text_source: RerankTextSource,
 }
 
 impl RerankRuntime {
@@ -213,6 +306,8 @@ pub struct RerankScoring {
     /// Min-max normalize initial scores per query to [0, 1] before blending,
     /// so `alpha` weighs comparable scales across recall methods.
     pub normalize_initial: bool,
+    /// Candidate text source recorded in the sidecar header.
+    pub text_source: RerankTextSource,
 }
 
 impl RerankScoring {
@@ -241,11 +336,11 @@ impl RerankScoring {
             }
             ScoreFusionStrategy::Multiplicative => "multiplicative".to_string(),
         };
+        let mut dir = format!("{base}_{}", self.text_source.label());
         if self.normalize_initial {
-            format!("{base}_norm-init")
-        } else {
-            base
+            dir.push_str("_norm-init");
         }
+        dir
     }
 }
 
@@ -285,50 +380,14 @@ pub struct CandidateRef {
     pub recall_rank: usize,
 }
 
-/// Per-path text lookup for candidate request assembly.
-pub struct CandidateIndex<'a> {
-    emb_text: HashMap<&'a str, &'a str>,
-    bm25_content: HashMap<&'a str, &'a str>,
-}
-
-impl<'a> CandidateIndex<'a> {
-    pub fn new(bench: &'a BenchmarkData) -> Self {
-        let emb_text = bench
-            .embedding
-            .chunks
-            .iter()
-            .zip(bench.embedding.texts.iter())
-            .map(|(chunk, text)| (chunk.chunk_id.as_str(), text.as_str()))
-            .collect();
-        let bm25_content = bench
-            .bm25
-            .chunks
-            .iter()
-            .zip(bench.bm25_documents.iter())
-            .map(|(chunk, document)| (chunk.chunk_id.as_str(), document.content.as_str()))
-            .collect();
-        Self {
-            emb_text,
-            bm25_content,
-        }
-    }
-
-    /// Hybrid text rule: the representative chunk resolved to its own path.
-    pub fn hybrid_text(&self, chunk_id: &str) -> Option<&'a str> {
-        self.emb_text
-            .get(chunk_id)
-            .copied()
-            .or_else(|| self.bm25_content.get(chunk_id).copied())
-    }
-}
-
 /// Build the rerank candidate list for one query: the head of the method's
-/// recall ranking (recall order, 1-based ranks).
+/// recall ranking (recall order, 1-based ranks), with candidate text resolved
+/// through the requested text source.
 pub fn build_candidates(
     bench: &BenchmarkData,
     recall: &RecallRankings,
-    index: &CandidateIndex,
     method: &str,
+    text_source: RerankTextSource,
     query_idx: usize,
     depth: usize,
 ) -> Vec<CandidateRef> {
@@ -343,11 +402,11 @@ pub fn build_candidates(
                     .enumerate()
                     .filter_map(|(position, (chunk_idx, score))| {
                         let chunk = bench.embedding.chunks.get(*chunk_idx)?;
-                        let text = bench.embedding.texts.get(*chunk_idx)?;
+                        let text = text_source.resolve(bench, *chunk_idx)?;
                         Some(CandidateRef {
                             chunk_id: chunk.chunk_id.clone(),
                             eval_chunk: chunk.clone(),
-                            text: text.clone(),
+                            text,
                             file_path: chunk.file_path.clone(),
                             initial_score: *score,
                             recall_rank: position + 1,
@@ -356,64 +415,6 @@ pub fn build_candidates(
                     .collect()
             })
             .unwrap_or_default(),
-        "bm25" => recall
-            .bm25_ranked
-            .get(query_idx)
-            .map(|ranked| {
-                ranked
-                    .iter()
-                    .take(depth)
-                    .enumerate()
-                    .filter_map(|(position, (chunk_idx, score))| {
-                        let chunk = bench.bm25.chunks.get(*chunk_idx)?;
-                        let document = bench.bm25_documents.get(*chunk_idx)?;
-                        Some(CandidateRef {
-                            chunk_id: chunk.chunk_id.clone(),
-                            eval_chunk: chunk.clone(),
-                            text: document.content.clone(),
-                            file_path: chunk.file_path.clone(),
-                            initial_score: *score,
-                            recall_rank: position + 1,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        "minmax-0.5" => {
-            let emb_ranked = recall
-                .emb_ranked
-                .get(query_idx)
-                .cloned()
-                .unwrap_or_default();
-            let bm25_ranked = recall
-                .bm25_ranked
-                .get(query_idx)
-                .cloned()
-                .unwrap_or_default();
-            let emb_path =
-                RankedPath::new(&bench.embedding.chunks[..recall.n_emb_chunks], emb_ranked);
-            let bm25_path = RankedPath::new(&bench.bm25.chunks, bm25_ranked);
-            let prepared = PreparedFusion::prepare(&emb_path, &bm25_path);
-            prepared
-                .fuse_minmax(HYBRID_WEIGHT, HYBRID_WEIGHT, true)
-                .into_iter()
-                .take(depth)
-                .enumerate()
-                .filter_map(|(position, entry)| {
-                    let text = index.hybrid_text(&entry.chunk.chunk_id)?;
-                    let file_path = entry.chunk.file_path.clone();
-                    let chunk_id = entry.chunk.chunk_id.clone();
-                    Some(CandidateRef {
-                        chunk_id,
-                        eval_chunk: entry.chunk,
-                        text: text.to_string(),
-                        file_path,
-                        initial_score: entry.fused_score,
-                        recall_rank: position + 1,
-                    })
-                })
-                .collect()
-        }
         _ => Vec::new(),
     }
 }
@@ -529,10 +530,16 @@ pub async fn generate_sidecar<P: cce_llm::RerankProvider>(
     runtime: &RerankRuntime,
 ) -> RerankSidecar {
     let recall = rank_recall(bench);
-    let index = CandidateIndex::new(bench);
     let mut queries = Vec::with_capacity(bench.queries.len());
     for (query_idx, query) in bench.queries.iter().enumerate() {
-        let candidates = build_candidates(bench, &recall, &index, method, query_idx, runtime.depth);
+        let candidates = build_candidates(
+            bench,
+            &recall,
+            method,
+            runtime.text_source,
+            query_idx,
+            runtime.depth,
+        );
         if candidates.is_empty() {
             eprintln!("  query {} has no {method} candidates; skipped", query.id);
             continue;
@@ -556,6 +563,7 @@ pub async fn generate_sidecar<P: cce_llm::RerankProvider>(
             mode: runtime.mode.clone(),
             retrieval_method: method.to_string(),
             candidate_depth: runtime.depth,
+            text_source: runtime.text_source.label().to_string(),
             text_source_rule: TEXT_SOURCE_RULE.to_string(),
             truncate_chars: RERANK_TRUNCATE_CHARS,
             source_hash,
@@ -596,7 +604,14 @@ pub async fn generate_all_sidecars<P: cce_llm::RerankProvider>(
             println!("  scoring method '{method}' (depth {})", runtime.depth);
             let sidecar = generate_sidecar(provider, &bench, source_hash, method, runtime).await;
             let failed = sidecar.queries.iter().filter(|q| q.failed).count();
-            let out = sidecar_path(project, baseline, method, &runtime.model_key, runtime.depth);
+            let out = sidecar_path(
+                project,
+                baseline,
+                method,
+                runtime.text_source,
+                &runtime.model_key,
+                runtime.depth,
+            );
             save_sidecar(&out, &sidecar)?;
             println!(
                 "  wrote {} ({} queries, {} failed)",
@@ -833,12 +848,17 @@ pub fn run_rerank_benchmark(
         let bench: BenchmarkData = rkyv::from_bytes::<BenchmarkData, rkyv::rancor::Error>(&bytes)
             .map_err(|e| format!("rkyv deserialize failed: {e:?}"))?;
         let recall = rank_recall(&bench);
-        let index = CandidateIndex::new(&bench);
         let mut ok_methods = Vec::new();
 
         for method in RERANK_METHODS {
-            let sidecar_file =
-                sidecar_path(project, baseline, method, &scoring.model_key, scoring.depth);
+            let sidecar_file = sidecar_path(
+                project,
+                baseline,
+                method,
+                scoring.text_source,
+                &scoring.model_key,
+                scoring.depth,
+            );
             if !sidecar_file.exists() {
                 eprintln!(
                     "WARNING: {method} sidecar not found at {}; run the generation step first",
@@ -881,8 +901,14 @@ pub fn run_rerank_benchmark(
                     failed += 1;
                     continue;
                 }
-                let candidates =
-                    build_candidates(&bench, &recall, &index, method, query_idx, scoring.depth);
+                let candidates = build_candidates(
+                    &bench,
+                    &recall,
+                    method,
+                    scoring.text_source,
+                    query_idx,
+                    scoring.depth,
+                );
                 let regenerated: Vec<&str> = candidates
                     .iter()
                     .map(|candidate| candidate.chunk_id.as_str())
@@ -1050,6 +1076,7 @@ mod tests {
                 mode: "test".to_string(),
                 retrieval_method: "emb".to_string(),
                 candidate_depth: RERANK_CANDIDATE_DEPTH,
+                text_source: RerankTextSource::EmbText.label().to_string(),
                 text_source_rule: TEXT_SOURCE_RULE.to_string(),
                 truncate_chars: RERANK_TRUNCATE_CHARS,
                 source_hash: 42,
@@ -1084,6 +1111,7 @@ mod tests {
                 mode: "cross_encoder".to_string(),
                 retrieval_method: "emb".to_string(),
                 candidate_depth: RERANK_CANDIDATE_DEPTH,
+                text_source: RerankTextSource::EmbText.label().to_string(),
                 text_source_rule: TEXT_SOURCE_RULE.to_string(),
                 truncate_chars: RERANK_TRUNCATE_CHARS,
                 source_hash: 1,
@@ -1096,6 +1124,7 @@ mod tests {
             depth: RERANK_CANDIDATE_DEPTH,
             fusion: ScoreFusionStrategy::RerankOnly,
             normalize_initial: false,
+            text_source: RerankTextSource::EmbText,
         };
         assert!(validate_sidecar(&sidecar, "emb", 2, &scoring).is_err());
         assert!(validate_sidecar(&sidecar, "emb", 1, &scoring).is_ok());
@@ -1153,8 +1182,12 @@ mod tests {
             depth: RERANK_CANDIDATE_DEPTH,
             fusion: ScoreFusionStrategy::LinearWeighted { alpha: 0.7 },
             normalize_initial: true,
+            text_source: RerankTextSource::EmbText,
         };
-        assert_eq!(scoring.variant_dir(), "linear-weighted-alpha0.7_norm-init");
+        assert_eq!(
+            scoring.variant_dir(),
+            "linear-weighted-alpha0.7_emb-text_norm-init"
+        );
         assert!(scoring.fusion_label().contains("+norm_init"));
     }
 }

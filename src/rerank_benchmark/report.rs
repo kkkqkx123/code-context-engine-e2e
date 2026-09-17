@@ -105,7 +105,7 @@ fn write_run_manifest(run: &RerankBenchmarkRun) -> Result<(), Box<dyn std::error
     )?;
     writeln!(
         file,
-        "control semantics: control and reranked rows share the candidate list; hybrid representative is minmax-0.5 evaluating the representative chunk"
+        "control semantics: control and reranked rows share the candidate list; rerank applies to the embedding path only"
     )?;
     writeln!(file)?;
     for baseline in &run.baselines {
