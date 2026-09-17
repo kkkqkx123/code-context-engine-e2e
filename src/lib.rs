@@ -3,6 +3,7 @@
 //! This crate exposes reusable fixtures, output helpers, and workflow test
 //! utilities for integration tests under `tests/`.
 
+pub mod aggregation_enhance;
 pub mod assertion;
 pub mod baselines;
 pub mod bench_data;
