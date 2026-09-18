@@ -94,8 +94,16 @@ name = "benchmark_retrieval_flask"
 path = "examples/python/benchmark_retrieval_flask.rs"
 
 [[example]]
-name = "benchmark_aggregation_oncecell"
-path = "examples/rust/benchmark_aggregation_oncecell.rs"
+name = "benchmark_agg_oncecell"
+path = "examples/rust/benchmark_agg_oncecell.rs"
+
+[[example]]
+name = "benchmark_agg_ripgrep"
+path = "examples/rust/benchmark_agg_ripgrep.rs"
+
+[[example]]
+name = "benchmark_agg_flask"
+path = "examples/rust/benchmark_agg_flask.rs"
 
 [[example]]
 name = "alignment_report"
