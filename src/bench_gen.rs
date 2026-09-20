@@ -148,6 +148,10 @@ pub async fn embed_texts(
     embedder: &OpenAICompatibleProvider,
     texts: &[String],
 ) -> anyhow::Result<(Vec<f32>, usize)> {
+    if texts.is_empty() {
+        anyhow::bail!("embed_texts called with empty input");
+    }
+
     const MAX_BATCH_CHUNKS: usize = 16;
     let mut all_vectors = Vec::new();
     let mut dim = 0;
@@ -161,12 +165,38 @@ pub async fn embed_texts(
             refs.iter().map(|s| s.len()).max().unwrap_or(0)
         );
         let result = embedder.embed(&refs).await?;
+        if result.embeddings.len() != refs.len() {
+            anyhow::bail!(
+                "Embedding response count mismatch in batch {batch_idx}: expected {}, received {}",
+                refs.len(),
+                result.embeddings.len()
+            );
+        }
         if dim == 0 {
-            dim = result.embeddings.first().map(|v| v.len()).unwrap_or(0);
+            dim = result.embeddings.first().map(|v| v.len()).ok_or_else(|| {
+                anyhow::anyhow!("Embedding batch {batch_idx} returned no vectors")
+            })?;
+            if dim == 0 {
+                anyhow::bail!("Embedding batch {batch_idx} returned zero-dimension vectors");
+            }
         }
         for emb in &result.embeddings {
+            if emb.len() != dim {
+                anyhow::bail!(
+                    "Embedding dimension mismatch in batch {batch_idx}: expected {dim}, received {}",
+                    emb.len()
+                );
+            }
             all_vectors.extend_from_slice(emb);
         }
+    }
+
+    if all_vectors.len() != texts.len() * dim {
+        anyhow::bail!(
+            "Embedding vector length mismatch: {} texts, dim {dim}, flattened {}",
+            texts.len(),
+            all_vectors.len()
+        );
     }
 
     Ok((all_vectors, dim))
@@ -336,37 +366,38 @@ pub async fn run_bench_gen(config: ProjectConfig) -> anyhow::Result<()> {
                 .await?
         };
 
-        eprintln!("\n=== Phase 2: embedding chunks ===");
-        let (chunk_vectors, dimension) = if !chunks.embedding_texts.is_empty() {
-            eprintln!(
-                "  Embedding {} code chunks...",
+        if chunks.embedding_chunks.len() != chunks.embedding_texts.len() {
+            anyhow::bail!(
+                "{baseline}: embedding chunk/text misalignment: {} chunks vs {} texts",
+                chunks.embedding_chunks.len(),
                 chunks.embedding_texts.len()
             );
-            match embed_texts(&embedder, &chunks.embedding_texts).await {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!(
-                        "  WARNING: code chunk embedding failed: {e}; saving without vectors"
-                    );
-                    (vec![], 0)
-                }
-            }
-        } else {
-            (vec![], 0)
-        };
+        }
+        if chunks.embedding_texts.is_empty() {
+            anyhow::bail!("{baseline}: no embedding texts generated");
+        }
+
+        eprintln!("\n=== Phase 2: embedding chunks ===");
+        eprintln!(
+            "  Embedding {} code chunks...",
+            chunks.embedding_texts.len()
+        );
+        let (chunk_vectors, dimension) = embed_texts(&embedder, &chunks.embedding_texts).await?;
 
         eprintln!("\n=== Phase 3: assembling and persisting ===");
         for (variant_queries, suffix) in [(queries, "")] {
             eprintln!("\n--- {baseline}{suffix} ---");
             let query_texts: Vec<String> = variant_queries.iter().map(|q| q.text.clone()).collect();
+            if query_texts.is_empty() {
+                anyhow::bail!("{baseline}: no query texts to embed");
+            }
 
-            let (query_vectors, _) = match embed_texts(&embedder, &query_texts).await {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("  WARNING: query embedding failed: {e}; saving without vectors");
-                    (vec![], 0)
-                }
-            };
+            let (query_vectors, query_dim) = embed_texts(&embedder, &query_texts).await?;
+            if query_dim != dimension {
+                anyhow::bail!(
+                    "{baseline}: query embedding dimension {query_dim} != chunk dimension {dimension}"
+                );
+            }
 
             if chunks.bm25_documents.len() != chunks.bm25_chunks.len() {
                 anyhow::bail!(

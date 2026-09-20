@@ -17,7 +17,7 @@ pub mod enhance;
 pub mod report;
 
 pub use benchmark::{
-    BASELINE, BenchmarkRun, MINMAX_WEIGHT, SignalStats, evaluate_baseline,
-    is_production_parity, ordered_methods, output_dir, run_aggregation_enhance_benchmark,
+    BASELINE, BenchmarkRun, MINMAX_WEIGHT, SignalStats, evaluate_baseline, is_production_parity,
+    ordered_methods, output_dir, run_aggregation_enhance_benchmark,
 };
 pub use enhance::{EnhanceParams, FileCohortGraph, FileVectors};

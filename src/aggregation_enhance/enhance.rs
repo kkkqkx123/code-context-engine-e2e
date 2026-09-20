@@ -243,10 +243,7 @@ pub fn summary_boosts(
         .map(|(file, vec)| {
             (
                 file.as_str(),
-                cosine_similarity(
-                    &vec.iter().map(|&v| v).collect::<Vec<_>>(),
-                    query_vector,
-                ),
+                cosine_similarity(&vec.iter().map(|&v| v).collect::<Vec<_>>(), query_vector),
             )
         })
         .filter(|(_, score)| *score >= min_score)

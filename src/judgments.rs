@@ -6,11 +6,19 @@
 //! - `report`: Shared report formatting (CSV, Markdown, chunk dumping)
 
 pub mod evaluate;
+pub mod express;
 pub mod flask;
+pub mod gin;
+pub mod mediatr;
 pub mod once_cell;
 pub mod report;
 pub mod ripgrep;
+pub mod spring_boot;
 
+pub use express::express_relevance_judgments;
 pub use flask::flask_relevance_judgments;
+pub use gin::gin_relevance_judgments;
+pub use mediatr::mediatr_relevance_judgments;
 pub use once_cell::once_cell_relevance_judgments;
 pub use ripgrep::ripgrep_relevance_judgments;
+pub use spring_boot::spring_boot_relevance_judgments;

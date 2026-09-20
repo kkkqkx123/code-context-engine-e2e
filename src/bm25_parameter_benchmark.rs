@@ -109,7 +109,7 @@ pub struct QueryObservation {
     pub query_text: String,
     pub first_strong_rank: Option<usize>,
     pub strong_f1_at_10: f64,
-    pub weighted_recall_at_20: f64,
+    pub recall_any_at_20: f64,
 }
 
 /// Aggregate metrics derived from query observations.
@@ -120,7 +120,7 @@ pub struct ParameterSetAggregate {
     pub query_count: usize,
     pub strong_mrr_at_10: f64,
     pub strong_f1_at_10: f64,
-    pub weighted_recall_at_20: f64,
+    pub recall_any_at_20: f64,
 }
 
 /// Aggregate metrics broken down by query type.
@@ -132,7 +132,7 @@ pub struct QueryTypeAggregate {
     pub query_count: usize,
     pub strong_mrr_at_10: f64,
     pub strong_f1_at_10: f64,
-    pub weighted_recall_at_20: f64,
+    pub recall_any_at_20: f64,
 }
 
 struct SweepTiming {
@@ -339,11 +339,7 @@ fn select_finalists(aggregate: &[QueryTypeAggregate]) -> Vec<(u16, u16)> {
             .strong_mrr_at_10
             .total_cmp(&left.strong_mrr_at_10)
             .then_with(|| right.strong_f1_at_10.total_cmp(&left.strong_f1_at_10))
-            .then_with(|| {
-                right
-                    .weighted_recall_at_20
-                    .total_cmp(&left.weighted_recall_at_20)
-            })
+            .then_with(|| right.recall_any_at_20.total_cmp(&left.recall_any_at_20))
             .then_with(|| {
                 left.parameter_key
                     .display_name()
@@ -455,7 +451,7 @@ fn evaluate_parameter_set(
             query_text: prepared_query.query_text.clone(),
             first_strong_rank,
             strong_f1_at_10: at_ten.f1_strong,
-            weighted_recall_at_20: at_twenty.recall_any,
+            recall_any_at_20: at_twenty.recall_any,
         });
     }
 
@@ -479,14 +475,14 @@ pub fn aggregate_by_parameter_set(observations: &[QueryObservation]) -> Vec<Para
                 .map(|obs| obs.first_strong_rank.map_or(0.0, |r| 1.0 / r as f64))
                 .sum();
             let f1_total: f64 = group.iter().map(|obs| obs.strong_f1_at_10).sum();
-            let recall_total: f64 = group.iter().map(|obs| obs.weighted_recall_at_20).sum();
+            let recall_total: f64 = group.iter().map(|obs| obs.recall_any_at_20).sum();
             ParameterSetAggregate {
                 parameter_key: key,
                 phase,
                 query_count: count,
                 strong_mrr_at_10: average(mrr_total, count),
                 strong_f1_at_10: average(f1_total, count),
-                weighted_recall_at_20: average(recall_total, count),
+                recall_any_at_20: average(recall_total, count),
             }
         })
         .collect()
@@ -510,7 +506,7 @@ pub fn aggregate_by_query_type(observations: &[QueryObservation]) -> Vec<QueryTy
                 .map(|obs| obs.first_strong_rank.map_or(0.0, |r| 1.0 / r as f64))
                 .sum();
             let f1_total: f64 = group.iter().map(|obs| obs.strong_f1_at_10).sum();
-            let recall_total: f64 = group.iter().map(|obs| obs.weighted_recall_at_20).sum();
+            let recall_total: f64 = group.iter().map(|obs| obs.recall_any_at_20).sum();
             QueryTypeAggregate {
                 parameter_key: key,
                 phase,
@@ -518,7 +514,7 @@ pub fn aggregate_by_query_type(observations: &[QueryObservation]) -> Vec<QueryTy
                 query_count: count,
                 strong_mrr_at_10: average(mrr_total, count),
                 strong_f1_at_10: average(f1_total, count),
-                weighted_recall_at_20: average(recall_total, count),
+                recall_any_at_20: average(recall_total, count),
             }
         })
         .collect()
@@ -632,7 +628,7 @@ fn write_aggregate_metrics(
                 m.query_count.to_string(),
                 format!("{:.4}", m.strong_mrr_at_10),
                 format!("{:.4}", m.strong_f1_at_10),
-                format!("{:.4}", m.weighted_recall_at_20),
+                format!("{:.4}", m.recall_any_at_20),
             ]
         })
         .collect::<Vec<_>>();
@@ -674,7 +670,7 @@ fn write_aggregate_metrics_by_query_type(
                 m.query_count.to_string(),
                 format!("{:.4}", m.strong_mrr_at_10),
                 format!("{:.4}", m.strong_f1_at_10),
-                format!("{:.4}", m.weighted_recall_at_20),
+                format!("{:.4}", m.recall_any_at_20),
             ]
         })
         .collect::<Vec<_>>();
@@ -714,7 +710,7 @@ fn write_per_query_metrics(
                 obs.first_strong_rank
                     .map_or("none".to_string(), |r| r.to_string()),
                 format!("{:.4}", obs.strong_f1_at_10),
-                format!("{:.4}", obs.weighted_recall_at_20),
+                format!("{:.4}", obs.recall_any_at_20),
             ]
         })
         .collect::<Vec<_>>();

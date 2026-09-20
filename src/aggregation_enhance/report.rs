@@ -28,7 +28,15 @@ pub fn write_all(
     skipped: &[String],
     params: &EnhanceParams,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    write_run_manifest(out, project, judgment_count, methods, signals, skipped, params)?;
+    write_run_manifest(
+        out,
+        project,
+        judgment_count,
+        methods,
+        signals,
+        skipped,
+        params,
+    )?;
     for &top_k in TOP_K_VALUES {
         write_aggregate(out, results, top_k)?;
         write_aggregate_by_query_type(out, results, top_k)?;
@@ -62,14 +70,41 @@ fn write_run_manifest(
         MINMAX_WEIGHT.0, MINMAX_WEIGHT.0, MINMAX_WEIGHT.1
     )?;
     writeln!(f, "production parity: emb, emb+rel, emb+sum, emb+both")?;
-    writeln!(f, "exploratory (deviating from production, hybrid/bm25 never boost):")?;
-    writeln!(f, "  bm25+rel, bm25+sum, bm25+both, minmax-0.5+rel, minmax-0.5+sum, minmax-0.5+both")?;
-    writeln!(f, "relation graph: file-cohort proxy (undirected, same-file entities),")?;
-    writeln!(f, "  seeds top_n={}, max_hops={}, decay 1/sqrt(hops), relation_max={}", params.relation.top_n, params.relation.max_hops, params.agg.relation_max)?;
-    writeln!(f, "summary signal: mean-pooled file vectors from chunk vectors,")?;
-    writeln!(f, "  top_k={} files, min_score={}, summary_max={}", params.summary.top_k, params.summary.min_score, params.agg.summary_max)?;
-    writeln!(f, "aggregation: score * (1 + capped), global max_addition={}", params.agg.max_addition)?;
-    writeln!(f, "measurement: chunk-level ranking (single paths) and fused coverage (minmax-0.5*)")?;
+    writeln!(
+        f,
+        "exploratory (deviating from production, hybrid/bm25 never boost):"
+    )?;
+    writeln!(
+        f,
+        "  bm25+rel, bm25+sum, bm25+both, minmax-0.5+rel, minmax-0.5+sum, minmax-0.5+both"
+    )?;
+    writeln!(
+        f,
+        "relation graph: file-cohort proxy (undirected, same-file entities),"
+    )?;
+    writeln!(
+        f,
+        "  seeds top_n={}, max_hops={}, decay 1/sqrt(hops), relation_max={}",
+        params.relation.top_n, params.relation.max_hops, params.agg.relation_max
+    )?;
+    writeln!(
+        f,
+        "summary signal: mean-pooled file vectors from chunk vectors,"
+    )?;
+    writeln!(
+        f,
+        "  top_k={} files, min_score={}, summary_max={}",
+        params.summary.top_k, params.summary.min_score, params.agg.summary_max
+    )?;
+    writeln!(
+        f,
+        "aggregation: score * (1 + capped), global max_addition={}",
+        params.agg.max_addition
+    )?;
+    writeln!(
+        f,
+        "measurement: chunk-level ranking (single paths) and fused coverage (minmax-0.5*)"
+    )?;
     writeln!(f)?;
     writeln!(
         f,
@@ -101,8 +136,8 @@ fn write_aggregate(
     }
 
     let headers = &[
-        "k", "baseline", "method", "parity", "n", "R_s", "R_r", "R_a", "P_s", "P_r", "P_a",
-        "F1_s", "F1_r", "F1_a", "1st_hit", "redund",
+        "k", "baseline", "method", "parity", "n", "R_s", "R_r", "R_a", "P_s", "P_r", "P_a", "F1_s",
+        "F1_r", "F1_a", "1st_hit", "redund",
     ];
     let rows: Vec<Vec<String>> = map
         .iter()
@@ -129,7 +164,10 @@ fn write_aggregate(
         .collect();
     write_md_table(&mut f, headers, &rows)?;
     writeln!(f)?;
-    writeln!(f, "parity=yes follows the production boost path; exploratory rows deviate (see run_manifest.txt).")?;
+    writeln!(
+        f,
+        "parity=yes follows the production boost path; exploratory rows deviate (see run_manifest.txt)."
+    )?;
     Ok(())
 }
 
@@ -149,8 +187,22 @@ fn write_aggregate_by_query_type(
     }
 
     let headers = &[
-        "k", "baseline", "method", "parity", "query_type", "n", "R_s", "R_r", "R_a", "P_s",
-        "P_r", "P_a", "F1_s", "F1_r", "F1_a", "1st_hit",
+        "k",
+        "baseline",
+        "method",
+        "parity",
+        "query_type",
+        "n",
+        "R_s",
+        "R_r",
+        "R_a",
+        "P_s",
+        "P_r",
+        "P_a",
+        "F1_s",
+        "F1_r",
+        "F1_a",
+        "1st_hit",
     ];
     let rows: Vec<Vec<String>> = map
         .iter()
@@ -188,8 +240,26 @@ fn write_per_query(
     let mut f = File::create(&path)?;
 
     let headers = &[
-        "k", "baseline", "method", "parity", "query_id", "query_type", "s_m", "r_m", "a_m",
-        "rel", "R_s", "R_r", "R_a", "P_s", "P_r", "P_a", "F1_s", "F1_r", "F1_a", "1st_hit",
+        "k",
+        "baseline",
+        "method",
+        "parity",
+        "query_id",
+        "query_type",
+        "s_m",
+        "r_m",
+        "a_m",
+        "rel",
+        "R_s",
+        "R_r",
+        "R_a",
+        "P_s",
+        "P_r",
+        "P_a",
+        "F1_s",
+        "F1_r",
+        "F1_a",
+        "1st_hit",
         "redund",
     ];
     let rows: Vec<Vec<String>> = results
@@ -268,7 +338,15 @@ fn write_enhance_gain(
             .push(gain);
     }
 
-    let headers = &["k", "baseline", "query_type", "method", "parity", "n", "enhance_gain"];
+    let headers = &[
+        "k",
+        "baseline",
+        "query_type",
+        "method",
+        "parity",
+        "n",
+        "enhance_gain",
+    ];
     let rows: Vec<Vec<String>> = map
         .iter()
         .map(|((query_type, method), gains)| {
@@ -285,7 +363,10 @@ fn write_enhance_gain(
         .collect();
     write_md_table(&mut f, headers, &rows)?;
     writeln!(f)?;
-    writeln!(f, "enhance_gain = (F1_enhanced - F1_plain_same_base) / F1_plain_same_base.")?;
+    writeln!(
+        f,
+        "enhance_gain = (F1_enhanced - F1_plain_same_base) / F1_plain_same_base."
+    )?;
     Ok(())
 }
 
@@ -295,7 +376,14 @@ fn write_relevance(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = out.join("relevance_top5.md");
     let mut f = File::create(&path)?;
-    let headers = &["baseline", "method", "parity", "query_id", "strong_hits", "related_hits"];
+    let headers = &[
+        "baseline",
+        "method",
+        "parity",
+        "query_id",
+        "strong_hits",
+        "related_hits",
+    ];
     let rows: Vec<Vec<String>> = relevance
         .iter()
         .map(|r| {
@@ -342,7 +430,10 @@ fn avg_str(values: impl Iterator<Item = f64>) -> String {
 }
 
 fn first_hit_str(group: &[&MethodResult]) -> String {
-    let hits: Vec<f64> = group.iter().filter_map(|r| r.score.avg_first_hit_rank).collect();
+    let hits: Vec<f64> = group
+        .iter()
+        .filter_map(|r| r.score.avg_first_hit_rank)
+        .collect();
     if hits.is_empty() {
         "-".to_string()
     } else {
@@ -351,7 +442,9 @@ fn first_hit_str(group: &[&MethodResult]) -> String {
 }
 
 fn first_hit_cell(value: Option<f64>) -> String {
-    value.map(|v| format!("{v:.2}")).unwrap_or_else(|| "-".to_string())
+    value
+        .map(|v| format!("{v:.2}"))
+        .unwrap_or_else(|| "-".to_string())
 }
 
 fn write_md_table(
@@ -360,7 +453,11 @@ fn write_md_table(
     rows: &[Vec<String>],
 ) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(f, "| {} |", headers.join(" | "))?;
-    writeln!(f, "|{}|", headers.iter().map(|_| "---").collect::<Vec<_>>().join("|"))?;
+    writeln!(
+        f,
+        "|{}|",
+        headers.iter().map(|_| "---").collect::<Vec<_>>().join("|")
+    )?;
     for row in rows {
         writeln!(f, "| {} |", row.join(" | "))?;
     }

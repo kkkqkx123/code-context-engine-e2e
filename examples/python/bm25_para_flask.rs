@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
             aggregate.parameter_key.display_name(),
             aggregate.strong_mrr_at_10,
             aggregate.strong_f1_at_10,
-            aggregate.weighted_recall_at_20,
+            aggregate.recall_any_at_20,
         );
     }
     println!("Results written to {}", output_dir.display());

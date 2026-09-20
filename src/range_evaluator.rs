@@ -10,9 +10,6 @@ use crate::bench_data::{
     ChunkData, ChunkSourceRange, RelevanceJudgment, RelevanceLevel, SourceRange,
 };
 
-const STRONG_WEIGHT: usize = 5;
-const RELATED_WEIGHT: usize = 1;
-
 /// All relevance targets matched by one retrieved chunk.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChunkRelevance {
@@ -82,18 +79,6 @@ fn normalize_path(path: &str) -> String {
     crate::bench_data::normalize_path(path)
 }
 
-fn weight(level: RelevanceLevel) -> usize {
-    match level {
-        RelevanceLevel::Strong => STRONG_WEIGHT,
-        RelevanceLevel::Related => RELATED_WEIGHT,
-        RelevanceLevel::Irrelevant => 0,
-    }
-}
-
-fn includes(level: RelevanceLevel, threshold: RelevanceLevel) -> bool {
-    level >= threshold && level != RelevanceLevel::Irrelevant
-}
-
 fn harmonic_mean(precision: f64, recall: f64) -> f64 {
     if precision + recall == 0.0 {
         0.0
@@ -104,9 +89,9 @@ fn harmonic_mean(precision: f64, recall: f64) -> f64 {
 
 #[derive(Debug, Clone)]
 pub struct RangeBasedPerQueryScore {
-    /// Retrieved chunks containing at least one Strong target.
+    /// Retrieved chunks whose highest hit is a Strong target.
     pub strong_matches: usize,
-    /// Retrieved chunks containing at least one Strong or Related target.
+    /// Retrieved chunks whose highest hit is a Related (non-Strong) target.
     pub related_matches: usize,
     /// Retrieved chunks containing at least one labeled target.
     pub any_matches: usize,
@@ -127,8 +112,9 @@ pub struct RangeBasedPerQueryScore {
 
 /// Evaluate source-fragment recovery at a fixed cutoff.
 ///
-/// Precision is unweighted per-chunk. Recall is weighted by ground-truth
-/// fragment importance (Strong:Related = 5:1).
+/// Precision is unweighted per-chunk. Recall is unweighted per-target and
+/// reported separately for the Strong and Related layers plus the combined
+/// `any` layer.
 pub fn evaluate_query_range_based(
     judgment: &RelevanceJudgment,
     chunks: &[ChunkData],
@@ -217,11 +203,13 @@ impl PrefixCounts {
             self.covered_targets.insert(*target_index);
         }
         self.any_matches += 1;
-        if includes(highest, RelevanceLevel::Strong) {
-            self.strong_matches += 1;
-        }
-        if includes(highest, RelevanceLevel::Related) {
-            self.related_matches += 1;
+        // The three layer counters are disjoint: a chunk whose highest hit is
+        // Strong only counts as strong, one whose highest hit is Related
+        // counts as related, so `strong + related == any` always holds.
+        match highest {
+            RelevanceLevel::Strong => self.strong_matches += 1,
+            RelevanceLevel::Related => self.related_matches += 1,
+            RelevanceLevel::Irrelevant => {}
         }
     }
 }
@@ -232,25 +220,32 @@ fn finalize_range_score(
     top_k: usize,
     total_chunks: usize,
 ) -> RangeBasedPerQueryScore {
-    let weighted_recall = |threshold| {
-        let total_weight: usize = target_levels
+    // Unweighted recall: each relevant target counts once toward total and
+    // toward coverage, and the two relevance layers are measured separately.
+    let exact_recall = |wanted: RelevanceLevel| -> f64 {
+        let total = target_levels
             .iter()
-            .copied()
-            .filter(|level| includes(*level, threshold))
-            .map(weight)
-            .sum();
-        if total_weight == 0 {
+            .filter(|level| **level == wanted)
+            .count();
+        if total == 0 {
             return 0.0;
         }
-        let covered_weight: usize = counts
+        let covered = counts
             .covered_targets
             .iter()
-            .filter_map(|index| target_levels.get(*index))
-            .copied()
-            .filter(|level| includes(*level, threshold))
-            .map(weight)
-            .sum();
-        covered_weight as f64 / total_weight as f64
+            .filter(|index| {
+                target_levels
+                    .get(**index)
+                    .map(|level| *level == wanted)
+                    .unwrap_or(false)
+            })
+            .count();
+        covered as f64 / total as f64
+    };
+    let any_recall = if target_levels.is_empty() {
+        0.0
+    } else {
+        counts.covered_targets.len() as f64 / target_levels.len() as f64
     };
 
     let denominator = top_k.min(total_chunks);
@@ -265,9 +260,9 @@ fn finalize_range_score(
     let precision_strong = precision(counts.strong_matches);
     let precision_related = precision(counts.related_matches);
     let precision_any = precision(counts.any_matches);
-    let recall_strong = weighted_recall(RelevanceLevel::Strong);
-    let recall_related = weighted_recall(RelevanceLevel::Related);
-    let recall_any = weighted_recall(RelevanceLevel::Irrelevant);
+    let recall_strong = exact_recall(RelevanceLevel::Strong);
+    let recall_related = exact_recall(RelevanceLevel::Related);
+    let recall_any = any_recall;
 
     RangeBasedPerQueryScore {
         strong_matches: counts.strong_matches,
@@ -477,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn all_overlapping_targets_contribute_to_weighted_recall() {
+    fn all_overlapping_targets_contribute_to_any_recall() {
         let judgment = RelevanceJudgment {
             id: "coverage".to_string(),
             query_text: "coverage".to_string(),
@@ -507,6 +502,8 @@ mod tests {
         let score = evaluate_query_range_based(&judgment, &[chunk], &[1.0], 1);
         assert_eq!(score.total_relevant, 2);
         assert_eq!(score.recall_any, 1.0);
+        assert_eq!(score.recall_strong, 1.0);
+        assert_eq!(score.recall_related, 1.0);
     }
 
     #[test]

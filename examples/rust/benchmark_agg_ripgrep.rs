@@ -25,9 +25,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_judgments.len() - judgments.len()
     );
 
-    cce_e2e_tests::aggregation_enhance::run_aggregation_enhance_benchmark(
-        "ripgrep",
-        &judgments,
-    )?;
+    cce_e2e_tests::aggregation_enhance::run_aggregation_enhance_benchmark("ripgrep", &judgments)?;
     Ok(())
 }

@@ -66,6 +66,38 @@ name = "benchmark_flask"
 path = "examples/python/benchmark_flask.rs"
 
 [[example]]
+name = "gen_bench_gin"
+path = "examples/go/gen_bench_gin.rs"
+
+[[example]]
+name = "benchmark_gin"
+path = "examples/go/benchmark_gin.rs"
+
+[[example]]
+name = "gen_bench_express"
+path = "examples/javascript/gen_bench_express.rs"
+
+[[example]]
+name = "benchmark_express"
+path = "examples/javascript/benchmark_express.rs"
+
+[[example]]
+name = "gen_bench_spring_boot"
+path = "examples/java/gen_bench_spring_boot.rs"
+
+[[example]]
+name = "benchmark_spring_boot"
+path = "examples/java/benchmark_spring_boot.rs"
+
+[[example]]
+name = "gen_bench_mediatr"
+path = "examples/csharp/gen_bench_mediatr.rs"
+
+[[example]]
+name = "benchmark_mediatr"
+path = "examples/csharp/benchmark_mediatr.rs"
+
+[[example]]
 name = "export_py"
 path = "examples/python/export_py.rs"
 

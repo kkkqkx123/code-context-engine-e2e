@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
             agg.parameter_key.display_name(),
             agg.strong_mrr_at_10,
             agg.strong_f1_at_10,
-            agg.weighted_recall_at_20,
+            agg.recall_any_at_20,
         );
     }
     println!("Results written to {}", output_dir.display());

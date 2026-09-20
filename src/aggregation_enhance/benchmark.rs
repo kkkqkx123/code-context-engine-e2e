@@ -95,7 +95,10 @@ pub fn run_aggregation_enhance_benchmark(
             skipped: vec![format!("missing {}", data_path.display())],
         });
     }
-    println!("Loading baseline '{BASELINE}' from: {}", data_path.display());
+    println!(
+        "Loading baseline '{BASELINE}' from: {}",
+        data_path.display()
+    );
     let bench = crate::bench_data::load_benchmark_data(&data_path)?;
     println!(
         "  {} queries, {} embedding chunks, {} BM25 chunks",
@@ -125,7 +128,10 @@ pub fn run_aggregation_enhance_benchmark(
         &params,
     )?;
 
-    println!("\n✓ Aggregation-enhance evaluation files written to: {}", out.display());
+    println!(
+        "\n✓ Aggregation-enhance evaluation files written to: {}",
+        out.display()
+    );
     print_summary(&results);
 
     Ok(BenchmarkRun {
@@ -167,7 +173,9 @@ pub fn evaluate_baseline(
         bench.embedding.dimension as usize,
     );
     let signals = SignalStats {
-        files: file_vectors.as_ref().map_or(graph.file_count(), |f| f.file_count()),
+        files: file_vectors
+            .as_ref()
+            .map_or(graph.file_count(), |f| f.file_count()),
         entities: graph.entity_count(),
         emb_chunks: bench.embedding.chunks.len(),
         bm25_chunks: bench.bm25.chunks.len(),
@@ -325,7 +333,12 @@ fn evaluate_single_path(
             .push(format!("{base}+sum: no summary files above threshold"));
     }
 
-    let id_of = |i: usize| chunks.get(i).map(|c| c.chunk_id.clone()).unwrap_or_default();
+    let id_of = |i: usize| {
+        chunks
+            .get(i)
+            .map(|c| c.chunk_id.clone())
+            .unwrap_or_default()
+    };
     if want_rel {
         let boosted = apply_additive_boosts(
             base_ranked,
@@ -333,8 +346,7 @@ fn evaluate_single_path(
             ctx.params.agg.max_addition,
             &id_of,
         );
-        let ranked: Vec<&ChunkData> =
-            boosted.iter().filter_map(|&(i, _)| chunks.get(i)).collect();
+        let ranked: Vec<&ChunkData> = boosted.iter().filter_map(|&(i, _)| chunks.get(i)).collect();
         record_method(ctx, &format!("{base}+rel"), query_data, judgment, &ranked);
     }
     if want_sum {
@@ -344,8 +356,7 @@ fn evaluate_single_path(
             ctx.params.agg.max_addition,
             &id_of,
         );
-        let ranked: Vec<&ChunkData> =
-            boosted.iter().filter_map(|&(i, _)| chunks.get(i)).collect();
+        let ranked: Vec<&ChunkData> = boosted.iter().filter_map(|&(i, _)| chunks.get(i)).collect();
         record_method(ctx, &format!("{base}+sum"), query_data, judgment, &ranked);
     }
     if want_rel && want_sum {
@@ -358,8 +369,7 @@ fn evaluate_single_path(
             ctx.params.agg.max_addition,
             &id_of,
         );
-        let ranked: Vec<&ChunkData> =
-            boosted.iter().filter_map(|&(i, _)| chunks.get(i)).collect();
+        let ranked: Vec<&ChunkData> = boosted.iter().filter_map(|&(i, _)| chunks.get(i)).collect();
         record_method(ctx, &format!("{base}+both"), query_data, judgment, &ranked);
     }
 }
@@ -371,8 +381,11 @@ fn evaluate_fused(
     fused: &[crate::retrieval_method::fusion::FusedEntry],
     query_vector: &[f32],
 ) {
-    let base_ranked: Vec<(usize, f64)> =
-        fused.iter().enumerate().map(|(i, e)| (i, e.fused_score)).collect();
+    let base_ranked: Vec<(usize, f64)> = fused
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (i, e.fused_score))
+        .collect();
     let ranked: Vec<&ChunkData> = fused.iter().map(|e| &e.coverage).collect();
     record_method(ctx, "minmax-0.5", query_data, judgment, &ranked);
 
@@ -443,10 +456,12 @@ fn evaluate_fused(
     let want_rel = !rel.is_empty();
     let want_sum = !sum.is_empty();
     if !want_rel {
-        ctx.skipped.push("minmax-0.5+rel: no related entities".to_string());
+        ctx.skipped
+            .push("minmax-0.5+rel: no related entities".to_string());
     }
     if !want_sum {
-        ctx.skipped.push("minmax-0.5+sum: no summary files above threshold".to_string());
+        ctx.skipped
+            .push("minmax-0.5+sum: no summary files above threshold".to_string());
     }
     let id_of = |i: usize| {
         fused
@@ -455,18 +470,27 @@ fn evaluate_fused(
             .unwrap_or_default()
     };
     let apply = |map: &HashMap<usize, f64>, cap: f32| {
-        apply_additive_boosts(&base_ranked, &[(map, cap)], ctx.params.agg.max_addition, &id_of)
+        apply_additive_boosts(
+            &base_ranked,
+            &[(map, cap)],
+            ctx.params.agg.max_addition,
+            &id_of,
+        )
     };
     if want_rel {
         let boosted = apply(&rel, relation_cap(ctx.params));
-        let ranked: Vec<&ChunkData> =
-            boosted.iter().filter_map(|&(i, _)| fused.get(i).map(|e| &e.coverage)).collect();
+        let ranked: Vec<&ChunkData> = boosted
+            .iter()
+            .filter_map(|&(i, _)| fused.get(i).map(|e| &e.coverage))
+            .collect();
         record_method(ctx, "minmax-0.5+rel", query_data, judgment, &ranked);
     }
     if want_sum {
         let boosted = apply(&sum, summary_cap(ctx.params));
-        let ranked: Vec<&ChunkData> =
-            boosted.iter().filter_map(|&(i, _)| fused.get(i).map(|e| &e.coverage)).collect();
+        let ranked: Vec<&ChunkData> = boosted
+            .iter()
+            .filter_map(|&(i, _)| fused.get(i).map(|e| &e.coverage))
+            .collect();
         record_method(ctx, "minmax-0.5+sum", query_data, judgment, &ranked);
     }
     if want_rel && want_sum {
@@ -479,8 +503,10 @@ fn evaluate_fused(
             ctx.params.agg.max_addition,
             &id_of,
         );
-        let ranked: Vec<&ChunkData> =
-            boosted.iter().filter_map(|&(i, _)| fused.get(i).map(|e| &e.coverage)).collect();
+        let ranked: Vec<&ChunkData> = boosted
+            .iter()
+            .filter_map(|&(i, _)| fused.get(i).map(|e| &e.coverage))
+            .collect();
         record_method(ctx, "minmax-0.5+both", query_data, judgment, &ranked);
     }
 }
@@ -510,8 +536,10 @@ fn record_method(
         let relevance = scan.advance(chunk);
         if pos < DEFAULT_TOP_K {
             if let Some(level) = relevance.highest_level() {
-                let loc =
-                    format!("{}:{}-{}", chunk.file_path, chunk.start_line, chunk.end_line);
+                let loc = format!(
+                    "{}:{}-{}",
+                    chunk.file_path, chunk.start_line, chunk.end_line
+                );
                 match level {
                     RelevanceLevel::Strong => strong.push((pos + 1, loc, level)),
                     RelevanceLevel::Related => related.push((pos + 1, loc, level)),
@@ -556,8 +584,16 @@ fn print_summary(results: &[MethodResult]) {
     }
     for (method, group) in &map {
         let n = group.len() as f64;
-        let mark = if is_production_parity(method) { "" } else { " (exploratory)" };
-        let precision = group.iter().map(|r| r.score.range.precision_any).sum::<f64>() / n;
+        let mark = if is_production_parity(method) {
+            ""
+        } else {
+            " (exploratory)"
+        };
+        let precision = group
+            .iter()
+            .map(|r| r.score.range.precision_any)
+            .sum::<f64>()
+            / n;
         let recall = group.iter().map(|r| r.score.range.recall_any).sum::<f64>() / n;
         let f1 = group.iter().map(|r| r.score.range.f1_any).sum::<f64>() / n;
         println!(
