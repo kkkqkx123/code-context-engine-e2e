@@ -5,6 +5,39 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+cce-types = { path = "../../core/cce-types" }
+cce-config = { path = "../../core/cce-config" }
+cce-utils = { path = "../../core/cce-utils" }
+cce-text = { path = "../../core/cce-text" }
+cce-plugin = { path = "../../core/cce-plugin" }
+cce-llm = { path = "../../core/cce-llm" }
+cce-parser = { path = "../../parser/cce-parser" }
+cce-relation = { path = "../../parser/cce-relation" }
+cce-storage-bm25 = { path = "../../infra/cce-storage-bm25" }
+cce-storage-qdrant = { path = "../../infra/cce-storage-qdrant" }
+cce-storage-sqlite = { path = "../../infra/cce-storage-sqlite" }
+cce-scanner = { path = "../../infra/cce-scanner" }
+cce-llm-client = { path = "../../infra/cce-llm-client" }
+cce-metrics = { path = "../../core/cce-metrics" }
+cce-plugin-runtime = { path = "../cce-plugin-runtime" }
+cce-orchestrator = { path = "../cce-orchestrator" }
+chrono = { workspace = true }
+compact_str = { workspace = true }
+dashmap = { workspace = true }
+dotenvy = { workspace = true }
+rkyv = { workspace = true }
+reqwest = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
 [[example]]
 name = "rust_basic"
 path = "examples/rust/basic.rs"
@@ -153,41 +186,6 @@ path = "examples/rust/benchmark_rerank_oncecell.rs"
 name = "zz_diag_rerank"
 path = "examples/rust/zz_diag_rerank.rs"
 
-[dependencies]
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-cce-types = { path = "../../core/cce-types" }
-cce-config = { path = "../../core/cce-config" }
-cce-utils = { path = "../../core/cce-utils" }
-cce-text = { path = "../../core/cce-text" }
-cce-plugin = { path = "../../core/cce-plugin" }
-cce-llm = { path = "../../core/cce-llm" }
-cce-parser = { path = "../../parser/cce-parser" }
-cce-relation = { path = "../../parser/cce-relation" }
-cce-storage-bm25 = { path = "../../infra/cce-storage-bm25" }
-cce-storage-qdrant = { path = "../../infra/cce-storage-qdrant" }
-cce-storage-sqlite = { path = "../../infra/cce-storage-sqlite" }
-cce-scanner = { path = "../../infra/cce-scanner" }
-cce-llm-client = { path = "../../infra/cce-llm-client" }
-cce-metrics = { path = "../../core/cce-metrics" }
-cce-plugin-runtime = { path = "../cce-plugin-runtime" }
-cce-orchestrator = { path = "../cce-orchestrator" }
-chrono = { workspace = true }
-compact_str = { workspace = true }
-dashmap = { workspace = true }
-dotenvy = { workspace = true }
-rkyv = { workspace = true }
-reqwest = { workspace = true }
-rusqlite = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tempfile = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-
-
-
 [[example]]
 name = "debug_convert"
 path = "examples/rust/debug_convert.rs"
@@ -211,3 +209,43 @@ path = "examples/javascript/export_js.rs"
 [[example]]
 name = "export_type_inference"
 path = "examples/type_inference/export_type_inference.rs"
+
+[[example]]
+name = "export_ts"
+path = "examples/typescript/export_ts.rs"
+
+[[example]]
+name = "export_kt"
+path = "examples/kotlin/export_kt.rs"
+
+[[example]]
+name = "export_php"
+path = "examples/php/export_php.rs"
+
+[[example]]
+name = "export_rb"
+path = "examples/ruby/export_rb.rs"
+
+[[example]]
+name = "export_lua"
+path = "examples/lua/export_lua.rs"
+
+[[example]]
+name = "export_dart"
+path = "examples/dart/export_dart.rs"
+
+[[example]]
+name = "export_scala"
+path = "examples/scala/export_scala.rs"
+
+[[example]]
+name = "export_c"
+path = "examples/c/export_c.rs"
+
+[[example]]
+name = "export_cpp"
+path = "examples/cpp/export_cpp.rs"
+
+[[example]]
+name = "export_sh"
+path = "examples/bash/export_sh.rs"

@@ -126,6 +126,11 @@ impl FixtureSpec {
         Self::rust_review("relation_diamond")
     }
 
+    /// Rust re-export chain review fixture
+    pub fn rust_review_re_export() -> Self {
+        Self::rust_review("re_export")
+    }
+
     /// Rust ripgrep review fixture
     pub fn rust_ripgrep() -> Self {
         Self::rust_review("ripgrep")
@@ -571,6 +576,11 @@ impl FixtureSpec {
         Self::javascript_review("express")
     }
 
+    /// JavaScript re-export chain review fixture
+    pub fn javascript_review_re_export() -> Self {
+        Self::javascript_review("re_export")
+    }
+
     /// Document fixture group (markdown / plain text / logs / config files)
     pub fn documents() -> Self {
         Self::new(FixtureCategory::Documents, "")
@@ -986,6 +996,11 @@ impl TestFixture {
         Self::load(FixtureSpec::rust_relation_diamond())
     }
 
+    /// Load Rust re-export chain review fixture
+    pub fn rust_review_re_export() -> io::Result<Self> {
+        Self::load(FixtureSpec::rust_review_re_export())
+    }
+
     /// Load Rust ripgrep review fixture
     pub fn rust_ripgrep() -> io::Result<Self> {
         Self::load(FixtureSpec::rust_ripgrep())
@@ -1359,6 +1374,11 @@ impl TestFixture {
     /// Load JavaScript Express review fixture
     pub fn javascript_express() -> io::Result<Self> {
         Self::load(FixtureSpec::javascript_express())
+    }
+
+    /// Load JavaScript re-export chain review fixture
+    pub fn javascript_review_re_export() -> io::Result<Self> {
+        Self::load(FixtureSpec::javascript_review_re_export())
     }
 
     /// Load multi-language project fixture

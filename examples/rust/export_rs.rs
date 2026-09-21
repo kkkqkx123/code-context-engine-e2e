@@ -1,4 +1,5 @@
-//! Export NL documents for Rust fixtures (once_cell, ripgrep, index_sidecar).
+//! Export NL documents for Rust review fixtures (once_cell, ripgrep,
+//! index_sidecar, re_export, relation_demo, relation_diamond).
 //!
 //! Each fixture is extracted, scanned and processed exactly once; the results
 //! feed markdown NL-doc summary, chunk segmentation, and structured symbol /
@@ -7,461 +8,57 @@
 //! both pipelines operate on identical snapshots.
 //!
 //! Output:
-//!   outputs/scenarios/rust/summary/once_cell/      — markdown NL docs
-//!   outputs/scenarios/rust/summary/ripgrep/        — markdown NL docs
-//!   outputs/scenarios/rust/chunks/once_cell/emb/   — chunk segmentation (Embedding)
-//!   outputs/scenarios/rust/chunks/once_cell/bm25/  — chunk segmentation (BM25)
-//!   outputs/scenarios/rust/chunks/ripgrep/emb/     — chunk segmentation (Embedding)
-//!   outputs/scenarios/rust/chunks/ripgrep/bm25/    — chunk segmentation (BM25)
-//!   outputs/scenarios/rust/summary/index_sidecar/  — sidecar display
-//!   outputs/scenarios/rust/chunks/index_sidecar/   — sidecar chunks
-//!   outputs/scenarios/rust/structured/once_cell/   — SUMMARY.md + per-file <path>.txt
+//!   outputs/scenarios/rust/summary/{fixture}/      — markdown NL docs
+//!   outputs/scenarios/rust/chunks/{fixture}/emb/   — chunk segmentation (Embedding)
+//!   outputs/scenarios/rust/chunks/{fixture}/bm25/  — chunk segmentation (BM25)
+//!   outputs/scenarios/rust/structured/{fixture}/   — SUMMARY.md + per-file <path>.txt
 //!                                                    + per-directory <dir>.dir.txt
-//!   outputs/scenarios/rust/structured/ripgrep/     — structured outputs (hierarchical)
-//!   outputs/scenarios/rust/structured/index_sidecar/ — structured outputs (hierarchical)
 
-use std::collections::BTreeMap;
-use std::path::Path;
-use std::sync::Arc;
-
-use cce_orchestrator::export::{DirectExporter, ExportConfig};
-use cce_orchestrator::index::FileProcessor;
-use cce_parser::ast_to_nl::ConversionRequest;
-use cce_parser::ast_to_nl::chunker::ChunkedResult;
-use cce_relation::IndexBuilder;
-use cce_relation::index::{EntityIndexOps, RelationQueryOps};
-use cce_scanner::{FSScanner, ScanOptions};
-use cce_types::{OutputMode, ParsedFile};
-
-use cce_e2e_tests::structured_output::StructuredOutputWriter;
-use cce_e2e_tests::{OutputCategory, OutputManager, TestFixture, init_minimal_logging};
+use cce_e2e_tests::FixtureSpec;
+use cce_e2e_tests::init_minimal_logging;
+use cce_e2e_tests::review_export::{ReviewExportJob, export_jobs};
 
 #[tokio::main]
 async fn main() {
     init_minimal_logging();
 
-    export_fixture(
-        "once_cell",
-        TestFixture::rust_once_cell().expect("Failed to load once_cell fixture"),
-    )
+    export_jobs(&[
+        ReviewExportJob {
+            language: "rust",
+            fixture_name: "once_cell",
+            spec: FixtureSpec::rust_once_cell(),
+            include_patterns: &["*.rs"],
+        },
+        ReviewExportJob {
+            language: "rust",
+            fixture_name: "ripgrep",
+            spec: FixtureSpec::rust_ripgrep(),
+            include_patterns: &["*.rs"],
+        },
+        ReviewExportJob {
+            language: "rust",
+            fixture_name: "index_sidecar",
+            spec: FixtureSpec::rust_index_sidecar(),
+            include_patterns: &["*.rs"],
+        },
+        ReviewExportJob {
+            language: "rust",
+            fixture_name: "re_export",
+            spec: FixtureSpec::rust_review_re_export(),
+            include_patterns: &["*.rs"],
+        },
+        ReviewExportJob {
+            language: "rust",
+            fixture_name: "relation_demo",
+            spec: FixtureSpec::rust_relation_demo(),
+            include_patterns: &["*.rs"],
+        },
+        ReviewExportJob {
+            language: "rust",
+            fixture_name: "relation_diamond",
+            spec: FixtureSpec::rust_relation_diamond(),
+            include_patterns: &["*.rs"],
+        },
+    ])
     .await;
-    export_fixture(
-        "ripgrep",
-        TestFixture::rust_ripgrep().expect("Failed to load ripgrep fixture"),
-    )
-    .await;
-    export_fixture(
-        "index_sidecar",
-        TestFixture::rust_index_sidecar().expect("Failed to load index_sidecar fixture"),
-    )
-    .await;
-
-    println!("\n=== All outputs generated ===");
-}
-
-/// Export summary (markdown NL docs) and chunk segmentation outputs for one
-/// fixture. The fixture is scanned and each file processed exactly once per
-/// output mode; the Embedding pass feeds both the summary export and the
-/// Embedding chunk segmentation.
-async fn export_fixture(fixture_name: &str, fixture: TestFixture) {
-    let project_root = fixture.root_path().to_path_buf();
-    let project_root_str = project_root.to_string_lossy().replace('\\', "/");
-
-    let export_config = ExportConfig::new(project_root.clone(), 1);
-    let direct_exporter = Arc::new(DirectExporter::new(export_config));
-
-    let mut scanner = FSScanner::new();
-    let scan_opts = ScanOptions {
-        root_path: project_root.to_string_lossy().to_string(),
-        include_patterns: vec!["*.rs".to_string()],
-        ..Default::default()
-    };
-    let file_entries = scanner
-        .scan(&scan_opts)
-        .expect("Failed to scan fixture directory");
-
-    let mut file_processor = FileProcessor::new();
-    let mut indexed_files = 0;
-    let mut emb_by_file: BTreeMap<String, Vec<ChunkedResult>> = BTreeMap::new();
-    let mut bm25_by_file: BTreeMap<String, Vec<ChunkedResult>> = BTreeMap::new();
-    let mut parsed_files: Vec<ParsedFile> = Vec::new();
-
-    for entry in &file_entries {
-        let file_path = entry.path.to_string_lossy().to_string();
-        let relative_path = normalize_file_path(&file_path, &project_root_str);
-
-        match file_processor
-            .process_file_complete(entry, OutputMode::Embedding)
-            .await
-        {
-            Ok(result) => {
-                // Retain the ParsedFile for the structured (relation / type-inference)
-                // path before it is moved into conversion. This reuses the same
-                // tree-sitter snapshot that produced the NL chunks.
-                let parsed_for_structured = result.parsed_file.clone();
-                let has_groups = result
-                    .processing_result
-                    .as_ref()
-                    .is_some_and(|pr| !pr.groups.is_empty());
-
-                if let Some(processing_result) = result.processing_result {
-                    if !processing_result.groups.is_empty() {
-                        let converter = file_processor.converter();
-                        let source = &*result.parsed_file.source;
-                        let request = ConversionRequest {
-                            force_mode: Some(OutputMode::Embedding),
-                        };
-                        let conversions = converter.convert_entity_groups(
-                            &processing_result.groups,
-                            &file_path,
-                            Some(&request),
-                            Some(&processing_result),
-                            Some(source),
-                        );
-                        match direct_exporter
-                            .export_groups(&conversions, &file_path)
-                            .await
-                        {
-                            Ok(_) => indexed_files += 1,
-                            Err(e) => eprintln!("  Export error: {}", e),
-                        }
-                    }
-                }
-                if !result.chunks.is_empty() {
-                    emb_by_file
-                        .entry(relative_path.clone())
-                        .or_default()
-                        .extend(result.chunks);
-                }
-                // Keep parsed files that produced at least one entity or group;
-                // empty parse products are not needed for relation construction.
-                if has_groups || !parsed_for_structured.entities.is_empty() {
-                    parsed_files.push(parsed_for_structured);
-                } else if parsed_for_structured.entities.is_empty() {
-                    // Still keep files with no entities for completeness of
-                    // type-inference coverage (they will produce empty tables).
-                    parsed_files.push(parsed_for_structured);
-                }
-            }
-            Err(e) => eprintln!("  Process error: {}", e),
-        }
-
-        if let Ok(result) = file_processor
-            .process_file_complete(entry, OutputMode::Bm25)
-            .await
-        {
-            if !result.chunks.is_empty() {
-                bm25_by_file
-                    .entry(relative_path)
-                    .or_default()
-                    .extend(result.chunks);
-            }
-        }
-    }
-
-    for chunks in emb_by_file.values_mut() {
-        chunks.sort_by(|a, b| {
-            a.metadata
-                .source_span
-                .line_range_opt()
-                .map(|range| range.0)
-                .unwrap_or(usize::MAX)
-                .cmp(
-                    &b.metadata
-                        .source_span
-                        .line_range_opt()
-                        .map(|range| range.0)
-                        .unwrap_or(usize::MAX),
-                )
-        });
-    }
-    for chunks in bm25_by_file.values_mut() {
-        chunks.sort_by(|a, b| {
-            a.metadata
-                .source_span
-                .line_range_opt()
-                .map(|range| range.0)
-                .unwrap_or(usize::MAX)
-                .cmp(
-                    &b.metadata
-                        .source_span
-                        .line_range_opt()
-                        .map(|range| range.0)
-                        .unwrap_or(usize::MAX),
-                )
-        });
-    }
-
-    write_summary_output(fixture_name, &project_root, indexed_files);
-    let total_emb = write_chunk_outputs(&emb_by_file, &format!("chunks/{fixture_name}/emb"));
-    let total_bm25 = write_chunk_outputs(&bm25_by_file, &format!("chunks/{fixture_name}/bm25"));
-    println!("  {fixture_name} chunks: emb={total_emb} bm25={total_bm25}");
-
-    // Structured output: reuse the same ParsedFile snapshots for relation
-    // graph construction and type inference so that export and relation
-    // analysis do not re-parse the files.
-    write_structured_output(fixture_name, &project_root, &parsed_files);
-}
-
-fn write_summary_output(fixture_name: &str, project_root: &Path, indexed_files: usize) {
-    let cce_dir = project_root.join(".cce").join("nl_docs");
-    let exported_files = collect_md_files(&cce_dir);
-
-    let output_mgr = OutputManager::builder()
-        .category(OutputCategory::Scenarios)
-        .language("rust")
-        .scenario(format!("summary/{fixture_name}"))
-        .build();
-    let output_dir = output_mgr
-        .ensure_output_dir()
-        .expect("Failed to create output dir");
-
-    let mut copied_files = Vec::new();
-    for file in &exported_files {
-        copy_to_output(&cce_dir, &output_dir, file).ok();
-        let relative = file.strip_prefix(&cce_dir).unwrap_or(file);
-        copied_files.push(relative.to_path_buf());
-    }
-
-    let mut summary = String::new();
-    summary.push_str(&format!("# Export Output for {fixture_name} Fixture\n\n"));
-    summary.push_str(&format!("**Indexed files:** {}\n", indexed_files));
-    summary.push_str(&format!("**Exported files:** {}\n\n", copied_files.len()));
-    summary.push_str("## Files\n\n");
-    copied_files.sort();
-    for rel_path in &copied_files {
-        summary.push_str(&format!(
-            "- {}\n",
-            rel_path.to_string_lossy().replace('\\', "/")
-        ));
-    }
-    output_mgr.write("SUMMARY.md", &summary).ok();
-
-    println!("  {fixture_name} summary: {} files", copied_files.len());
-}
-
-/// Build a relation index from the same `ParsedFile` snapshots that fed the
-/// NL export, then emit structured symbol / relation / type-inference files.
-///
-/// This reuses the tree-sitter parse without a second filesystem read; the
-/// `ParsedFile` list is already the canonical source for both pipelines.
-fn write_structured_output(fixture_name: &str, project_root: &Path, parsed_files: &[ParsedFile]) {
-    if parsed_files.is_empty() {
-        eprintln!("  {fixture_name} structured: no parsed files, skipping");
-        return;
-    }
-
-    // Build a full relation index from the in-memory parse products.
-    let builder = IndexBuilder::new();
-    let project_symbols = builder.create_project_symbol_table(project_root);
-    for pf in parsed_files {
-        builder.add_file_symbols(pf, &project_symbols);
-    }
-    for pf in parsed_files {
-        builder.register_file_entities(pf);
-    }
-    for pf in parsed_files {
-        builder.resolve_file_relations(pf, &project_symbols);
-    }
-    let index = builder.build();
-
-    let writer = StructuredOutputWriter::for_scenarios("rust", fixture_name);
-    match writer.write_all(&index, parsed_files) {
-        Ok(paths) => {
-            println!(
-                "  {fixture_name} structured: {} files ({} entities, {} relations) -> {}",
-                paths.len(),
-                index.function_count(),
-                index.resolved_relation_count(),
-                writer.ensure_dir().unwrap_or_default().display()
-            );
-            for p in &paths {
-                println!("    - {}", p.display());
-            }
-        }
-        Err(e) => eprintln!("  {fixture_name} structured error: {e}"),
-    }
-}
-
-/// Write chunk segmentation files for the given scenario. Returns the total
-/// number of chunks written.
-fn write_chunk_outputs(
-    chunks_by_file: &BTreeMap<String, Vec<ChunkedResult>>,
-    scenario: &str,
-) -> usize {
-    let chunking_mgr = OutputManager::builder()
-        .category(OutputCategory::Scenarios)
-        .language("rust")
-        .scenario(scenario)
-        .build();
-    let output_dir = chunking_mgr
-        .ensure_output_dir()
-        .expect("Failed to create chunking output dir");
-
-    for (file_path, chunks) in chunks_by_file {
-        let path = Path::new(file_path);
-        let content = render_chunking_file(chunks, file_path);
-        let file_name = path.file_name().unwrap().to_string_lossy();
-        let file_name = format!("{file_name}.txt");
-        let file_dir = path
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let target_dir = output_dir.join(&file_dir);
-        std::fs::create_dir_all(&target_dir).expect("Failed to create target dir");
-        let target_path = target_dir.join(&file_name);
-        std::fs::write(&target_path, &content)
-            .unwrap_or_else(|e| panic!("Failed to write {file_name}: {e}"));
-    }
-
-    chunks_by_file.values().map(Vec::len).sum()
-}
-
-fn collect_files_by_extension(dir: &Path, extension: &str) -> Vec<std::path::PathBuf> {
-    let mut files = Vec::new();
-    if !dir.exists() {
-        return files;
-    }
-    collect_files_recursive(dir, extension, &mut files);
-    files
-}
-
-fn collect_md_files(dir: &Path) -> Vec<std::path::PathBuf> {
-    collect_files_by_extension(dir, "md")
-}
-
-fn collect_files_recursive(dir: &Path, extension: &str, files: &mut Vec<std::path::PathBuf>) {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                collect_files_recursive(&path, extension, files);
-            } else if path.extension().is_some_and(|e| e == extension) {
-                files.push(path);
-            }
-        }
-    }
-}
-
-fn copy_to_output(cce_dir: &Path, output_dir: &Path, file: &Path) -> std::io::Result<()> {
-    let relative = file
-        .strip_prefix(cce_dir)
-        .unwrap_or_else(|_| file.file_name().map(Path::new).unwrap_or(file));
-    let target = output_dir.join(relative);
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::copy(file, &target)?;
-    Ok(())
-}
-
-fn normalize_file_path(abs_path: &str, manifest_dir: &str) -> String {
-    let abs = abs_path.replace('\\', "/");
-    let manifest_dir = manifest_dir.replace('\\', "/");
-    if let Some(stripped) = abs.strip_prefix(&manifest_dir) {
-        let stripped = stripped.trim_start_matches('/');
-        if !stripped.is_empty() {
-            return stripped.to_string();
-        }
-    }
-    abs
-}
-
-fn render_chunking_file(
-    chunks: &[cce_parser::ast_to_nl::chunker::ChunkedResult],
-    file_path: &str,
-) -> String {
-    let mut out = String::new();
-    let total = chunks.len();
-    let path = Path::new(file_path);
-    let file_name = path
-        .file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| file_path.to_string());
-
-    out.push_str(&format!("{file_name}\n"));
-    out.push_str(&format!("total chunks: {total}\n"));
-    out.push_str("---\n");
-
-    for (i, chunk) in chunks.iter().enumerate() {
-        let (start_line, end_line) = chunk
-            .metadata
-            .source_span
-            .line_range_opt()
-            .unwrap_or((0, 0));
-        let code_meta = chunk.metadata.code_metadata.as_ref();
-
-        out.push_str(&format!(
-            "\n=== CHUNK {}/{} (lines {start_line}-{end_line}) ===\n",
-            i + 1,
-            total,
-        ));
-        out.push_str(&format!(
-            "chunk_id: {} | group: {} | kind: {}\n",
-            chunk.chunk_id,
-            chunk.source_group_id,
-            code_meta
-                .map(|m| format!("{:?}", m.entity_kind))
-                .unwrap_or_else(|| "n/a".to_string())
-        ));
-
-        let is_fragment = code_meta.is_some_and(|m| m.is_fragment);
-        if is_fragment {
-            let frag_idx = code_meta.and_then(|m| m.fragment_index).unwrap_or(0);
-            let total_frags = code_meta.and_then(|m| m.total_fragments).unwrap_or(0);
-            out.push_str(&format!(
-                "fragment: {}/{total_frags} | split_reason: {}\n",
-                frag_idx + 1,
-                code_meta
-                    .map(|m| format!("{:?}", m.split_reason))
-                    .unwrap_or_else(|| "n/a".to_string())
-            ));
-        } else {
-            out.push_str(&format!(
-                "split_reason: {}\n",
-                code_meta
-                    .map(|m| format!("{:?}", m.split_reason))
-                    .unwrap_or_else(|| "n/a".to_string())
-            ));
-        }
-
-        if chunk.path == cce_parser::ast_to_nl::chunker::ChunkPath::Bm25 {
-            out.push_str(&format!(
-                "title: {} | tokens: {}\n",
-                chunk.bm25_title.as_deref().unwrap_or("n/a"),
-                chunk.token_count
-            ));
-            out.push_str(&format!("keywords: [{}]\n", chunk.bm25_keywords.join(", ")));
-        } else {
-            out.push_str(&format!("tokens: {}\n", chunk.token_count));
-        }
-
-        if !chunk.related_groups.is_empty() {
-            let rel_str: Vec<String> = chunk
-                .related_groups
-                .iter()
-                .map(|rel| format!("{} ({})", rel.group_id, rel.relation_type))
-                .collect();
-            out.push_str(&format!("related: {}\n", rel_str.join(", ")));
-        }
-
-        if let Some(o) = &chunk.prev_overlap {
-            out.push_str(&format!(
-                "prev_overlap: {} tokens from {}\n",
-                o.token_count, o.source_chunk_id
-            ));
-        }
-        if let Some(o) = &chunk.next_overlap {
-            out.push_str(&format!(
-                "next_overlap: {} tokens from {}\n",
-                o.token_count, o.source_chunk_id
-            ));
-        }
-
-        out.push('\n');
-        out.push_str(&chunk.text);
-        out.push('\n');
-    }
-
-    out
 }
