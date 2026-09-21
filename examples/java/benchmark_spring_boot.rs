@@ -33,8 +33,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paths = BenchmarkPaths::new("spring_boot");
     let mut all_results: Vec<BaselineResult> = Vec::new();
     let mut no_test_results: Vec<BaselineResult> = Vec::new();
+    let mut impl_only_results: Vec<BaselineResult> = Vec::new();
     let mut all_relevance: Vec<RelevanceInfo> = Vec::new();
     let mut no_test_relevance: Vec<RelevanceInfo> = Vec::new();
+    let mut impl_only_relevance: Vec<RelevanceInfo> = Vec::new();
     let mut all_bench: Vec<(String, cce_e2e_tests::bench_data::BenchmarkData)> = Vec::new();
 
     for baseline in BASELINES {
@@ -58,17 +60,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             bench.bm25.chunks.len()
         );
 
-        let (emb_all, emb_no_test) = evaluate_embedding_variants(baseline, &bench, &judgments);
-        all_results.extend(emb_all.results);
-        all_relevance.extend(emb_all.relevance);
-        no_test_results.extend(emb_no_test.results);
-        no_test_relevance.extend(emb_no_test.relevance);
+        let emb = evaluate_embedding_variants(baseline, &bench, &judgments);
+        all_results.extend(emb.all.results);
+        all_relevance.extend(emb.all.relevance);
+        no_test_results.extend(emb.no_test.results);
+        no_test_relevance.extend(emb.no_test.relevance);
+        impl_only_results.extend(emb.impl_only.results);
+        impl_only_relevance.extend(emb.impl_only.relevance);
 
-        let (bm25_all, bm25_no_test) = evaluate_bm25_variants(baseline, &bench, &judgments);
-        all_results.extend(bm25_all.results);
-        all_relevance.extend(bm25_all.relevance);
-        no_test_results.extend(bm25_no_test.results);
-        no_test_relevance.extend(bm25_no_test.relevance);
+        let bm25 = evaluate_bm25_variants(baseline, &bench, &judgments);
+        all_results.extend(bm25.all.results);
+        all_relevance.extend(bm25.all.relevance);
+        no_test_results.extend(bm25.no_test.results);
+        no_test_relevance.extend(bm25.no_test.relevance);
+        impl_only_results.extend(bm25.impl_only.results);
+        impl_only_relevance.extend(bm25.impl_only.relevance);
 
         all_bench.push((baseline.to_string(), bench));
     }
@@ -84,13 +90,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     generate_evaluation_scope_csv(&out, &all_judgments, &judgments)?;
 
-    write_aggregate_reports(&out, &all_results, &no_test_results)?;
+    write_aggregate_reports(&out, &all_results, &no_test_results, &impl_only_results)?;
     write_test_diagnostics(&out, &all_bench)?;
-    write_relevance_reports(&out, &all_relevance, &no_test_relevance)?;
+    write_relevance_reports(
+        &out,
+        &all_relevance,
+        &no_test_relevance,
+        &impl_only_relevance,
+    )?;
 
     println!("\n✓ All evaluation files written to: {}", out.display());
     let mut summary_results = all_results;
     summary_results.extend(no_test_results);
+    summary_results.extend(impl_only_results);
     print_console_summary(&summary_results);
 
     Ok(())

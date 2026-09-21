@@ -13,18 +13,21 @@ use crate::judgments::evaluate::{
     collect_test_diagnostics,
 };
 
-/// Write the standard aggregate/per-query CSV set for both evaluation
+/// Write the standard aggregate/per-query CSV set for all evaluation
 /// variants into a single set of files.
 ///
-/// `no_test_results` holds the variant with test chunks excluded; rows carry
-/// a `variant` column (`all` | `no_test`) so both share the same tables.
+/// Extra slices hold filtered variants (`no_test` drops test chunks,
+/// `impl_only` also drops demo/sample trees). Rows carry a `variant` column
+/// (`all` | `no_test` | `impl_only`) so every variant shares the same tables.
 pub fn write_aggregate_reports(
     base: &Path,
     results: &[BaselineResult],
     no_test_results: &[BaselineResult],
+    impl_only_results: &[BaselineResult],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut combined: Vec<&BaselineResult> = results.iter().collect();
     combined.extend(no_test_results.iter());
+    combined.extend(impl_only_results.iter());
     for &top_k in TOP_K_VALUES {
         generate_aggregate_csv(base, &combined, top_k)?;
         generate_aggregate_by_query_type_csv(base, &combined, top_k)?;
@@ -544,15 +547,17 @@ pub fn write_test_diagnostics(
     Ok(())
 }
 
-/// Write top-5 relevance detail rows for both evaluation variants.
+/// Write top-5 relevance detail rows for every evaluation variant.
 ///
 /// The `all` variant is the primary observability source; `no_test` rows show
-/// what remains after test chunks are filtered. Both variants now emit their
-/// relevance info instead of discarding it at the runner entry point.
+/// what remains after test chunks are filtered, and `impl_only` further drops
+/// demo/sample trees. All variants now emit their relevance info instead of
+/// discarding it at the runner entry point.
 pub fn write_relevance_reports(
     base: &Path,
     all_relevance: &[RelevanceInfo],
     no_test_relevance: &[RelevanceInfo],
+    impl_only_relevance: &[RelevanceInfo],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = base.join("relevance_top5.md");
     let mut f = File::create(&path)?;
@@ -588,6 +593,7 @@ pub fn write_relevance_reports(
     };
     push_rows("all", all_relevance, &mut rows);
     push_rows("no_test", no_test_relevance, &mut rows);
+    push_rows("impl_only", impl_only_relevance, &mut rows);
 
     write_md_table(&mut f, headers, &rows)?;
     Ok(())

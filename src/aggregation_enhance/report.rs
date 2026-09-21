@@ -84,8 +84,8 @@ fn write_run_manifest(
     )?;
     writeln!(
         f,
-        "  seeds top_n={}, max_hops={}, decay 1/sqrt(hops), relation_max={}",
-        params.relation.top_n, params.relation.max_hops, params.agg.relation_max
+        "  seeds top_n={}, max_hops={}, decay 1/sqrt(hops), max_boost={}",
+        params.relation.top_n, params.relation.max_hops, params.relation.max_boost
     )?;
     writeln!(
         f,

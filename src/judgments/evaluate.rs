@@ -13,7 +13,7 @@ use crate::bench_data::{
 use crate::infra::{QueryForms, build_query_forms};
 use crate::range_evaluator::{RangeBasedPerQueryScore, RankedScan, is_relevant_to_query};
 use cce_storage_bm25::TermOperator;
-use cce_types::{TestInfo, TestStatus};
+use cce_types::{TestInfo, TestStatus, segments};
 
 pub const BASELINES: &[&str] = &[
     "full_pipeline",
@@ -23,11 +23,17 @@ pub const BASELINES: &[&str] = &[
 pub const TOP_K_VALUES: &[usize] = &[5, 10, 20, 30, 50];
 pub const DEFAULT_TOP_K: usize = 5;
 
-/// Evaluation variant: whether test chunks participate in retrieval.
+/// Evaluation variant: which non-implementation chunks participate in retrieval.
+///
+/// `All` keeps every chunk. `NoTest` drops test-code chunks. `ImplOnly` also
+/// drops demo/sample trees (`examples`, `example`, `samples`, `sample`) so
+/// ranking can be compared against the query-time path filters that the
+/// search API already exposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvalVariant {
     All,
     NoTest,
+    ImplOnly,
 }
 
 impl EvalVariant {
@@ -35,11 +41,8 @@ impl EvalVariant {
         match self {
             Self::All => "all",
             Self::NoTest => "no_test",
+            Self::ImplOnly => "impl_only",
         }
-    }
-
-    fn filter_test_chunks(self) -> bool {
-        matches!(self, Self::NoTest)
     }
 }
 
@@ -93,6 +96,26 @@ pub fn is_test_chunk(chunk: &ChunkData) -> bool {
         TestStatus::Unknown => {
             TestInfo::from_path(chunk.language.as_ref(), &chunk.file_path).is_test()
         }
+    }
+}
+
+const EXAMPLE_DIR_SEGMENTS: [&str; 4] = ["examples", "example", "samples", "sample"];
+
+/// Whether a chunk lives under a conventional demo/sample directory.
+///
+/// Segment names are matched exactly so `my_examples.rs` stays in ranking
+/// while `examples/hello-world/index.js` is excluded.
+pub fn is_example_chunk(chunk: &ChunkData) -> bool {
+    segments(&chunk.file_path)
+        .iter()
+        .any(|segment| EXAMPLE_DIR_SEGMENTS.contains(segment))
+}
+
+fn keep_chunk(chunk: &ChunkData, variant: EvalVariant) -> bool {
+    match variant {
+        EvalVariant::All => true,
+        EvalVariant::NoTest => !is_test_chunk(chunk),
+        EvalVariant::ImplOnly => !is_test_chunk(chunk) && !is_example_chunk(chunk),
     }
 }
 
@@ -243,12 +266,20 @@ pub struct VariantEvaluation {
     pub relevance: Vec<RelevanceInfo>,
 }
 
-/// Select the chunks passing a variant's test-code filter.
+/// Evaluation outputs for the three path-filter variants of one retriever.
+#[derive(Default)]
+pub struct PathFilterEvaluations {
+    pub all: VariantEvaluation,
+    pub no_test: VariantEvaluation,
+    pub impl_only: VariantEvaluation,
+}
+
+/// Select the chunks passing a variant's path filter.
 ///
 /// Returns (original indices, cloned chunks); the two are index-aligned.
 fn select_chunks(chunks: &[ChunkData], variant: EvalVariant) -> (Vec<usize>, Vec<ChunkData>) {
     let indices: Vec<usize> = (0..chunks.len())
-        .filter(|&i| !variant.filter_test_chunks() || !is_test_chunk(&chunks[i]))
+        .filter(|&i| keep_chunk(&chunks[i], variant))
         .collect();
     let selected: Vec<ChunkData> = indices.iter().map(|&i| chunks[i].clone()).collect();
     (indices, selected)
@@ -357,26 +388,26 @@ pub fn evaluate_embedding(
     relevance.extend(out.relevance);
 }
 
-/// Evaluate both test-code variants with shared score computation.
+/// Evaluate path-filter variants with shared score computation.
 ///
-/// The embedding scores, BM25 scores and per-query sorts do not depend on the
-/// test-code filter, so one pass serves both the `All` and `NoTest` variants.
+/// Embedding scores do not depend on the path filter, so one pass serves the
+/// `All`, `NoTest` and `ImplOnly` variants.
 pub fn evaluate_embedding_variants(
     baseline: &str,
     bench: &BenchmarkData,
     judgments: &[RelevanceJudgment],
-) -> (VariantEvaluation, VariantEvaluation) {
+) -> PathFilterEvaluations {
     let dim = bench.embedding.dimension as usize;
     if dim == 0 || bench.embedding.vectors.is_empty() {
-        return (VariantEvaluation::default(), VariantEvaluation::default());
+        return PathFilterEvaluations::default();
     }
     let n_chunks = bench.embedding.vectors.len() / dim;
     let n_queries = bench.embedding.query_vectors.len() / dim;
 
     let all_chunks: Vec<ChunkData> = bench.embedding.chunks[..n_chunks].to_vec();
     let (no_test_indices, no_test_chunks) = select_chunks(&all_chunks, EvalVariant::NoTest);
-    let mut all = VariantEvaluation::default();
-    let mut no_test = VariantEvaluation::default();
+    let (impl_only_indices, impl_only_chunks) = select_chunks(&all_chunks, EvalVariant::ImplOnly);
+    let mut evaluations = PathFilterEvaluations::default();
 
     for q_idx in 0..bench.queries.len().min(n_queries) {
         let query_data = &bench.queries[q_idx];
@@ -401,7 +432,7 @@ pub fn evaluate_embedding_variants(
             &all_chunks,
             &scores,
             EvalVariant::All,
-            &mut all,
+            &mut evaluations.all,
         );
         let no_test_scores: Vec<f64> = no_test_indices.iter().map(|&i| scores[i]).collect();
         evaluate_variant_query(
@@ -412,11 +443,22 @@ pub fn evaluate_embedding_variants(
             &no_test_chunks,
             &no_test_scores,
             EvalVariant::NoTest,
-            &mut no_test,
+            &mut evaluations.no_test,
+        );
+        let impl_only_scores: Vec<f64> = impl_only_indices.iter().map(|&i| scores[i]).collect();
+        evaluate_variant_query(
+            baseline,
+            query_data,
+            "emb",
+            judgment,
+            &impl_only_chunks,
+            &impl_only_scores,
+            EvalVariant::ImplOnly,
+            &mut evaluations.impl_only,
         );
     }
 
-    (all, no_test)
+    evaluations
 }
 
 pub fn evaluate_bm25(
@@ -462,24 +504,25 @@ pub fn evaluate_bm25(
     relevance.extend(out.relevance);
 }
 
-/// Evaluate both test-code variants with shared score computation.
+/// Evaluate path-filter variants with shared score computation.
 ///
-/// The BM25 scores and per-query sorts do not depend on the test-code filter,
-/// so one scoring pass serves both the `All` and `NoTest` variants.
+/// BM25 scores do not depend on the path filter, so one scoring pass serves
+/// the `All`, `NoTest` and `ImplOnly` variants.
 pub fn evaluate_bm25_variants(
     baseline: &str,
     bench: &BenchmarkData,
     judgments: &[RelevanceJudgment],
-) -> (VariantEvaluation, VariantEvaluation) {
+) -> PathFilterEvaluations {
     if bench.bm25_documents.is_empty() {
-        return (VariantEvaluation::default(), VariantEvaluation::default());
+        return PathFilterEvaluations::default();
     }
     let bm25_scores = bm25_scores_for_bench(bench);
 
     let (_, all_chunks) = select_chunks(&bench.bm25.chunks, EvalVariant::All);
     let (no_test_indices, no_test_chunks) = select_chunks(&bench.bm25.chunks, EvalVariant::NoTest);
-    let mut all = VariantEvaluation::default();
-    let mut no_test = VariantEvaluation::default();
+    let (impl_only_indices, impl_only_chunks) =
+        select_chunks(&bench.bm25.chunks, EvalVariant::ImplOnly);
+    let mut evaluations = PathFilterEvaluations::default();
 
     for (q_idx, scores) in bm25_scores
         .iter()
@@ -500,7 +543,7 @@ pub fn evaluate_bm25_variants(
             &all_chunks,
             &all_scores,
             EvalVariant::All,
-            &mut all,
+            &mut evaluations.all,
         );
         let no_test_scores: Vec<f64> = no_test_indices.iter().map(|&i| scores[i]).collect();
         evaluate_variant_query(
@@ -511,11 +554,22 @@ pub fn evaluate_bm25_variants(
             &no_test_chunks,
             &no_test_scores,
             EvalVariant::NoTest,
-            &mut no_test,
+            &mut evaluations.no_test,
+        );
+        let impl_only_scores: Vec<f64> = impl_only_indices.iter().map(|&i| scores[i]).collect();
+        evaluate_variant_query(
+            baseline,
+            query_data,
+            "BM25",
+            judgment,
+            &impl_only_chunks,
+            &impl_only_scores,
+            EvalVariant::ImplOnly,
+            &mut evaluations.impl_only,
         );
     }
 
-    (all, no_test)
+    evaluations
 }
 
 pub fn build_relevance_info(
@@ -812,5 +866,48 @@ mod tests {
         assert_eq!(scores[0].document_id, "file_doc_a.rs");
         assert_eq!(scores[0].rank, 1);
         assert_eq!(metrics[0].rr, 1.0);
+    }
+
+    fn chunk_at(file_path: &str) -> ChunkData {
+        let mut data = chunk("id");
+        data.file_path = file_path.to_string();
+        data
+    }
+
+    #[test]
+    fn example_path_filter_matches_directory_segments_exactly() {
+        assert!(is_example_chunk(&chunk_at("examples/hello-world/index.js")));
+        assert!(is_example_chunk(&chunk_at(
+            "examples\\hello-world\\index.js"
+        )));
+        assert!(is_example_chunk(&chunk_at(
+            "samples/MediatR.Examples/Program.cs"
+        )));
+        assert!(is_example_chunk(&chunk_at(
+            "crates/ignore/examples/walk.rs"
+        )));
+        assert!(!is_example_chunk(&chunk_at("lib/express.js")));
+        assert!(!is_example_chunk(&chunk_at("src/my_examples.rs")));
+        assert!(!is_example_chunk(&chunk_at("src/sample_utils.py")));
+    }
+
+    #[test]
+    fn impl_only_drops_test_and_example_chunks() {
+        let lib = chunk_at("lib/application.js");
+        let mut test = chunk_at("test/app.use.js");
+        test.test_info = TestInfo::test_path();
+        let example = chunk_at("examples/cookies/index.js");
+
+        assert!(keep_chunk(&lib, EvalVariant::All));
+        assert!(keep_chunk(&test, EvalVariant::All));
+        assert!(keep_chunk(&example, EvalVariant::All));
+
+        assert!(keep_chunk(&lib, EvalVariant::NoTest));
+        assert!(!keep_chunk(&test, EvalVariant::NoTest));
+        assert!(keep_chunk(&example, EvalVariant::NoTest));
+
+        assert!(keep_chunk(&lib, EvalVariant::ImplOnly));
+        assert!(!keep_chunk(&test, EvalVariant::ImplOnly));
+        assert!(!keep_chunk(&example, EvalVariant::ImplOnly));
     }
 }

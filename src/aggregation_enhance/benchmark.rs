@@ -288,7 +288,7 @@ fn embedding_query_vector(bench: &BenchmarkData, q_idx: usize) -> &[f32] {
 }
 
 fn relation_cap(params: &EnhanceParams) -> f32 {
-    params.agg.relation_max
+    params.relation.max_boost
 }
 
 fn summary_cap(params: &EnhanceParams) -> f32 {
@@ -411,7 +411,7 @@ fn evaluate_fused(
     for (i, entry) in fused.iter().enumerate() {
         if let Some(entity) = fused_entity(entry) {
             if let Some(&hops) = related.get(&entity) {
-                let value = ctx.params.agg.relation_max as f64 / (hops as f64).sqrt();
+                let value = ctx.params.relation.max_boost as f64 / (hops as f64).sqrt();
                 if value > 0.0 {
                     rel.insert(i, value);
                 }

@@ -1,21 +1,20 @@
 //! Offline boost simulation for the aggregation-enhance benchmark.
 //!
 //! Reuses only `data/benchmark/{baseline}/{fixture}/bge-m3/bench_data.rkyv`
-//! (no regeneration, no LLM calls). Both boost signals mirror the production
-//! formulas in `cce_orchestrator::query::boost` with the same default
-//! parameters, but derive their inputs from already-materialized data:
+//! (no regeneration, no LLM calls). The summary signal mirrors the production
+//! formula in `cce_orchestrator::query::boost` with the same default
+//! parameters, but derives its inputs from already-materialized data:
+//! file vectors mean-pooled from the existing chunk vectors; per-query cosine
+//! against the existing query vector plays the role of the production
+//! summary-index lookup, with the same `min_score` threshold, `top_k` file
+//! cap, and threshold normalization.
 //!
-//! - relation: file-cohort entity graph built from chunk metadata
-//!   (`entity_ids` + `file_path`). Seeds are the top-N base hits, expansion
-//!   is BFS up to `max_hops`, and per-hit addition decays with
-//!   `1 / sqrt(hops)` — the production hop-decay shape. The graph itself is
-//!   an explicitly documented proxy: production traverses the directed call
-//!   graph (callees only by default), while the offline graph links entities
-//!   that share a file (undirected).
-//! - summary: file vectors mean-pooled from the existing chunk vectors;
-//!   per-query cosine against the existing query vector plays the role of
-//!   the production summary-index lookup, with the same `min_score`
-//!   threshold, `top_k` file cap, and threshold normalization.
+//! The relation signal is an offline-only proxy: a file-cohort entity graph
+//! built from chunk metadata (`entity_ids` + `file_path`). Seeds are the
+//! top-N base hits, expansion is BFS up to `max_hops`, and per-hit addition
+//! decays with `1 / sqrt(hops)`. The graph links entities that share a file
+//! (undirected). Graph traversal for production queries lives on the
+//! dedicated graph retrieval path, not in semantic scoring.
 //!
 //! Aggregation (`apply_additive_boosts`) mirrors production `apply_boosts`:
 //! per-source caps, then a global `max_addition` cap, applied as
@@ -23,29 +22,35 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cce_config::modules::search::{
-    BoostAggregationConfig, RelationBoostConfig, SummaryBoostConfig,
-};
+use cce_config::modules::search::{BoostAggregationConfig, SummaryBoostConfig};
 
 use crate::bench_data::{ChunkData, cosine_similarity};
 
-/// Boost parameters, always sourced from the production config defaults so
-/// the benchmark tracks the shipped behavior.
+/// Offline-only relation proxy parameters.
 #[derive(Debug, Clone)]
-pub struct EnhanceParams {
-    pub relation: RelationBoostConfig,
-    pub summary: SummaryBoostConfig,
-    pub agg: BoostAggregationConfig,
+pub struct RelationParams {
+    pub top_n: usize,
+    pub max_hops: usize,
+    pub max_boost: f32,
 }
 
-impl Default for EnhanceParams {
+impl Default for RelationParams {
     fn default() -> Self {
         Self {
-            relation: RelationBoostConfig::default(),
-            summary: SummaryBoostConfig::default(),
-            agg: BoostAggregationConfig::default(),
+            top_n: 5,
+            max_hops: 2,
+            max_boost: 0.15,
         }
     }
+}
+
+/// Boost parameters, always sourced from the production config defaults so
+/// the benchmark tracks the shipped behavior.
+#[derive(Debug, Clone, Default)]
+pub struct EnhanceParams {
+    pub relation: RelationParams,
+    pub summary: SummaryBoostConfig,
+    pub agg: BoostAggregationConfig,
 }
 
 /// Undirected file-cohort entity graph (offline proxy for the call graph).
@@ -134,7 +139,7 @@ pub fn primary_entity(chunk: &ChunkData) -> Option<i64> {
 /// Relation boost value per candidate chunk index.
 ///
 /// Seeds are the top-`top_n` base hits; each candidate carrying a related
-/// entity receives `relation_max / sqrt(hops)`.
+/// entity receives `max_boost / sqrt(hops)`.
 pub fn relation_boosts(
     base_ranked: &[(usize, f64)],
     chunks: &[ChunkData],
@@ -161,7 +166,7 @@ pub fn relation_boosts(
         if let Some(entity) = primary_entity(chunk) {
             if let Some(&hops) = related.get(&entity) {
                 let decay = 1.0 / (hops as f64).sqrt();
-                let value = params.agg.relation_max as f64 * decay;
+                let value = params.relation.max_boost as f64 * decay;
                 if value > 0.0 {
                     boosts.insert(*idx, value);
                 }
@@ -377,12 +382,12 @@ mod tests {
         let p = params();
         let base = vec![(0usize, 0.9), (1usize, 0.8), (2usize, 0.7)];
         let boosts = relation_boosts(&base, &chunks, &graph, &p);
-        // Seed chunk itself gets no boost; 1-hop gets full relation_max.
+        // Seed chunk itself gets no boost; 1-hop gets full max_boost.
         assert!(!boosts.contains_key(&0));
-        let one_hop = p.agg.relation_max as f64;
+        let one_hop = p.relation.max_boost as f64;
         assert!((boosts[&1] - one_hop).abs() < 1e-9);
         // Entity 3 is two hops away via the bridge entity 2.
-        let two_hop = p.agg.relation_max as f64 / 2.0_f64.sqrt();
+        let two_hop = p.relation.max_boost as f64 / 2.0_f64.sqrt();
         assert!((boosts[&2] - two_hop).abs() < 1e-9);
     }
 
@@ -421,7 +426,7 @@ mod tests {
         let p = params();
         assert_eq!(p.relation.top_n, 5);
         assert_eq!(p.relation.max_hops, 2);
-        assert!((p.agg.relation_max - 0.15).abs() < f32::EPSILON);
+        assert!((p.relation.max_boost - 0.15).abs() < f32::EPSILON);
         assert!((p.agg.summary_max - 0.15).abs() < f32::EPSILON);
         assert!((p.agg.max_addition - 0.5).abs() < f32::EPSILON);
         assert_eq!(p.summary.top_k, 20);
