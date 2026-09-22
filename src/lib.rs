@@ -4,6 +4,7 @@
 //! utilities for integration tests under `tests/`.
 
 pub mod aggregation_enhance;
+pub mod assembly_review;
 pub mod assertion;
 pub mod baselines;
 pub mod bench_data;
