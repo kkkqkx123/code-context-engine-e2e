@@ -10,11 +10,12 @@
 //! cap, and threshold normalization.
 //!
 //! The relation signal is an offline-only proxy: a file-cohort entity graph
-//! built from chunk metadata (`entity_ids` + `file_path`). Seeds are the
-//! top-N base hits, expansion is BFS up to `max_hops`, and per-hit addition
-//! decays with `1 / sqrt(hops)`. The graph links entities that share a file
-//! (undirected). Graph traversal for production queries lives on the
-//! dedicated graph retrieval path, not in semantic scoring.
+//! built from chunk metadata (`entity_ids` + `file_path`). The seed is the
+//! top-1 base hit, expansion is BFS up to `max_hops`, and per-hit addition
+//! decays with `1 / sqrt(hops)` (deepest matching hop per chunk). The graph
+//! links entities that share a file (undirected); an entity present in
+//! several files bridges them. Graph traversal for production queries lives
+//! on the dedicated graph retrieval path, not in semantic scoring.
 //!
 //! Aggregation (`apply_additive_boosts`) mirrors production `apply_boosts`:
 //! per-source caps, then a global `max_addition` cap, applied as
@@ -54,9 +55,12 @@ pub struct EnhanceParams {
 }
 
 /// Undirected file-cohort entity graph (offline proxy for the call graph).
+///
+/// An entity appearing in several files is a bridge: it links the member
+/// entities of every file it appears in.
 #[derive(Debug, Default)]
 pub struct FileCohortGraph {
-    entity_to_file: HashMap<i64, String>,
+    entity_to_files: HashMap<i64, Vec<String>>,
     file_to_entities: HashMap<String, Vec<i64>>,
 }
 
@@ -67,15 +71,20 @@ impl FileCohortGraph {
         for chunk in chunks {
             for &entity in &chunk.entity_ids {
                 graph
-                    .entity_to_file
+                    .entity_to_files
                     .entry(entity)
-                    .or_insert_with(|| chunk.file_path.clone());
+                    .or_default()
+                    .push(chunk.file_path.clone());
                 graph
                     .file_to_entities
                     .entry(chunk.file_path.clone())
                     .or_default()
                     .push(entity);
             }
+        }
+        for files in graph.entity_to_files.values_mut() {
+            files.sort_unstable();
+            files.dedup();
         }
         for entities in graph.file_to_entities.values_mut() {
             entities.sort_unstable();
@@ -85,7 +94,7 @@ impl FileCohortGraph {
     }
 
     pub fn entity_count(&self) -> usize {
-        self.entity_to_file.len()
+        self.entity_to_files.len()
     }
 
     pub fn file_count(&self) -> usize {
@@ -93,13 +102,19 @@ impl FileCohortGraph {
     }
 
     fn neighbors(&self, entity: i64) -> Vec<i64> {
-        let Some(file) = self.entity_to_file.get(&entity) else {
+        let Some(files) = self.entity_to_files.get(&entity) else {
             return Vec::new();
         };
-        self.file_to_entities
-            .get(file)
-            .map(|members| members.iter().copied().filter(|&e| e != entity).collect())
-            .unwrap_or_default()
+        let mut members: Vec<i64> = Vec::new();
+        for file in files {
+            if let Some(entities) = self.file_to_entities.get(file.as_str()) {
+                members.extend(entities.iter().copied());
+            }
+        }
+        members.sort_unstable();
+        members.dedup();
+        members.retain(|&e| e != entity);
+        members
     }
 }
 
@@ -115,15 +130,16 @@ pub fn expand_cohort(
     const MAX_NODES: usize = 10_000;
     let mut related = HashMap::new();
     let mut visited: HashSet<i64> = seeds.iter().copied().collect();
-    let mut frontier: Vec<(i64, usize)> = seeds.iter().map(|&s| (s, 0)).collect();
-    while let Some((entity, hops)) = frontier.pop() {
+    let mut frontier: std::collections::VecDeque<(i64, usize)> =
+        seeds.iter().map(|&s| (s, 0)).collect();
+    while let Some((entity, hops)) = frontier.pop_front() {
         if visited.len() > MAX_NODES || hops >= max_hops {
             continue;
         }
         for neighbor in graph.neighbors(entity) {
             if visited.insert(neighbor) {
                 related.insert(neighbor, hops + 1);
-                frontier.push((neighbor, hops + 1));
+                frontier.push_back((neighbor, hops + 1));
             }
         }
     }
@@ -138,38 +154,37 @@ pub fn primary_entity(chunk: &ChunkData) -> Option<i64> {
 
 /// Relation boost value per candidate chunk index.
 ///
-/// Seeds are the top-`top_n` base hits; each candidate carrying a related
-/// entity receives `max_boost / sqrt(hops)`.
+/// The seed is the top-1 base hit's primary entity; expansion runs BFS up
+/// to `max_hops`. The first `top_n` candidates are boosted: a chunk matching
+/// several related entities decays with its deepest hop, so a chunk only
+/// reachable through a bridge decays as the distant context it is.
 pub fn relation_boosts(
     base_ranked: &[(usize, f64)],
     chunks: &[ChunkData],
     graph: &FileCohortGraph,
     params: &EnhanceParams,
 ) -> HashMap<usize, f64> {
-    let top_n = params.relation.top_n.min(base_ranked.len());
-    let seeds: Vec<i64> = base_ranked[..top_n]
-        .iter()
-        .filter_map(|&(idx, _)| chunks.get(idx).and_then(primary_entity))
-        .collect();
-    if seeds.is_empty() {
+    let seed = base_ranked
+        .first()
+        .and_then(|&(idx, _)| chunks.get(idx).and_then(primary_entity));
+    let Some(seed) = seed else {
         return HashMap::new();
-    }
-    let related = expand_cohort(graph, &seeds, params.relation.max_hops);
+    };
+    let related = expand_cohort(graph, &[seed], params.relation.max_hops);
     if related.is_empty() {
         return HashMap::new();
     }
+    let top_n = params.relation.top_n.min(base_ranked.len());
     let mut boosts = HashMap::new();
-    for (idx, _) in base_ranked {
+    for (idx, _) in base_ranked.iter().take(top_n) {
         let Some(chunk) = chunks.get(*idx) else {
             continue;
         };
-        if let Some(entity) = primary_entity(chunk) {
-            if let Some(&hops) = related.get(&entity) {
-                let decay = 1.0 / (hops as f64).sqrt();
-                let value = params.relation.max_boost as f64 * decay;
-                if value > 0.0 {
-                    boosts.insert(*idx, value);
-                }
+        if let Some(&hops) = chunk.entity_ids.iter().filter_map(|e| related.get(e)).max() {
+            let decay = 1.0 / (hops as f64).sqrt();
+            let value = params.relation.max_boost as f64 * decay;
+            if value > 0.0 {
+                boosts.insert(*idx, value);
             }
         }
     }
@@ -416,9 +431,12 @@ mod tests {
         let out = apply_additive_boosts(&base, &[(&rel, 0.15), (&sum, 0.15)], 0.5, &id_of);
         assert!((out[0].1 - 0.9 * 1.30).abs() < 1e-9);
         assert_eq!(out[0].0, 1);
-        // Tight global cap clamps the multiplier.
+        // Tight global cap clamps the multiplier. The boosted candidate no
+        // longer outranks the untouched 1.0 base score, so look it up by id;
+        // the expected value mirrors the f32 cap's f64 widening exactly.
         let out = apply_additive_boosts(&base, &[(&rel, 0.15), (&sum, 0.15)], 0.10, &id_of);
-        assert!((out[0].1 - 0.9 * 1.10).abs() < 1e-9);
+        let boosted = out.iter().find(|(idx, _)| *idx == 1).expect("c1 present");
+        assert!((boosted.1 - 0.9 * (1.0 + f64::from(0.10f32))).abs() < 1e-9);
     }
 
     #[test]

@@ -1,11 +1,14 @@
 use cce_orchestrator::index::FileProcessor;
 use cce_parser::ast_to_nl::chunker::{ChunkPath, ChunkedResult};
 use cce_parser::grouper::GroupType;
-use cce_types::OutputMode;
+use cce_relation::IndexBuilder;
+use cce_types::{OutputMode, ParsedFile};
 
-use crate::bench_data::ChunkData;
+use crate::FixtureSpec;
+use crate::bench_data::{CallEdgeData, ChunkData};
 use crate::bench_gen::{
-    GeneratedChunks, bm25_doc_records, chunk_data_from_result, scan_fixture, validate_unique_chunks,
+    GeneratedChunks, bm25_doc_records, chunk_data_from_result, collect_call_edges,
+    fixture_source_path, scan_fixture, validate_unique_chunks,
 };
 
 /// Split a single-parse `OutputMode::Both` result into the two retrieval paths.
@@ -30,18 +33,21 @@ fn split_by_path(results: Vec<ChunkedResult>) -> (Vec<ChunkedResult>, Vec<Chunke
 }
 
 pub async fn gen_full_pipeline_chunks(
-    target_spec: crate::FixtureSpec,
-    distractor_spec: crate::FixtureSpec,
+    target_spec: FixtureSpec,
+    distractor_spec: FixtureSpec,
 ) -> anyhow::Result<GeneratedChunks> {
-    let target_entries = scan_fixture(target_spec)?;
+    let target_entries = scan_fixture(target_spec.clone())?;
     let dist_entries = scan_fixture(distractor_spec)?;
 
     let mut processor = FileProcessor::new();
 
     let mut emb_results: Vec<ChunkedResult> = Vec::new();
     let mut bm25_results: Vec<ChunkedResult> = Vec::new();
+    let mut target_parsed: Vec<ParsedFile> = Vec::new();
 
-    // Target entries: collect chunks.
+    // Target entries: collect chunks and the parse products used for the
+    // relation-edge sidecar (distractors share relative paths and would
+    // collide, so only the target fixture feeds the index).
     for entry in &target_entries {
         if let Ok(result) = processor
             .process_file_complete(entry, OutputMode::Both)
@@ -50,6 +56,7 @@ pub async fn gen_full_pipeline_chunks(
             let (emb, bm25) = split_by_path(result.chunks);
             emb_results.extend(emb);
             bm25_results.extend(bm25);
+            target_parsed.push(result.parsed_file);
         }
     }
     // Distractor entries: collect chunks only (no file-docs — same relative
@@ -89,7 +96,35 @@ pub async fn gen_full_pipeline_chunks(
         bm25_chunks,
         bm25_texts,
         bm25_documents,
+        call_edges: build_call_edges(target_spec, &target_parsed),
     })
+}
+
+/// Build the relation index from the same parses that produced the chunks and
+/// extract the in-project call-edge sidecar for offline assembly review.
+fn build_call_edges(target_spec: FixtureSpec, parsed_files: &[ParsedFile]) -> Vec<CallEdgeData> {
+    if parsed_files.is_empty() {
+        return Vec::new();
+    }
+    let builder = IndexBuilder::new();
+    let project_symbols = builder.create_project_symbol_table(fixture_source_path(target_spec));
+    for pf in parsed_files {
+        builder.add_file_symbols(pf, &project_symbols);
+    }
+    for pf in parsed_files {
+        builder.register_file_entities(pf);
+    }
+    for pf in parsed_files {
+        builder.resolve_file_relations(pf, &project_symbols);
+    }
+    let index = builder.build();
+    let edges = collect_call_edges(&index);
+    eprintln!(
+        "=== FULL PIPELINE: {} in-project call edges over {} parsed files ===",
+        edges.len(),
+        parsed_files.len()
+    );
+    edges
 }
 
 pub fn exclude_file_documentation(chunks: &mut Vec<ChunkedResult>, label: &str) {

@@ -87,6 +87,7 @@ pub async fn gen_full_pipeline_raw_source_chunks(
         bm25_chunks,
         bm25_texts,
         bm25_documents,
+        call_edges: Vec::new(),
     })
 }
 

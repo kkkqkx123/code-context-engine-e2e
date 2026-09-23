@@ -180,6 +180,7 @@ fn synthetic_benchmark() -> BenchmarkData {
                 content: "prime target function".to_string(),
             },
         ],
+        call_edges: Vec::new(),
     }
 }
 
@@ -439,6 +440,7 @@ fn assert_cross_path_alignment(emb: &[ChunkData], bm25: &[ChunkData], label: &st
             dimension: 0,
         },
         bm25_documents: Vec::new(),
+        call_edges: Vec::new(),
     };
     let stat = collect_alignment_stat(label, &bench);
     assert!(

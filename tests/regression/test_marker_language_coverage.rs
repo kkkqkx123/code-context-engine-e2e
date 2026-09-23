@@ -166,6 +166,7 @@ fn build_bm25_bench(chunks: Vec<ChunkData>, queries: Vec<QueryData>) -> Benchmar
             dimension: 0,
         },
         bm25_documents,
+        call_edges: Vec::new(),
     }
 }
 

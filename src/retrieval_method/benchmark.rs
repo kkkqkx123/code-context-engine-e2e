@@ -580,6 +580,7 @@ mod tests {
                 dimension: 0,
             },
             bm25_documents: Vec::new(),
+            call_edges: Vec::new(),
         };
 
         let stat = collect_alignment_stat("test", &bench);

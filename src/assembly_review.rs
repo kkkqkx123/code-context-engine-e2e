@@ -1,4 +1,4 @@
-//! Offline assembly-review export for the dormant SPSR-Graph assembler.
+//! Offline assembly-review export for the SPSR-Graph assembler.
 //!
 //! For every query in the `full_pipeline` benchmark snapshot this job replays
 //! embedding recall offline (cosine over the stored chunk/query vectors, no
@@ -14,19 +14,23 @@
 //! Each `{query_id}.md` holds the plain top-K recall hits (control group)
 //! side by side with the same hits passed through
 //! `SPSRGraphAssembler::assemble_single` (assembly enabled), plus the
-//! `AssemblyMetadata`透传 so reviewers can tell "no effect" apart from
-//! "assembly switched off". See
+//! `AssemblyMetadata` so reviewers can tell "no effect" apart from
+//! "assembly switched off". When expansion is enabled, one call-graph hop
+//! (callees first, then callers) is resolved from the benchmark's
+//! `call_edges` sidecar and attached to every hit. See
 //! `docs/plan/tests/assembly-review-export-design.md`.
 //!
 //! Only `full_pipeline` snapshots are consumed: the other baselines carry
-//! raw source slices with no entity structure, so assembly is meaningless on
-//! them and they cannot serve as a comparison baseline. The baseline
-//! therefore appears nowhere in the output paths.
+//! raw source slices with no entity structure and no call edges, so
+//! assembly is meaningless on them. The baseline therefore appears nowhere
+//! in the output paths.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use cce_orchestrator::query::assembly::{
-    AssembledResult, SPSRGraphAssembler, SPSRGraphConfig, SearchResultInput,
+    AssembledResult, ExpandedUnit, ExpansionOrigin, SPSRGraphAssembler, SPSRGraphConfig,
+    SearchResultInput,
 };
 use cce_types::EntityId;
 
@@ -87,6 +91,48 @@ pub struct AssemblyReviewConfig {
     pub top_k: usize,
     pub content_mode: ContentMode,
     pub recall: RecallMode,
+    /// Attach one call-graph hop (callees + callers) from the benchmark's
+    /// `call_edges` sidecar to every hit. Requires a snapshot generated
+    /// with the call-edge sidecar.
+    pub expansion: bool,
+}
+
+/// Call-graph adjacency over the benchmark entity-id space (`i64` mirrors
+/// `ChunkData::entity_ids`).
+struct CallGraph {
+    /// caller entity id -> edge indices (forward: who calls whom)
+    forward: HashMap<i64, Vec<usize>>,
+    /// callee entity id -> edge indices (backward: who is called by whom)
+    backward: HashMap<i64, Vec<usize>>,
+    /// entity id -> embedding chunk index; primary entity of a chunk wins
+    chunk_of_entity: HashMap<i64, usize>,
+}
+
+impl CallGraph {
+    fn build(bench: &BenchmarkData) -> Self {
+        let mut forward: HashMap<i64, Vec<usize>> = HashMap::new();
+        let mut backward: HashMap<i64, Vec<usize>> = HashMap::new();
+        for (idx, edge) in bench.call_edges.iter().enumerate() {
+            forward.entry(edge.caller_entity_id).or_default().push(idx);
+            backward.entry(edge.callee_entity_id).or_default().push(idx);
+        }
+        let mut chunk_of_entity: HashMap<i64, usize> = HashMap::new();
+        for (idx, chunk) in bench.embedding.chunks.iter().enumerate() {
+            if let Some(&primary) = chunk.entity_ids.first() {
+                chunk_of_entity.entry(primary).or_insert(idx);
+            }
+        }
+        for (idx, chunk) in bench.embedding.chunks.iter().enumerate() {
+            for &id in chunk.entity_ids.iter().skip(1) {
+                chunk_of_entity.entry(id).or_insert(idx);
+            }
+        }
+        Self {
+            forward,
+            backward,
+            chunk_of_entity,
+        }
+    }
 }
 
 /// One scored recall hit: embedding chunk index plus cosine score.
@@ -210,6 +256,123 @@ fn build_assembler_input(chunk: &ChunkData, hit: &HitContent, score: f64) -> Sea
     }
 }
 
+/// Resolve one call-graph neighbour as an expansion unit.
+///
+/// The neighbour is rendered from its own embedding chunk: NL text with
+/// 1-based remapped lines in chunk mode, absolute source lines in source
+/// mode. Neighbours without a chunk, or already present in the query's
+/// top-K hits, are skipped (the assembler dedups and caps the rest).
+#[allow(clippy::too_many_arguments)]
+fn neighbor_unit(
+    bench: &BenchmarkData,
+    graph: &CallGraph,
+    source_cache: &mut HashMap<String, Option<Vec<String>>>,
+    neighbor_id: i64,
+    origin: ExpansionOrigin,
+    edge_label: &str,
+    top_chunk_ids: &HashSet<String>,
+    mode: ContentMode,
+    fixture_root: &Path,
+) -> Option<ExpandedUnit> {
+    let chunk_idx = *graph.chunk_of_entity.get(&neighbor_id)?;
+    let chunk = &bench.embedding.chunks[chunk_idx];
+    if top_chunk_ids.contains(&chunk.chunk_id) {
+        return None;
+    }
+    let (code, start_line, end_line, file_path) = match mode {
+        ContentMode::Chunk => {
+            let text = bench.embedding.texts.get(chunk_idx).map_or("", |t| t);
+            let line_count = text.lines().count() as u32;
+            if line_count == 0 {
+                return None;
+            }
+            (text.to_string(), 1, line_count, chunk.file_path.clone())
+        }
+        ContentMode::Source => {
+            let lines = source_cache
+                .entry(chunk.file_path.clone())
+                .or_insert_with(|| {
+                    std::fs::read_to_string(fixture_root.join(&chunk.file_path))
+                        .map(|content| content.lines().map(String::from).collect())
+                        .ok()
+                })
+                .as_ref()?;
+            let start = chunk.start_line.max(1);
+            let end = chunk.end_line.min(lines.len());
+            if end < start {
+                return None;
+            }
+            let code = lines[start - 1..end].join("\n");
+            let abs = fixture_root
+                .join(&chunk.file_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            (code, start as u32, end as u32, abs)
+        }
+    };
+    let name = display_name(chunk).to_string();
+    Some(
+        ExpandedUnit::new(code, file_path, start_line, end_line, name)
+            .with_entity_id(EntityId(neighbor_id as u64))
+            .with_expansion(origin, edge_label),
+    )
+}
+
+/// Resolve the one-hop forward (callee) and backward (caller) expansion
+/// units for one hit chunk.
+fn resolve_expansion(
+    bench: &BenchmarkData,
+    graph: &CallGraph,
+    chunk: &ChunkData,
+    top_chunk_ids: &HashSet<String>,
+    mode: ContentMode,
+    fixture_root: &Path,
+    source_cache: &mut HashMap<String, Option<Vec<String>>>,
+) -> (Vec<ExpandedUnit>, Vec<ExpandedUnit>) {
+    let Some(&primary_id) = chunk.entity_ids.first() else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut forward = Vec::new();
+    let mut backward = Vec::new();
+    if let Some(edges) = graph.forward.get(&primary_id) {
+        for &edge_idx in edges {
+            let edge = &bench.call_edges[edge_idx];
+            if let Some(unit) = neighbor_unit(
+                bench,
+                graph,
+                source_cache,
+                edge.callee_entity_id,
+                ExpansionOrigin::Forward,
+                "calls",
+                top_chunk_ids,
+                mode,
+                fixture_root,
+            ) {
+                forward.push(unit);
+            }
+        }
+    }
+    if let Some(edges) = graph.backward.get(&primary_id) {
+        for &edge_idx in edges {
+            let edge = &bench.call_edges[edge_idx];
+            if let Some(unit) = neighbor_unit(
+                bench,
+                graph,
+                source_cache,
+                edge.caller_entity_id,
+                ExpansionOrigin::Backward,
+                "called by",
+                top_chunk_ids,
+                mode,
+                fixture_root,
+            ) {
+                backward.push(unit);
+            }
+        }
+    }
+    (forward, backward)
+}
+
 /// Rendered outcome for one hit in the `assembled/` tree.
 enum AssembledOutcome {
     Assembled(AssembledResult),
@@ -302,9 +465,22 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
 
     // Assembly must be enabled: the default config takes the verbatim
     // shortcut, which would make every assembled file identical to raw.
-    let assembler = SPSRGraphAssembler::new(SPSRGraphConfig::new().enable(true));
+    let mut spsr_config = SPSRGraphConfig::new().enable(true);
+    if config.expansion {
+        spsr_config = spsr_config.with_expansion(true);
+    }
+    let assembler = SPSRGraphAssembler::new(spsr_config);
+    let graph = CallGraph::build(&bench);
+    if config.expansion && bench.call_edges.is_empty() {
+        println!(
+            "warning: expansion requested but {BASELINE}/{} snapshot carries no call edges; \
+             regenerate the benchmark data with the current gen_bench example",
+            config.project
+        );
+    }
     let ranked = rank_embedding(&bench);
     let fixture_root = fixture_source_path(config.spec.clone());
+    let mut source_cache: HashMap<String, Option<Vec<String>>> = HashMap::new();
 
     let base = OutputManager::builder()
         .category(OutputCategory::Scenarios)
@@ -321,6 +497,10 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
             .get(q_idx)
             .map(|hits| hits.iter().take(config.top_k).collect())
             .unwrap_or_default();
+        let top_chunk_ids: HashSet<String> = top
+            .iter()
+            .map(|hit| bench.embedding.chunks[hit.chunk_idx].chunk_id.clone())
+            .collect();
 
         let mut assembled_md = render_query_header(
             &query.id,
@@ -343,7 +523,20 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
                 match resolve_hit_content(chunk, chunk_text, config.content_mode, &fixture_root) {
                     Ok(resolved) => {
                         let input = build_assembler_input(chunk, &resolved, hit.score);
-                        match assembler.assemble_single(input).await {
+                        let (forward, backward) = if config.expansion {
+                            resolve_expansion(
+                                &bench,
+                                &graph,
+                                chunk,
+                                &top_chunk_ids,
+                                config.content_mode,
+                                &fixture_root,
+                                &mut source_cache,
+                            )
+                        } else {
+                            (Vec::new(), Vec::new())
+                        };
+                        match assembler.assemble_single(input, forward, backward).await {
                             Ok(result) => AssembledOutcome::Assembled(result),
                             Err(e) => AssembledOutcome::Fallback {
                                 note: format!("assembly failed ({e}); content identical to raw."),
@@ -360,9 +553,11 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
                 AssembledOutcome::Assembled(result) => {
                     let meta = &result.metadata;
                     assembled_md.push_str(&format!(
-                        "- assembly: expanded={}, expanded_nodes={}, files={}, original_length={}, assembled_length={}, truncated={}\n",
+                        "- assembly: expanded={}, expanded_nodes={} (fwd={}, bwd={}), files={}, original_length={}, assembled_length={}, truncated={}\n",
                         meta.expanded,
                         meta.expanded_nodes,
+                        meta.forward_nodes,
+                        meta.backward_nodes,
                         meta.file_count,
                         meta.original_length,
                         meta.assembled_length,
@@ -395,11 +590,12 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
     }
 
     let mut index = format!(
-        "# Assembly review: {} ({}, {}, content={})\n\n| query_id | type | query | top-1 hit |\n|---|---|---|---|\n",
+        "# Assembly review: {} ({}, {}, content={}, expansion={})\n\n| query_id | type | query | top-1 hit |\n|---|---|---|---|\n",
         config.project,
         BASELINE,
         mode_label,
-        config.content_mode.label()
+        config.content_mode.label(),
+        if config.expansion { "on" } else { "off" }
     );
     for (query, top1) in &index_rows {
         index.push_str(&format!(

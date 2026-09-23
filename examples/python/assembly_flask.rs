@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
         top_k: 10,
         content_mode: ContentMode::Chunk,
         recall: RecallMode::Emb,
+        expansion: true,
     })
     .await
 }

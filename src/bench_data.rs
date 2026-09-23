@@ -436,6 +436,36 @@ pub struct BenchmarkData {
     /// cleaned query forms with the production tokenizer at evaluation time
     /// (single source of truth, zero tokenizer drift).
     pub bm25_documents: Vec<Bm25DocRecord>,
+    /// In-project direct call edges (full_pipeline only), used by the
+    /// offline assembly-review example to drive relation expansion. Empty
+    /// for baselines that do not build a relation index.
+    #[serde(default)]
+    pub call_edges: Vec<CallEdgeData>,
+}
+
+/// One resolved in-project call edge for offline assembly expansion.
+///
+/// Keyed by the project-scoped `EntityId`s that also appear in
+/// `ChunkData::entity_ids`, so the review harness can map a recalled chunk
+/// to its callees/callers and back to the chunk that carries the neighbour.
+#[derive(
+    Archive, Serialize, Deserialize, Debug, Clone, SerdeSerialize, SerdeDeserialize, PartialEq, Eq,
+)]
+pub struct CallEdgeData {
+    /// Caller entity id
+    pub caller_entity_id: i64,
+    /// Callee entity id
+    pub callee_entity_id: i64,
+    /// Callee scoped name (presentation only)
+    pub callee_name: String,
+    /// Callee file path (relative to fixture root, forward slashes)
+    pub callee_file: String,
+    /// Callee start line (0 when unresolved)
+    pub callee_start_line: u32,
+    /// Callee end line (0 when unresolved)
+    pub callee_end_line: u32,
+    /// Relation type label (e.g. "call.direct", "call.method")
+    pub relation_type: String,
 }
 
 /// BM25 document fields consumed by the offline scorer, mirroring the

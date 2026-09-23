@@ -130,6 +130,7 @@ fn test_bench() -> BenchmarkData {
                 content: "zeta eta theta".to_string(),
             },
         ],
+        call_edges: Vec::new(),
     }
 }
 

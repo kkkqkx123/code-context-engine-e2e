@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::FixtureSpec;
 use crate::baselines::{entity_based, full_pipeline, full_pipeline_raw};
-use crate::bench_data::{BenchmarkData, Bm25DocRecord, ChunkData, QueryData, RetrieverDataset};
+use crate::bench_data::{
+    BenchmarkData, Bm25DocRecord, CallEdgeData, ChunkData, QueryData, RetrieverDataset,
+};
 use crate::embedding::{EmbeddingConfig, EmbeddingProviderType};
 use cce_config::{
     AppConfig,
@@ -30,6 +32,9 @@ pub struct GeneratedChunks {
     /// BM25 document fields (title/content/keywords), index-aligned with
     /// `bm25_chunks` and `bm25_texts`.
     pub bm25_documents: Vec<Bm25DocRecord>,
+    /// In-project direct call edges (full_pipeline only). Empty for baselines
+    /// that do not build a relation index.
+    pub call_edges: Vec<CallEdgeData>,
 }
 
 /// Build the BM25 document records for a chunk list.
@@ -278,6 +283,52 @@ pub fn normalize_file_path(abs_path: &str) -> String {
     crate::bench_data::normalize_path(abs_path)
 }
 
+/// Extract in-project direct call edges from a relation index.
+///
+/// Keeps only resolved, non-external call relations (`is_call()`,
+/// `!is_external`, `callee_id` present), skips self-loops and dedups by
+/// (caller, callee). Entity IDs come from the same `ParsedFile` snapshots
+/// that produced the chunk data, so they align with
+/// `ChunkData::entity_ids` without a cross-process id mapping.
+pub fn collect_call_edges(index: &cce_relation::RelationIndex) -> Vec<CallEdgeData> {
+    use cce_relation::index::{EntityIndexOps, RelationQueryOps};
+
+    let mut edges = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for entry in index.resolved_relation_index().iter() {
+        let caller = *entry.key();
+        for rel in entry.value().iter() {
+            if !rel.relation_type.is_call() || rel.is_external {
+                continue;
+            }
+            let Some(callee) = rel.callee_id else {
+                continue;
+            };
+            if callee == caller || !seen.insert((caller, callee)) {
+                continue;
+            }
+            let Some(entity) = index.function_index().get(&callee) else {
+                continue;
+            };
+            let (start, end) = entity.span.line_range_opt().unwrap_or((0, 0));
+            let file = index
+                .get_file_path_by_entity(callee)
+                .map(|p| normalize_file_path(&p))
+                .unwrap_or_default();
+            edges.push(CallEdgeData {
+                caller_entity_id: caller.0 as i64,
+                callee_entity_id: callee.0 as i64,
+                callee_name: entity.name.clone(),
+                callee_file: file,
+                callee_start_line: start as u32,
+                callee_end_line: end as u32,
+                relation_type: rel.relation_type.to_string(),
+            });
+        }
+    }
+    edges
+}
+
 pub fn chunk_data_from_result(chunk: &cce_parser::ast_to_nl::chunker::ChunkedResult) -> ChunkData {
     let (start_line, end_line) = chunk
         .metadata
@@ -425,6 +476,7 @@ pub async fn run_bench_gen(config: ProjectConfig) -> anyhow::Result<()> {
                     dimension: 0,
                 },
                 bm25_documents: chunks.bm25_documents.clone(),
+                call_edges: chunks.call_edges.clone(),
             };
             let code_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&code_bench)?.to_vec();
 
