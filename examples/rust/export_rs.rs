@@ -28,36 +28,42 @@ async fn main() {
             fixture_name: "once_cell",
             spec: FixtureSpec::rust_once_cell(),
             include_patterns: &["*.rs"],
+            filter: Default::default(),
         },
         ReviewExportJob {
             language: "rust",
             fixture_name: "ripgrep",
             spec: FixtureSpec::rust_ripgrep(),
             include_patterns: &["*.rs"],
+            filter: Default::default(),
         },
         ReviewExportJob {
             language: "rust",
             fixture_name: "index_sidecar",
             spec: FixtureSpec::rust_index_sidecar(),
             include_patterns: &["*.rs"],
+            filter: Default::default(),
         },
         ReviewExportJob {
             language: "rust",
             fixture_name: "re_export",
             spec: FixtureSpec::rust_review_re_export(),
             include_patterns: &["*.rs"],
+            filter: Default::default(),
         },
         ReviewExportJob {
             language: "rust",
             fixture_name: "relation_demo",
             spec: FixtureSpec::rust_relation_demo(),
             include_patterns: &["*.rs"],
+            filter: Default::default(),
         },
         ReviewExportJob {
             language: "rust",
             fixture_name: "relation_diamond",
             spec: FixtureSpec::rust_relation_diamond(),
             include_patterns: &["*.rs"],
+            filter: Default::default(),
         },
     ])
     .await;

@@ -11,6 +11,7 @@ use cce_relation::type_inference::types::ScopedTypeContext;
 use cce_types::{Entity, EntityId, ParsedFile};
 
 use crate::output_manager::{OutputCategory, OutputManager};
+use crate::review_filter::ReviewFilterOptions;
 
 use super::relations::render_relations;
 use super::reports::{render_directory_report, render_file_report};
@@ -62,10 +63,15 @@ impl StructuredOutputWriter {
     /// original directory tree) and per-directory `<dir>.dir.txt` overviews
     /// colocated sibling to each directory. Relations are colocated inside each
     /// per-file report rather than aggregated into a global `RELATIONS.md`.
+    ///
+    /// `filter` applies at write time only: the index stays exhaustive, but
+    /// excluded files get no report and edges into excluded files are dropped
+    /// from the retained reports (same opt-in semantics as the main query path).
     pub fn write_all(
         &self,
         index: &RelationIndex,
         files: &[ParsedFile],
+        filter: &ReviewFilterOptions,
     ) -> std::io::Result<Vec<std::path::PathBuf>> {
         let base_dir = self.manager.ensure_output_dir()?;
 
@@ -83,7 +89,7 @@ impl StructuredOutputWriter {
         }
 
         let mut paths = Vec::new();
-        let summary = render_summary(index, files, &self.project_name);
+        let summary = render_summary(index, files, &self.project_name, filter);
         paths.push(self.manager.write("SUMMARY.md", &summary)?);
 
         let ordered = ordered_files(index);
@@ -110,8 +116,9 @@ impl StructuredOutputWriter {
         for path in index.file_records().read().keys() {
             all_files_set.insert(path.clone());
         }
+        all_files_set.retain(|f| !filter.is_excluded_path(f));
 
-        // Distinct directories present in the file set.
+        // Distinct directories present in the retained file set.
         let mut dirs: BTreeSet<String> = BTreeSet::new();
         for fp in &all_files_set {
             let mut p = Path::new(fp);
@@ -123,6 +130,7 @@ impl StructuredOutputWriter {
                 p = parent;
             }
         }
+        dirs.retain(|d| !filter.is_excluded_path(d));
 
         // Single project-wide inference shared by the aggregated markdown and
         // every per-file report, so `.txt` and `TYPE_INFERENCE.md` agree.
@@ -144,6 +152,7 @@ impl StructuredOutputWriter {
                 pf_opt,
                 &global_id_to_entity,
                 inferred,
+                filter,
             );
             let rel_path = format!("{file_path}.txt");
             let full_path = base_dir.join(&rel_path);

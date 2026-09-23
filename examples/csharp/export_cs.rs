@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "MediatR",
         spec: FixtureSpec::csharp_mediatr(),
         include_patterns: &["*.cs"],
+        filter: Default::default(),
     }])
     .await;
 }

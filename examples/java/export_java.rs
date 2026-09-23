@@ -21,18 +21,21 @@ async fn main() {
             fixture_name: "index_sidecar",
             spec: FixtureSpec::java_index_sidecar(),
             include_patterns: &["*.java"],
+            filter: Default::default(),
         },
         ReviewExportJob {
             language: "java",
             fixture_name: "springboot-minimal-demo",
             spec: FixtureSpec::java_spring_boot(),
             include_patterns: &["*.java"],
+            filter: Default::default(),
         },
         ReviewExportJob {
             language: "java",
             fixture_name: "jackson-core",
             spec: FixtureSpec::java_jackson_core(),
             include_patterns: &["*.java"],
+            filter: Default::default(),
         },
     ])
     .await;

@@ -20,12 +20,14 @@ async fn main() {
             fixture_name: "express",
             spec: FixtureSpec::javascript_express(),
             include_patterns: &["*.js"],
+            filter: Default::default(),
         },
         ReviewExportJob {
             language: "javascript",
             fixture_name: "re_export",
             spec: FixtureSpec::javascript_review_re_export(),
             include_patterns: &["*.js"],
+            filter: Default::default(),
         },
     ])
     .await;

@@ -139,7 +139,7 @@ async fn export_case(case: &TypeInferenceCase, fixture: TestFixture) {
     let index = builder.build();
 
     let writer = StructuredOutputWriter::for_scenarios(case.language, case.scenario);
-    match writer.write_all(&index, &parsed_files) {
+    match writer.write_all(&index, &parsed_files, &Default::default()) {
         Ok(paths) => println!(
             "  structured: {} files ({} entities, {} relations)",
             paths.len(),

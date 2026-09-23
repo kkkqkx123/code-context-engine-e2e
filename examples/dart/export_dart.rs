@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "mixin_async",
         spec: FixtureSpec::dart_review_mixin_async(),
         include_patterns: &["*.dart"],
+        filter: Default::default(),
     }])
     .await;
 }

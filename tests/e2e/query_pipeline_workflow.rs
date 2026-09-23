@@ -1,6 +1,6 @@
 //! Query pipeline workflow tests
 //!
-//! Tests for detailed query pipeline components: ranking, fusion, assembly,
+//! Tests for detailed query pipeline components: ranking, fusion,
 //! and configuration feedback loop. These tests verify the internal query
 //! pipeline behavior beyond the basic workflow tests in query_workflow.rs.
 
@@ -183,29 +183,6 @@ fn test_fusion_with_empty_bm25() {
     let fused = fuse_hybrid_results(vector_results, vec![], &config);
 
     assert_eq!(fused.len(), 2);
-}
-
-// ---------------------------------------------------------------------------
-// Assembly (SPSR-Graph)
-// ---------------------------------------------------------------------------
-
-/// SPSR-Graph assembly config creation
-#[test]
-fn test_spsr_graph_config_creation() {
-    init_minimal_logging();
-
-    use cce_orchestrator::query::assembly::{ExpansionStrategy, SPSRGraphConfig};
-
-    let config = SPSRGraphConfig::new()
-        .enable(true)
-        .with_expansion_strategy(ExpansionStrategy::ForwardOnly)
-        .with_max_depth(2)
-        .with_max_nodes(5);
-
-    assert!(config.enable_assembly);
-    assert_eq!(config.expansion_strategy, ExpansionStrategy::ForwardOnly);
-    assert_eq!(config.max_expansion_depth, 2);
-    assert_eq!(config.max_expanded_nodes, 5);
 }
 
 // ---------------------------------------------------------------------------

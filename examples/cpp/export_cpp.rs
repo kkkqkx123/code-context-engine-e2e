@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "templates",
         spec: FixtureSpec::cpp_review_templates(),
         include_patterns: &["*.cpp", "*.h", "*.hpp"],
+        filter: Default::default(),
     }])
     .await;
 }

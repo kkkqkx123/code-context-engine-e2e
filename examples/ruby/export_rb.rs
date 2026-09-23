@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "mixin",
         spec: FixtureSpec::ruby_review_mixin(),
         include_patterns: &["*.rb"],
+        filter: Default::default(),
     }])
     .await;
 }

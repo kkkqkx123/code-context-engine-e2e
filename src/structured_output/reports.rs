@@ -11,6 +11,8 @@ use cce_relation::index::{EntityIndexOps, RelationQueryOps};
 use cce_relation::type_inference::types::ScopedTypeContext;
 use cce_types::{Entity, EntityId, EntityKind, ParsedFile};
 
+use crate::review_filter::ReviewFilterOptions;
+
 use super::types::{
     escape_md, is_noise_module_target, is_string_literal_ref, local_value_names,
     normalize_nullable_display, span_str, span_str_from_span, visibility_of,
@@ -18,6 +20,9 @@ use super::types::{
 
 /// Render a per-file report that colocates symbols, relations, and type
 /// inference for a single source file.
+///
+/// `filter` drops relation edges that point into excluded files; the report
+/// itself is only rendered for files that passed the filter.
 pub fn render_file_report(
     file_path: &str,
     entities: &[(EntityId, Entity)],
@@ -25,6 +30,7 @@ pub fn render_file_report(
     parsed_file: Option<&ParsedFile>,
     global_id_to_entity: &BTreeMap<EntityId, Entity>,
     inferred: Option<&ScopedTypeContext>,
+    filter: &ReviewFilterOptions,
 ) -> String {
     let mut out = String::new();
     writeln!(out, "# File: {file_path}").expect("write");
@@ -422,6 +428,8 @@ pub fn render_file_report(
             }
         }
     }
+    // Edges into filtered-out files are dropped from the report.
+    internal_calls.retain(|(_, _, callee_file, _)| !filter.is_excluded_path(callee_file));
     // Deduplicate calls: entity callers win over file callers.
     internal_calls.sort_by(|a, b| {
         (a.1.clone(), a.3.clone(), (a.0 == file_path)).cmp(&(

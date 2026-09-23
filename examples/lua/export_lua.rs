@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "closure",
         spec: FixtureSpec::lua_review_closure(),
         include_patterns: &["*.lua"],
+        filter: Default::default(),
     }])
     .await;
 }

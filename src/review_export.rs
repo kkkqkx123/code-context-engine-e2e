@@ -25,6 +25,7 @@ use cce_relation::index::{EntityIndexOps, RelationQueryOps};
 use cce_scanner::{FSScanner, ScanOptions};
 use cce_types::{OutputMode, ParsedFile};
 
+use crate::review_filter::ReviewFilterOptions;
 use crate::structured_output::StructuredOutputWriter;
 use crate::{FixtureSpec, OutputCategory, OutputManager, TestFixture};
 
@@ -38,6 +39,9 @@ pub struct ReviewExportJob {
     pub spec: FixtureSpec,
     /// Glob patterns used by the scanner (e.g. `&["*.rs"]`).
     pub include_patterns: &'static [&'static str],
+    /// Output-side filter applied when writing reports (indexing stays
+    /// exhaustive; filtering happens at write time).
+    pub filter: ReviewFilterOptions,
 }
 
 /// Load and export every job, printing a completion banner at the end.
@@ -54,6 +58,7 @@ pub async fn export_jobs(jobs: &[ReviewExportJob]) {
             job.fixture_name,
             fixture,
             job.include_patterns,
+            job.filter.clone(),
         )
         .await;
     }
@@ -67,6 +72,7 @@ pub async fn export_fixture(
     fixture_name: &str,
     fixture: TestFixture,
     include_patterns: &[&str],
+    filter: ReviewFilterOptions,
 ) {
     println!("\n=== Exporting fixture: {language}/{fixture_name} ===");
 
@@ -158,23 +164,37 @@ pub async fn export_fixture(
     sort_chunks_by_line(&mut emb_by_file);
     sort_chunks_by_line(&mut bm25_by_file);
 
-    write_summary_output(language, fixture_name, &project_root, indexed_files);
+    write_summary_output(
+        language,
+        fixture_name,
+        &project_root,
+        indexed_files,
+        &filter,
+    );
     let total_emb = write_chunk_outputs(
         language,
         &emb_by_file,
         &format!("chunks/{fixture_name}/emb"),
+        &filter,
     );
     let total_bm25 = write_chunk_outputs(
         language,
         &bm25_by_file,
         &format!("chunks/{fixture_name}/bm25"),
+        &filter,
     );
     println!("  {fixture_name} chunks: emb={total_emb} bm25={total_bm25}");
 
     // Structured output: reuse the same ParsedFile snapshots for relation
     // graph construction and type inference so that export and relation
     // analysis do not re-parse the files.
-    write_structured_output(language, fixture_name, &project_root, &parsed_files);
+    write_structured_output(
+        language,
+        fixture_name,
+        &project_root,
+        &parsed_files,
+        &filter,
+    );
 }
 
 fn sort_chunks_by_line(chunks_by_file: &mut BTreeMap<String, Vec<ChunkedResult>>) {
@@ -201,6 +221,7 @@ fn write_summary_output(
     fixture_name: &str,
     project_root: &Path,
     indexed_files: usize,
+    filter: &ReviewFilterOptions,
 ) {
     let cce_dir = project_root.join(".cce").join("nl_docs");
     let exported_files = collect_md_files(&cce_dir);
@@ -216,8 +237,17 @@ fn write_summary_output(
 
     let mut copied_files = Vec::new();
     for file in &exported_files {
-        copy_to_output(&cce_dir, &output_dir, file).ok();
         let relative = file.strip_prefix(&cce_dir).unwrap_or(file);
+        // NL doc files mirror the source path with a `.md` suffix; the filter
+        // rules are defined on source paths.
+        let source_relative = relative
+            .to_string_lossy()
+            .trim_end_matches(".md")
+            .to_string();
+        if filter.is_excluded_path(&source_relative) {
+            continue;
+        }
+        copy_to_output(&cce_dir, &output_dir, file).ok();
         copied_files.push(relative.to_path_buf());
     }
 
@@ -248,6 +278,7 @@ fn write_structured_output(
     fixture_name: &str,
     project_root: &Path,
     parsed_files: &[ParsedFile],
+    filter: &ReviewFilterOptions,
 ) {
     if parsed_files.is_empty() {
         eprintln!("  {fixture_name} structured: no parsed files, skipping");
@@ -269,7 +300,7 @@ fn write_structured_output(
     let index = builder.build();
 
     let writer = StructuredOutputWriter::for_scenarios(language, fixture_name);
-    match writer.write_all(&index, parsed_files) {
+    match writer.write_all(&index, parsed_files, filter) {
         Ok(paths) => {
             println!(
                 "  {fixture_name} structured: {} files ({} entities, {} relations) -> {}",
@@ -292,6 +323,7 @@ fn write_chunk_outputs(
     language: &str,
     chunks_by_file: &BTreeMap<String, Vec<ChunkedResult>>,
     scenario: &str,
+    filter: &ReviewFilterOptions,
 ) -> usize {
     let chunking_mgr = OutputManager::builder()
         .category(OutputCategory::Scenarios)
@@ -303,8 +335,11 @@ fn write_chunk_outputs(
         .expect("Failed to create chunking output dir");
 
     for (file_path, chunks) in chunks_by_file {
+        if filter.is_excluded_path(file_path) {
+            continue;
+        }
         let path = Path::new(file_path);
-        let content = render_chunking_file(chunks, file_path);
+        let content = render_chunking_file(chunks);
         let file_name = path
             .file_name()
             .map(|f| format!("{}.txt", f.to_string_lossy()))
@@ -373,19 +408,10 @@ fn normalize_file_path(abs_path: &str, manifest_dir: &str) -> String {
     abs
 }
 
-fn render_chunking_file(
-    chunks: &[cce_parser::ast_to_nl::chunker::ChunkedResult],
-    file_path: &str,
-) -> String {
+fn render_chunking_file(chunks: &[cce_parser::ast_to_nl::chunker::ChunkedResult]) -> String {
     let mut out = String::new();
     let total = chunks.len();
-    let path = Path::new(file_path);
-    let file_name = path
-        .file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| file_path.to_string());
 
-    out.push_str(&format!("{file_name}\n"));
     out.push_str(&format!("total chunks: {total}\n"));
     out.push_str("---\n");
 

@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "pipeline",
         spec: FixtureSpec::bash_review_pipeline(),
         include_patterns: &["*.sh"],
+        filter: Default::default(),
     }])
     .await;
 }

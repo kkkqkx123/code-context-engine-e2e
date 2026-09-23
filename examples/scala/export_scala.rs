@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "case_class",
         spec: FixtureSpec::scala_review_case_class(),
         include_patterns: &["*.scala"],
+        filter: Default::default(),
     }])
     .await;
 }

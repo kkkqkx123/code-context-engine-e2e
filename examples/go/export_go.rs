@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "gin",
         spec: FixtureSpec::go_gin(),
         include_patterns: &["*.go"],
+        filter: Default::default(),
     }])
     .await;
 }

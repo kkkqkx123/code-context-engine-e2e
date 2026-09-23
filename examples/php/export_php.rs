@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "namespace_trait",
         spec: FixtureSpec::php_review_namespace_trait(),
         include_patterns: &["*.php"],
+        filter: Default::default(),
     }])
     .await;
 }

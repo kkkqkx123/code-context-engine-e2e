@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "macros",
         spec: FixtureSpec::c_review_macros(),
         include_patterns: &["*.c", "*.h"],
+        filter: Default::default(),
     }])
     .await;
 }

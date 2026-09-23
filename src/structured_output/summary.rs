@@ -10,21 +10,48 @@ use cce_relation::RelationIndex;
 use cce_relation::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
 use cce_types::{ParsedFile, RelationType};
 
+use crate::review_filter::ReviewFilterOptions;
+
 use super::types::ProjectSummary;
 
 /// Render a project-level summary covering symbols, relations and type inference.
-pub fn render_summary(index: &RelationIndex, files: &[ParsedFile], project_name: &str) -> String {
+///
+/// `filter` narrows the reported counts to the files that pass it; the index
+/// itself stays exhaustive.
+pub fn render_summary(
+    index: &RelationIndex,
+    files: &[ParsedFile],
+    project_name: &str,
+    filter: &ReviewFilterOptions,
+) -> String {
     let mut out = String::new();
     writeln!(out, "# Summary for {project_name}").expect("write");
     writeln!(out).expect("write");
 
-    let file_count = index.file_count().max(files.len());
-    let entity_count = index.function_count();
-    let relation_count = index.resolved_relation_count();
+    let kept_file = |path: &str| !filter.is_excluded_path(path);
+    let file_count = index
+        .file_records()
+        .read()
+        .keys()
+        .filter(|k| kept_file(k))
+        .count()
+        .max(files.iter().filter(|pf| kept_file(&pf.path)).count());
+    let entity_count = index
+        .function_index()
+        .iter()
+        .filter(|e| kept_file(&index.get_file_path_by_entity(*e.key()).unwrap_or_default()))
+        .count();
+    let relation_count: usize = index
+        .resolved_relation_index()
+        .iter()
+        .filter(|e| kept_file(&index.get_file_path_by_entity(*e.key()).unwrap_or_default()))
+        .map(|e| e.value().len())
+        .sum();
     let file_rel_count: usize = index
         .file_records()
         .read()
         .keys()
+        .filter(|k| kept_file(k))
         .filter_map(|k| index.file_relations(k))
         .map(|v| v.len())
         .sum();
@@ -33,7 +60,9 @@ pub fn render_summary(index: &RelationIndex, files: &[ParsedFile], project_name:
         let all = index.dependency_graph.get_all_files();
         let mut n = 0usize;
         for f in &all {
-            n += index.dependency_graph.get_dependencies(f).len();
+            if kept_file(f) {
+                n += index.dependency_graph.get_dependencies(f).len();
+            }
         }
         n
     };
@@ -42,6 +71,12 @@ pub fn render_summary(index: &RelationIndex, files: &[ParsedFile], project_name:
     let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
     let mut languages: HashSet<String> = HashSet::new();
     for entry in index.function_index().iter() {
+        let file = index
+            .get_file_path_by_entity(*entry.key())
+            .unwrap_or_default();
+        if !kept_file(&file) {
+            continue;
+        }
         let k = entry.value().kind.to_string();
         *by_kind.entry(k).or_default() += 1;
     }
@@ -56,6 +91,12 @@ pub fn render_summary(index: &RelationIndex, files: &[ParsedFile], project_name:
     let type_rel_count = {
         let mut n = 0usize;
         for entry in index.resolved_relation_index().iter() {
+            let caller_file = index
+                .get_file_path_by_entity(*entry.key())
+                .unwrap_or_default();
+            if !kept_file(&caller_file) {
+                continue;
+            }
             for r in entry.value().iter() {
                 if matches!(
                     r.relation_type,
@@ -111,9 +152,19 @@ pub fn render_summary(index: &RelationIndex, files: &[ParsedFile], project_name:
 
     writeln!(out, "## Files (from index)").expect("write");
     writeln!(out).expect("write");
-    let mut file_list: Vec<String> = index.file_records().read().keys().cloned().collect();
+    let mut file_list: Vec<String> = index
+        .file_records()
+        .read()
+        .keys()
+        .filter(|k| kept_file(k))
+        .cloned()
+        .collect();
     if file_list.is_empty() {
-        file_list = files.iter().map(|f| f.path.clone()).collect();
+        file_list = files
+            .iter()
+            .filter(|pf| kept_file(&pf.path))
+            .map(|f| f.path.clone())
+            .collect();
     }
     file_list.sort();
     for f in file_list {

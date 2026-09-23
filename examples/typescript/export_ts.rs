@@ -21,18 +21,21 @@ async fn main() {
             fixture_name: "index_sidecar",
             spec: FixtureSpec::typescript_index_sidecar(),
             include_patterns: &["*.ts"],
+            filter: Default::default(),
         },
         ReviewExportJob {
             language: "typescript",
             fixture_name: "re_export",
             spec: FixtureSpec::typescript_review_re_export(),
             include_patterns: &["*.ts"],
+            filter: Default::default(),
         },
         ReviewExportJob {
             language: "typescript",
             fixture_name: "wildcard",
             spec: FixtureSpec::typescript_review_wildcard(),
             include_patterns: &["*.ts"],
+            filter: Default::default(),
         },
     ])
     .await;

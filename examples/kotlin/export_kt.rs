@@ -19,6 +19,7 @@ async fn main() {
         fixture_name: "coroutines",
         spec: FixtureSpec::kotlin_review_coroutines(),
         include_patterns: &["*.kt"],
+        filter: Default::default(),
     }])
     .await;
 }

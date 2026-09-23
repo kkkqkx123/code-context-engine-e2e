@@ -31,6 +31,7 @@ pub mod relation_snapshot;
 pub mod rerank_benchmark;
 pub mod retrieval_method;
 pub mod review_export;
+pub mod review_filter;
 pub mod storage;
 pub mod structured_output;
 pub mod stub_embedder;
