@@ -12,6 +12,7 @@ use cce_e2e_tests::FixtureSpec;
 use cce_e2e_tests::assembly_review::{
     AssemblyReviewConfig, ContentMode, RecallMode, run_assembly_review,
 };
+use cce_e2e_tests::review_filter::ReviewFilterOptions;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -23,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
         content_mode: ContentMode::Chunk,
         recall: RecallMode::Emb,
         expansion: true,
+        filter: ReviewFilterOptions::default(),
     })
     .await
 }

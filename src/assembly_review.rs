@@ -17,8 +17,11 @@
 //! `AssemblyMetadata` so reviewers can tell "no effect" apart from
 //! "assembly switched off". When expansion is enabled, one call-graph hop
 //! (callees first, then callers) is resolved from the benchmark's
-//! `call_edges` sidecar and attached to every hit. See
-//! `docs/plan/tests/assembly-review-export-design.md`.
+//! `call_edges` sidecar, hard-filtered by the job's path policy
+//! (`ReviewFilterOptions`, applied before the assembler's expansion budget
+//! cap), and attached to every hit. See
+//! `docs/plan/tests/assembly-review-export-design.md` and
+//! `docs/plan/tests/assembly-review-expansion-path-filter.md`.
 //!
 //! Only `full_pipeline` snapshots are consumed: the other baselines carry
 //! raw source slices with no entity structure and no call edges, so
@@ -37,6 +40,7 @@ use cce_types::EntityId;
 use crate::bench_data::{BenchmarkData, ChunkData, cosine_similarity, load_benchmark_data};
 use crate::bench_gen::fixture_source_path;
 use crate::judgments::evaluate::BenchmarkPaths;
+use crate::review_filter::ReviewFilterOptions;
 use crate::{FixtureSpec, OutputCategory, OutputManager};
 
 /// Which text the assembler consumes for a hit.
@@ -95,6 +99,11 @@ pub struct AssemblyReviewConfig {
     /// `call_edges` sidecar to every hit. Requires a snapshot generated
     /// with the call-edge sidecar.
     pub expansion: bool,
+    /// Path policy applied to expansion neighbors before they reach the
+    /// assembler's expansion budget cap. Mirrors the main query path's file
+    /// filters; default (`ReviewFilterOptions::default()`) keeps the review
+    /// scope that includes `tests/` hits.
+    pub filter: ReviewFilterOptions,
 }
 
 /// Call-graph adjacency over the benchmark entity-id space (`i64` mirrors
@@ -139,6 +148,114 @@ impl CallGraph {
 struct ScoredHit {
     chunk_idx: usize,
     score: f64,
+}
+
+/// Soft score multiplier applied to test-code hits so source-oriented queries
+/// surface `src/` first without hard-dropping tests (still valid evidence).
+const TEST_SCORE_FACTOR: f64 = 0.85;
+
+/// Soft score multiplier for chunks with no content entity ids (class-shell /
+/// segment-only text) so thin high-similarity shells do not occupy top slots.
+const EMPTY_ENTITY_SCORE_FACTOR: f64 = 0.90;
+
+/// Minimum same-file `source_ranges` overlap (vs. the smaller range set) for a
+/// later hit to be treated as a near-duplicate of an earlier one.
+const SPAN_OVERLAP_THRESHOLD: f64 = 0.5;
+
+/// Total covered lines across a chunk's precise source ranges.
+fn covered_lines(ranges: &[crate::bench_data::ChunkSourceRange]) -> usize {
+    ranges
+        .iter()
+        .filter(|r| r.end_line >= r.start_line)
+        .map(|r| r.end_line - r.start_line + 1)
+        .sum()
+}
+
+/// Overlap ratio of `candidate` against `selected` in the same file: shared
+/// lines divided by the smaller range set. Empty ranges fall back to the
+/// navigation span so chunks without precise coverage still dedup.
+fn span_overlap_ratio(a: &ChunkData, b: &ChunkData) -> f64 {
+    if a.file_path != b.file_path {
+        return 0.0;
+    }
+    let nav = |c: &ChunkData| -> Vec<crate::bench_data::ChunkSourceRange> {
+        if c.start_line == 0 {
+            Vec::new()
+        } else {
+            vec![crate::bench_data::ChunkSourceRange {
+                start_line: c.start_line,
+                end_line: c.end_line,
+            }]
+        }
+    };
+    let a_ranges: Vec<_> = if a.source_ranges.is_empty() {
+        nav(a)
+    } else {
+        a.source_ranges.clone()
+    };
+    let b_ranges: Vec<_> = if b.source_ranges.is_empty() {
+        nav(b)
+    } else {
+        b.source_ranges.clone()
+    };
+    if a_ranges.is_empty() || b_ranges.is_empty() {
+        return 0.0;
+    }
+    let shared: usize = a_ranges
+        .iter()
+        .flat_map(|ar| {
+            b_ranges
+                .iter()
+                .filter(move |br| ar.start_line <= br.end_line && br.start_line <= ar.end_line)
+                .map(move |br| {
+                    let lo = ar.start_line.max(br.start_line);
+                    let hi = ar.end_line.min(br.end_line);
+                    hi.saturating_sub(lo) + 1
+                })
+        })
+        .sum();
+    let denom = covered_lines(&a_ranges).min(covered_lines(&b_ranges));
+    if denom == 0 {
+        0.0
+    } else {
+        shared as f64 / denom as f64
+    }
+}
+
+/// Apply soft penalties for test chunks and empty-entity shells, then collapse
+/// same-file near-duplicate spans by demoting later hits among the head of the
+/// ranking (where top-K is drawn), and re-sort.
+fn apply_recall_penalties(bench: &BenchmarkData, ranked: &mut [Vec<ScoredHit>], top_k: usize) {
+    // Only the head of the ranking can occupy top-K; pairwise overlap there is
+    // enough and keeps the pass near-linear in the working set.
+    let head = (top_k.saturating_mul(4)).max(top_k).min(64);
+    for hits in ranked.iter_mut() {
+        for hit in hits.iter_mut() {
+            let chunk = &bench.embedding.chunks[hit.chunk_idx];
+            if chunk.test_info.is_test() {
+                hit.score *= TEST_SCORE_FACTOR;
+            }
+            if chunk.entity_ids.is_empty() {
+                hit.score *= EMPTY_ENTITY_SCORE_FACTOR;
+            }
+        }
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+
+        let n = hits.len().min(head);
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let (earlier, later) = (hits[i].chunk_idx, hits[j].chunk_idx);
+                let ratio = span_overlap_ratio(
+                    &bench.embedding.chunks[earlier],
+                    &bench.embedding.chunks[later],
+                );
+                if ratio >= SPAN_OVERLAP_THRESHOLD {
+                    hits[j].score *= 0.75;
+                }
+            }
+        }
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+    }
 }
 
 /// Rank every query against the embedding chunks with cosine similarity.
@@ -260,8 +377,10 @@ fn build_assembler_input(chunk: &ChunkData, hit: &HitContent, score: f64) -> Sea
 ///
 /// The neighbour is rendered from its own embedding chunk: NL text with
 /// 1-based remapped lines in chunk mode, absolute source lines in source
-/// mode. Neighbours without a chunk, or already present in the query's
-/// top-K hits, are skipped (the assembler dedups and caps the rest).
+/// mode. Neighbours without a chunk, excluded by the job's path filter, or
+/// already present in the query's top-K hits are skipped (the assembler
+/// dedups and caps the rest). The path filter runs here so excluded
+/// neighbours never occupy an expansion budget slot.
 #[allow(clippy::too_many_arguments)]
 fn neighbor_unit(
     bench: &BenchmarkData,
@@ -273,9 +392,13 @@ fn neighbor_unit(
     top_chunk_ids: &HashSet<String>,
     mode: ContentMode,
     fixture_root: &Path,
+    filter: &ReviewFilterOptions,
 ) -> Option<ExpandedUnit> {
     let chunk_idx = *graph.chunk_of_entity.get(&neighbor_id)?;
     let chunk = &bench.embedding.chunks[chunk_idx];
+    if filter.is_excluded_path(&chunk.file_path) {
+        return None;
+    }
     if top_chunk_ids.contains(&chunk.chunk_id) {
         return None;
     }
@@ -320,6 +443,10 @@ fn neighbor_unit(
 
 /// Resolve the one-hop forward (callee) and backward (caller) expansion
 /// units for one hit chunk.
+///
+/// The path filter is applied per neighbour before the units are returned,
+/// i.e. before `SPSRGraphAssembler` applies its expansion budget cap.
+#[allow(clippy::too_many_arguments)]
 fn resolve_expansion(
     bench: &BenchmarkData,
     graph: &CallGraph,
@@ -328,6 +455,7 @@ fn resolve_expansion(
     mode: ContentMode,
     fixture_root: &Path,
     source_cache: &mut HashMap<String, Option<Vec<String>>>,
+    filter: &ReviewFilterOptions,
 ) -> (Vec<ExpandedUnit>, Vec<ExpandedUnit>) {
     let Some(&primary_id) = chunk.entity_ids.first() else {
         return (Vec::new(), Vec::new());
@@ -347,6 +475,7 @@ fn resolve_expansion(
                 top_chunk_ids,
                 mode,
                 fixture_root,
+                filter,
             ) {
                 forward.push(unit);
             }
@@ -365,6 +494,7 @@ fn resolve_expansion(
                 top_chunk_ids,
                 mode,
                 fixture_root,
+                filter,
             ) {
                 backward.push(unit);
             }
@@ -478,7 +608,8 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
             config.project
         );
     }
-    let ranked = rank_embedding(&bench);
+    let mut ranked = rank_embedding(&bench);
+    apply_recall_penalties(&bench, &mut ranked, config.top_k);
     let fixture_root = fixture_source_path(config.spec.clone());
     let mut source_cache: HashMap<String, Option<Vec<String>>> = HashMap::new();
 
@@ -509,6 +640,11 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
             &mode_label,
             config.content_mode.label(),
         );
+        assembled_md.push_str(
+            "> Scope: primary recall includes `tests/` hits (soft score demotion only, \
+             `export_py` exclude_tests does not apply); expansion neighbors are \
+             hard-filtered by the job's path filter (default: none).\n\n",
+        );
 
         for (rank, hit) in top.iter().enumerate() {
             let chunk = &bench.embedding.chunks[hit.chunk_idx];
@@ -532,6 +668,7 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
                                 config.content_mode,
                                 &fixture_root,
                                 &mut source_cache,
+                                &config.filter,
                             )
                         } else {
                             (Vec::new(), Vec::new())
@@ -590,7 +727,12 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
     }
 
     let mut index = format!(
-        "# Assembly review: {} ({}, {}, content={}, expansion={})\n\n| query_id | type | query | top-1 hit |\n|---|---|---|---|\n",
+        "# Assembly review: {} ({}, {}, content={}, expansion={})\n\n\
+         > Scope: primary recall includes `tests/` hits; the `exclude_tests` filter in \
+         `export_py` applies only to written summary/chunk/structured reports, not to \
+         assembly review recall. Expansion neighbors are hard-filtered by the job's \
+         path filter before the assembler budget cap (default: none).\n\n\
+         | query_id | type | query | top-1 hit |\n|---|---|---|---|\n",
         config.project,
         BASELINE,
         mode_label,
@@ -614,4 +756,112 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
         base_dir.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bench_data::{CallEdgeData, ChunkSourceRange, RetrieverDataset};
+    use cce_types::TestInfo;
+
+    fn chunk(chunk_id: &str, file_path: &str, entity_id: i64) -> ChunkData {
+        ChunkData {
+            chunk_id: chunk_id.to_string(),
+            entity_name: chunk_id.to_string(),
+            file_path: file_path.to_string(),
+            start_line: 1,
+            end_line: 3,
+            source_ranges: Vec::<ChunkSourceRange>::new(),
+            source_span_kind: String::new(),
+            test_info: TestInfo::unknown(),
+            language: None,
+            entity_ids: vec![entity_id],
+            segment_id: String::new(),
+        }
+    }
+
+    fn empty_dataset() -> RetrieverDataset {
+        RetrieverDataset {
+            chunks: Vec::new(),
+            texts: Vec::new(),
+            vectors: Vec::new(),
+            query_vectors: Vec::new(),
+            dimension: 0,
+        }
+    }
+
+    /// Primary entity 1 in `src/lib.rs` calls entity 2 in `tests/lib_test.rs`.
+    fn bench_with_test_callee() -> BenchmarkData {
+        BenchmarkData {
+            queries: Vec::new(),
+            query_texts: Vec::new(),
+            embedding: RetrieverDataset {
+                chunks: vec![
+                    chunk("c0", "src/lib.rs", 1),
+                    chunk("c1", "tests/lib_test.rs", 2),
+                ],
+                texts: vec![
+                    "fn primary() {}".to_string(),
+                    "fn neighbor() {}".to_string(),
+                ],
+                vectors: Vec::new(),
+                query_vectors: Vec::new(),
+                dimension: 0,
+            },
+            bm25: empty_dataset(),
+            bm25_documents: Vec::new(),
+            call_edges: vec![CallEdgeData {
+                caller_entity_id: 1,
+                callee_entity_id: 2,
+                callee_name: "neighbor".to_string(),
+                callee_file: "tests/lib_test.rs".to_string(),
+                callee_start_line: 1,
+                callee_end_line: 3,
+                relation_type: "call.direct".to_string(),
+            }],
+        }
+    }
+
+    fn forward_neighbors(filter: &ReviewFilterOptions) -> Vec<ExpandedUnit> {
+        let bench = bench_with_test_callee();
+        let graph = CallGraph::build(&bench);
+        let primary = &bench.embedding.chunks[0];
+        let top_chunk_ids = HashSet::from([primary.chunk_id.clone()]);
+        let mut source_cache = HashMap::new();
+        let (forward, _) = resolve_expansion(
+            &bench,
+            &graph,
+            primary,
+            &top_chunk_ids,
+            ContentMode::Chunk,
+            Path::new("."),
+            &mut source_cache,
+            filter,
+        );
+        forward
+    }
+
+    #[test]
+    fn default_filter_keeps_test_neighbor() {
+        let forward = forward_neighbors(&ReviewFilterOptions::default());
+        assert_eq!(forward.len(), 1);
+        assert_eq!(forward[0].name, "c1");
+    }
+
+    #[test]
+    fn exclude_tests_drops_test_neighbor_before_budget_cap() {
+        let filter = ReviewFilterOptions::default().with_exclude_tests(true);
+        assert!(forward_neighbors(&filter).is_empty());
+    }
+
+    #[test]
+    fn excluded_files_match_neighbor_path_exactly() {
+        let filter = ReviewFilterOptions::default()
+            .with_excluded_files(vec!["tests/lib_test.rs".to_string()]);
+        assert!(forward_neighbors(&filter).is_empty());
+
+        let other =
+            ReviewFilterOptions::default().with_excluded_files(vec!["src/other.rs".to_string()]);
+        assert_eq!(forward_neighbors(&other).len(), 1);
+    }
 }
