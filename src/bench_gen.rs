@@ -111,6 +111,7 @@ pub fn load_fixture_files(spec: FixtureSpec) -> io::Result<Vec<(String, String)>
         crate::FixtureCategory::Lua => "lua",
         crate::FixtureCategory::MultiLanguage => "*",
         crate::FixtureCategory::Documents => "*",
+        crate::FixtureCategory::Tools => "*",
     };
     let source_path = fixture_source_path(spec);
     let mut files = Vec::new();
@@ -138,6 +139,7 @@ pub fn scan_fixture(spec: FixtureSpec) -> anyhow::Result<Vec<cce_scanner::FileEn
         crate::FixtureCategory::Lua => "*.lua",
         crate::FixtureCategory::MultiLanguage => "*",
         crate::FixtureCategory::Documents => "*",
+        crate::FixtureCategory::Tools => "*",
     };
     let root = fixture_source_path(spec);
     let mut scanner = FSScanner::new();

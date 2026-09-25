@@ -29,6 +29,7 @@
 - `cpp/` — C++ 语言相关的示例
 - `bash/` — Bash 语言相关的示例
 - `multi_language/` — 跨语言场景的示例
+- `tools/` — 无状态工具展示示例
 - `type_inference/` — 类型推断专项可视化
 
 审查类 `export_*` 示例只覆盖 `fixtures/<lang>/review/` 夹具，产出 NL summary、

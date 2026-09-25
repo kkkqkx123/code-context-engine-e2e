@@ -45,6 +45,8 @@ pub enum FixtureCategory {
     MultiLanguage,
     /// Document fixtures (markdown, plain text, logs, config files)
     Documents,
+    /// Standalone tool fixtures
+    Tools,
 }
 
 impl FixtureCategory {
@@ -69,6 +71,7 @@ impl FixtureCategory {
             FixtureCategory::Lua => "lua",
             FixtureCategory::MultiLanguage => "multi_language",
             FixtureCategory::Documents => "documents",
+            FixtureCategory::Tools => "tools",
         }
     }
 }
@@ -584,6 +587,11 @@ impl FixtureSpec {
     /// Document fixture group (markdown / plain text / logs / config files)
     pub fn documents() -> Self {
         Self::new(FixtureCategory::Documents, "")
+    }
+
+    /// File-fold tool fixture group
+    pub fn tools_file_fold() -> Self {
+        Self::new(FixtureCategory::Tools, "file-fold")
     }
 
     /// C basic project fixture (header/source separation)
@@ -1629,6 +1637,11 @@ impl TestFixture {
     /// Load the document fixture group
     pub fn documents() -> io::Result<Self> {
         Self::load(FixtureSpec::documents())
+    }
+
+    /// Load the file-fold tool fixture group
+    pub fn tools_file_fold() -> io::Result<Self> {
+        Self::load(FixtureSpec::tools_file_fold())
     }
 
     /// Get the root path of the fixture (in temp directory)

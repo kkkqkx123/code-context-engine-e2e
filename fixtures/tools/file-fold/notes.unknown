@@ -1,0 +1,4 @@
+This file has an unknown suffix and no AST grammar.
+
+The fold tool should keep the visible text as a fallback instead of failing.
+When the token budget is tight, the degraded text is truncated to the budget.

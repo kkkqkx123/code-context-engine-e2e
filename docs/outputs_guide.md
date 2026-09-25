@@ -96,13 +96,17 @@ outputs/
 │   └── flask/                               # Flask基准评估
 │       ├── (same structure as once_cell)
 │       └── bm25_parameter_sweep/
-└── debug/                                   # 调试输出
-    ├── direct_chunking/
-    │   └── comparison.txt
-    ├── full_pipeline/
-    │   └── comparison.txt
-    └── full_pipeline_raw_source/
-        └── comparison.txt
+├── debug/                                   # 调试输出
+│   ├── direct_chunking/
+│   │   └── comparison.txt
+│   ├── full_pipeline/
+│   │   └── comparison.txt
+│   └── full_pipeline_raw_source/
+│       └── comparison.txt
+└── tools/                                   # 工具导出展示
+    └── file-fold/
+        ├── SUMMARY.md
+        └── folded/
 ```
 
 ## 输出文件生成来源分析
@@ -545,6 +549,24 @@ cargo run --example dump_retrieval -p cce-e2e-tests
 **输出内容:**
 - `{query_id}.txt` - 每条查询的检索 ranked 结果
 
+#### 6.3 文件折叠导出 (`outputs/tools/file-fold/`)
+
+**生成命令:**
+```bash
+cargo run --example export_file_fold -p cce-e2e-tests
+```
+
+**来源文件:** `examples/tools/export_file_fold.rs`
+
+**生成逻辑:**
+- 加载 `fixtures/tools/file-fold` fixture group
+- 对每个文件调用无状态 `FileFoldTool::fold`，不读取索引、不依赖项目上下文
+- 每个文件先生成 `detailed` 基线；`minimal` 仅在基线具备可解析结构时生成，`tight` 仅在小预算可能继续缩减基线结果时生成
+
+**输出内容:**
+- `SUMMARY.md` - 汇总表格（文件、模式、预算、语言、structure_known、token 与 section 统计）
+- `folded/<flattened-file>.<mode>.md` - 单个文件的折叠文本与统计
+
 ### 7. 基准数据生成 (`data/benchmark/`)
 
 **生成命令:**
@@ -576,7 +598,7 @@ cargo run --example gen_bench_flask -p cce-e2e-tests
 输出管理器，负责管理输出目录结构和文件创建。
 
 **关键功能:**
-- `OutputCategory` 枚举定义输出类别：Index、Query、Relation、Scenarios、HotUpdate
+- `OutputCategory` 枚举定义输出类别：Index、Query、Scenarios、HotUpdate、Tools
 - `OutputBuilder` 用于构建输出路径（支持语言、场景、时间戳等维度）
 - `write()` 方法写入文件内容
 
@@ -656,6 +678,7 @@ NL文档导出器，用于导出Markdown格式的自然语言文档。
 | data/benchmark/.../rerank_*.rkyv | `cargo run --example gen_rerank_oncecell` | examples/rust/gen_rerank_oncecell.rs | **是**（调用真实重排模型） |
 | scenarios/rust/alignment/ | `cargo run --example alignment_report` | examples/rust/alignment_report.rs | 否（确定性 mock 嵌入；hybrid 路需 Qdrant） |
 | debug/ | `cargo run --example debug_matrix` | examples/rust/debug_matrix.rs | 是（使用预计算向量） |
+| tools/file-fold/ | `cargo run --example export_file_fold` | examples/tools/export_file_fold.rs | 否（无状态折叠工具） |
 | data/benchmark/ (once_cell) | `cargo run --example gen_bench_oncecell` | examples/rust/gen_bench_oncecell.rs | **可选**（无 API key 时仅生成 chunk） |
 | data/benchmark/ (ripgrep) | `cargo run --example gen_bench_ripgrep` | examples/rust/gen_bench_ripgrep.rs | **可选**（无 API key 时仅生成 chunk） |
 | data/benchmark/ (flask) | `cargo run --example gen_bench_flask` | examples/python/gen_bench_flask.rs | **可选**（无 API key 时仅生成 chunk） |

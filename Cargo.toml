@@ -277,3 +277,7 @@ path = "examples/java/assembly_spring_boot.rs"
 [[example]]
 name = "assembly_mediatr"
 path = "examples/csharp/assembly_mediatr.rs"
+
+[[example]]
+name = "export_file_fold"
+path = "examples/tools/export_file_fold.rs"

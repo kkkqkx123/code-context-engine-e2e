@@ -30,6 +30,7 @@
 - `lua/` — Lua fixture（含 basic、review/closure 与类型推断专项）
 - `multi_language/` — 多语言混合 project fixture
 - `documents/` — 文档类 fixture
+- `tools/` — 无状态工具夹具（例如 `tools/file-fold`），`tools/file-fold` 同时包含 AST 语言样本与 Markdown/未知后缀降级样本
 
 各语言下可用 `type_inference/<case>/` 存放类型推断专项用例
 （每个用例聚焦一种推断模式：泛型、控制流收窄、构造调用、注解等），

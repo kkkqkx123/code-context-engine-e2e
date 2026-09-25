@@ -16,6 +16,8 @@ pub enum OutputCategory {
     Scenarios,
     /// Hot update workflow results
     HotUpdate,
+    /// Standalone tool outputs
+    Tools,
 }
 
 impl OutputCategory {
@@ -26,6 +28,7 @@ impl OutputCategory {
             OutputCategory::Query => "query",
             OutputCategory::Scenarios => "scenarios",
             OutputCategory::HotUpdate => "hot_update",
+            OutputCategory::Tools => "tools",
         }
     }
 }
@@ -238,6 +241,7 @@ mod tests {
         assert_eq!(OutputCategory::Query.dir_name(), "query");
         assert_eq!(OutputCategory::Scenarios.dir_name(), "scenarios");
         assert_eq!(OutputCategory::HotUpdate.dir_name(), "hot_update");
+        assert_eq!(OutputCategory::Tools.dir_name(), "tools");
     }
 
     #[test]
@@ -269,6 +273,17 @@ mod tests {
 
         let dir = manager.output_dir();
         assert!(dir.ends_with("outputs/scenarios/rust/presentation/once_cell"));
+    }
+
+    #[test]
+    fn test_output_manager_output_dir_with_scenario() {
+        let manager = OutputManager::builder()
+            .category(OutputCategory::Tools)
+            .scenario("file-fold")
+            .build();
+
+        let dir = manager.output_dir();
+        assert!(dir.ends_with("outputs/tools/file-fold"));
     }
 
     #[test]
