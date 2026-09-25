@@ -96,6 +96,12 @@ fn extract_raw_source(
     source_map: &HashMap<String, String>,
 ) -> String {
     const MAX_TOKENS: usize = 7200;
+    // Proportional truncation is shared with the dead-letter truncate-retry
+    // path via `cce_utils::token_estimation::truncate_to_token_budget`:
+    // when the estimate exceeds the limit, cut to 80% of the current length
+    // (at a line boundary) and re-check, with an absolute split as the final
+    // fallback. The estimator can underestimate code density, so the
+    // conservative ratio keeps the result under the provider cap.
 
     let file_path = normalize_file_path(&chunk.metadata.file_path);
     let source = source_map.get(&file_path).unwrap_or_else(|| {
@@ -132,11 +138,16 @@ fn extract_raw_source(
         chunk.bm25_title.as_deref().unwrap_or("unknown"),
     );
 
-    let estimator = cce_utils::token_estimation::TokenEstimator::default();
-    if estimator.estimate_text(&raw) <= MAX_TOKENS {
-        return raw;
+    let result = cce_utils::token_estimation::truncate_to_token_budget(&raw, MAX_TOKENS);
+    if result.truncated {
+        eprintln!(
+            "  raw-source: chunk {} truncated from {} to {} bytes (estimate {} > {} tokens)",
+            chunk.chunk_id,
+            result.original_len,
+            result.final_len,
+            result.original_estimate,
+            MAX_TOKENS
+        );
     }
-
-    let split = estimator.find_split_point(&raw, MAX_TOKENS);
-    raw[..split].to_string()
+    result.text
 }
