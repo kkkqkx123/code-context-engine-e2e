@@ -159,6 +159,14 @@ pub async fn embed_texts(
         anyhow::bail!("embed_texts called with empty input");
     }
 
+    // Providers reject empty/whitespace-only inputs with an opaque 400
+    // ("parameter is invalid"); reject them here with the offending index.
+    for (i, text) in texts.iter().enumerate() {
+        if text.trim().is_empty() {
+            anyhow::bail!("embed_texts: empty/whitespace-only text at index {i}");
+        }
+    }
+
     const MAX_BATCH_CHUNKS: usize = 16;
     let mut all_vectors = Vec::new();
     let mut dim = 0;
@@ -171,7 +179,27 @@ pub async fn embed_texts(
             refs.len(),
             refs.iter().map(|s| s.len()).max().unwrap_or(0)
         );
-        let result = embedder.embed(&refs).await?;
+        let result = match embedder.embed(&refs).await {
+            Ok(result) => result,
+            Err(batch_err) => {
+                // Isolate the offending text so the failure is diagnosable:
+                // embed each batch member individually and report the first
+                // one the provider rejects.
+                for (offset, text) in refs.iter().enumerate() {
+                    if let Err(single_err) = embedder.embed(std::slice::from_ref(text)).await {
+                        anyhow::bail!(
+                            "Embedding failed for batch {batch_idx}, text index {} \
+                             (len {}): {single_err}\nBatch error: {batch_err}\n\
+                             Text preview: {:?}",
+                            batch_idx * MAX_BATCH_CHUNKS + offset,
+                            text.len(),
+                            &text[..text.len().min(200)]
+                        );
+                    }
+                }
+                return Err(batch_err.into());
+            }
+        };
         if result.embeddings.len() != refs.len() {
             anyhow::bail!(
                 "Embedding response count mismatch in batch {batch_idx}: expected {}, received {}",

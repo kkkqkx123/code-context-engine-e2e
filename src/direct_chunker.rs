@@ -71,6 +71,12 @@ fn build_group_conversions(
                 .filter_map(|member| {
                     let span = group.entity_spans.get(&member.id)?;
                     let source = file_source.get(span.start_byte..span.end_byte)?;
+                    // Blank slices (empty span, comment-only region) would flow into
+                    // chunks and get rejected by embedding providers with an opaque
+                    // 400; skip them at the source.
+                    if source.trim().is_empty() {
+                        return None;
+                    }
                     Some(raw_source_conversion(
                         member.id,
                         member.kind,
@@ -87,6 +93,9 @@ fn build_group_conversions(
                     .or_else(|| group.member_ids.first().copied())
                     .or_else(|| group.entity_spans.keys().next().copied())?;
                 let source = file_source.get(group.span.start_byte..group.span.end_byte)?;
+                if source.trim().is_empty() {
+                    return None;
+                }
                 Some(raw_source_conversion(
                     entity_id,
                     group.kind,
@@ -95,12 +104,19 @@ fn build_group_conversions(
                     source,
                 ))
             } else {
+                // No group source available here; the identity-only conversion
+                // carries the group name as text, which cannot be blank when
+                // the group has members (guaranteed by this branch).
+                let name = group.name.as_str();
+                if name.trim().is_empty() {
+                    return None;
+                }
                 Some(raw_source_conversion(
                     group.header_id.unwrap_or(EntityId(0)),
                     group.kind,
-                    group.name.as_str(),
+                    name,
                     file_path,
-                    group.name.as_str(),
+                    name,
                 ))
             };
 
