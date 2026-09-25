@@ -88,9 +88,7 @@ pub fn snapshot_from_index(index: &RelationIndex, epoch: i64) -> RelationSnapsho
             .unwrap_or_default();
         let sk = index
             .get_symbol_key_by_entity_id(*entry.key())
-            .unwrap_or_else(|| {
-                SymbolKey::new(&file_path, &entity.name, entity.kind, &entity.signature)
-            });
+            .unwrap_or_else(|| SymbolKey::for_entity(&file_path, &entity.name, entity));
 
         entities.push(CanonicalEntity {
             file_path: sk.file_path,
