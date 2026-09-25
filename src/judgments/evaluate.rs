@@ -104,11 +104,19 @@ const EXAMPLE_DIR_SEGMENTS: [&str; 4] = ["examples", "example", "samples", "samp
 /// Whether a chunk lives under a conventional demo/sample directory.
 ///
 /// Segment names are matched exactly so `my_examples.rs` stays in ranking
-/// while `examples/hello-world/index.js` is excluded.
+/// while `examples/hello-world/index.js` is excluded. Only segments before
+/// the first `src` source-root count: package paths such as the Java
+/// `src/main/java/com/example/demo` embed `example` as a package name, not
+/// as a demo directory.
 pub fn is_example_chunk(chunk: &ChunkData) -> bool {
-    segments(&chunk.file_path)
-        .iter()
-        .any(|segment| EXAMPLE_DIR_SEGMENTS.contains(segment))
+    let mut outside_source_root = true;
+    segments(&chunk.file_path).into_iter().any(|segment| {
+        if segment == "src" {
+            outside_source_root = false;
+            return false;
+        }
+        outside_source_root && EXAMPLE_DIR_SEGMENTS.contains(&segment)
+    })
 }
 
 fn keep_chunk(chunk: &ChunkData, variant: EvalVariant) -> bool {
@@ -889,6 +897,15 @@ mod tests {
         assert!(!is_example_chunk(&chunk_at("lib/express.js")));
         assert!(!is_example_chunk(&chunk_at("src/my_examples.rs")));
         assert!(!is_example_chunk(&chunk_at("src/sample_utils.py")));
+        // Java package segments inside a source root are not demo dirs.
+        assert!(!is_example_chunk(&chunk_at(
+            "src/main/java/com/example/demo/service/UserService.java"
+        )));
+        // A demo tree outside the source root still counts, even when it
+        // itself contains `src`.
+        assert!(is_example_chunk(&chunk_at(
+            "examples/demo/src/main/java/App.java"
+        )));
     }
 
     #[test]
