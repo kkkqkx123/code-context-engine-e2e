@@ -123,6 +123,14 @@ name = "benchmark_spring_boot"
 path = "examples/java/benchmark_spring_boot.rs"
 
 [[example]]
+name = "gen_bench_jackson_core"
+path = "examples/java/gen_bench_jackson_core.rs"
+
+[[example]]
+name = "benchmark_jackson_core"
+path = "examples/java/benchmark_jackson_core.rs"
+
+[[example]]
 name = "gen_bench_mediatr"
 path = "examples/csharp/gen_bench_mediatr.rs"
 
