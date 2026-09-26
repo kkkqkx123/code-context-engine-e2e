@@ -69,7 +69,7 @@ impl DriftScaffold {
                     rusqlite::params![PROJECT_ID, fixture.root().to_string_lossy(),],
                 )
                 .map(|_| ())
-                .map_err(|e| cce_types::StorageError::insert(e.to_string()))
+                .map_err(|e| cce_types::StorageError::update("projects", e.to_string()))
             })
             .context("failed to point the project row at the fixture root")?;
 

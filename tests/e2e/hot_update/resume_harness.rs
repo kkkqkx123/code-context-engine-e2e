@@ -285,7 +285,7 @@ impl HotUpdateHarness {
                     ],
                 )
                 .map(|_| ())
-                .map_err(|e| cce_types::StorageError::insert(e.to_string()))
+                .map_err(|e| cce_types::StorageError::insert("projects", e.to_string()))
             })
             .context("failed to ensure project row")?;
 
@@ -1488,6 +1488,7 @@ impl HotUpdateHarness {
             let chunks = processor
                 .process_parsed_file(&parsed)
                 .await
+                .map(|(chunks, _)| chunks)
                 .context("failed to chunk seeded candidate file")?;
             parsed_files.push(parsed.clone());
             bm25_writes.push((parsed.path, chunks));

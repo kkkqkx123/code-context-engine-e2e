@@ -50,7 +50,7 @@ impl TestRelationPublisher {
                  VALUES (?1, ?2, ?3, '.cce/config.json', ?4, ?4)",
                 rusqlite::params![project_id, format!("project-{project_id}"), format!("/project/{project_id}"), chrono::Utc::now().timestamp()],
             )
-            .map_err(|error| StorageError::Insert(error.to_string()))?;
+            .map_err(|error| StorageError::insert("projects", error.to_string()))?;
             Ok(())
         })
     }

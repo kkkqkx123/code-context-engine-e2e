@@ -75,7 +75,10 @@ async fn main() {
                 || gc.group.group_id == "group_96"
                 || gc.group.group_id == "group_50"
             {
-                let pre = chunker.chunk_group_with_conversions(&gc.group, gc, &parsed.path);
+                let pre = chunker
+                    .chunk_group_with_conversions(&gc.group, gc, &parsed.path)
+                    .expect("chunking")
+                    .chunks;
                 for c in &pre {
                     if c.path != cce_types::ChunkPath::Embedding {
                         continue;

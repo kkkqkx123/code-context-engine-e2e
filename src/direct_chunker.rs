@@ -44,7 +44,13 @@ impl EntityChunker {
         let conversions = build_group_conversions(&result.groups, file_path, content);
 
         let mut chunker = self.chunker.lock().unwrap();
-        chunker.chunk_groups(&conversions, file_path)
+        match chunker.chunk_groups(&conversions, file_path) {
+            Ok(output) => output.chunks,
+            Err(e) => {
+                tracing::warn!("chunking failed for {}: {}", file_path, e);
+                vec![]
+            }
+        }
     }
 
     pub fn chunk_files(&self, files: &[(String, String)]) -> Vec<ChunkedResult> {
