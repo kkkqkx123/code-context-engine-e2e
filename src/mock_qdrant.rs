@@ -92,8 +92,12 @@ async fn serve_connection(
 ) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let response =
-        b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\ncontent-type: application/json\r\n\r\n{}";
+    let body = br#"{"result":{"operation_id":1,"status":"ok"}}"#;
+    let header = format!(
+        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\ncontent-type: application/json\r\n\r\n",
+        body.len()
+    );
+    let response = [header.as_bytes(), body].concat();
     let mut pending: Vec<u8> = Vec::new();
     loop {
         // Accumulate until the full header block is buffered.
@@ -162,7 +166,7 @@ async fn serve_connection(
                 .extend(batch);
         }
 
-        if socket.write_all(response).await.is_err() {
+        if socket.write_all(&response).await.is_err() {
             return;
         }
     }
