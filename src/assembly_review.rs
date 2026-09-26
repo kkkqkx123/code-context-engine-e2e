@@ -505,7 +505,7 @@ fn resolve_expansion(
 
 /// Rendered outcome for one hit in the `assembled/` tree.
 enum AssembledOutcome {
-    Assembled(AssembledResult),
+    Assembled(Box<AssembledResult>),
     Fallback { note: String, raw: String },
 }
 
@@ -674,7 +674,7 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
                             (Vec::new(), Vec::new())
                         };
                         match assembler.assemble_single(input, forward, backward).await {
-                            Ok(result) => AssembledOutcome::Assembled(result),
+                            Ok(result) => AssembledOutcome::Assembled(Box::new(result)),
                             Err(e) => AssembledOutcome::Fallback {
                                 note: format!("assembly failed ({e}); content identical to raw."),
                                 raw: chunk_text.to_string(),

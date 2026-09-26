@@ -431,7 +431,7 @@ fn evaluate_fused(
                     (
                         file.as_str(),
                         crate::bench_data::cosine_similarity(
-                            &vec.iter().map(|&v| v).collect::<Vec<_>>(),
+                            &vec.to_vec(),
                             query_vector,
                         ),
                     )

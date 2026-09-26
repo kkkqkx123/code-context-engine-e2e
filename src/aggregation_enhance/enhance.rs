@@ -263,7 +263,7 @@ pub fn summary_boosts(
         .map(|(file, vec)| {
             (
                 file.as_str(),
-                cosine_similarity(&vec.iter().map(|&v| v).collect::<Vec<_>>(), query_vector),
+                cosine_similarity(&vec.to_vec(), query_vector),
             )
         })
         .filter(|(_, score)| *score >= min_score)
@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn cohort_graph_groups_entities_by_file() {
-        let chunks = vec![
+        let chunks = [
             chunk("a", "src/lib.rs", vec![1, 2]),
             chunk("b", "src/lib.rs", vec![3]),
             chunk("c", "src/race.rs", vec![4]),
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn expand_cohort_respects_max_hops() {
-        let chunks = vec![
+        let chunks = [
             chunk("a", "f1", vec![1]),
             chunk("b", "f1", vec![2]),
             chunk("c", "f2", vec![2, 3]),
