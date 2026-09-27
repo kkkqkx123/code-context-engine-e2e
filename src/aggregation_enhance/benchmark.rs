@@ -430,10 +430,7 @@ fn evaluate_fused(
                 .map(|(file, vec)| {
                     (
                         file.as_str(),
-                        crate::bench_data::cosine_similarity(
-                            &vec.to_vec(),
-                            query_vector,
-                        ),
+                        crate::bench_data::cosine_similarity(&vec.to_vec(), query_vector),
                     )
                 })
                 .filter(|(_, s)| *s >= min_score)
