@@ -34,8 +34,11 @@ pub mod type_inference_assert {
     pub use cce_e2e_tests::type_inference_assert::*;
 }
 
-#[path = "../e2e/helper/fixture.rs"]
-pub mod fixture;
+pub mod fixture {
+    pub use cce_e2e_tests::fixture::{
+        EmptyFixture, FixtureAccess, FixtureCategory, FixtureSpec, TestFixture,
+    };
+}
 
 pub use assertion::{ExpectedIndexResult, assert_index_result};
 pub use cleanup::init_minimal_logging;
