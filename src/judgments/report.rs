@@ -18,7 +18,9 @@ use crate::judgments::evaluate::{
 ///
 /// Extra slices hold filtered variants (`no_test` drops test chunks,
 /// `impl_only` also drops demo/sample trees). Rows carry a `variant` column
-/// (`all` | `no_test` | `impl_only`) so every variant shares the same tables.
+/// (`impl_only` | `no_test` | `all`) ordered with `impl_only` first: it is the
+/// primary caliber, `no_test` the secondary, and `all` the unfiltered
+/// reference only.
 pub fn write_aggregate_reports(
     base: &Path,
     results: &[BaselineResult],
@@ -34,6 +36,29 @@ pub fn write_aggregate_reports(
         generate_per_query_csv(base, &combined, top_k)?;
     }
     Ok(())
+}
+
+/// Rank an evaluation variant for report row ordering.
+///
+/// `impl_only` is the primary caliber (test and demo trees excluded),
+/// `no_test` the secondary, and `all` the unfiltered reference. Unknown
+/// variant labels sort with `all`.
+fn variant_rank(variant: &str) -> u8 {
+    match variant {
+        "impl_only" => 0,
+        "no_test" => 1,
+        _ => 2,
+    }
+}
+
+/// Sort report rows by variant caliber, then by the remaining columns for
+/// determinism. The variant label lives at column index 1 in every table.
+fn sort_rows_by_variant(rows: &mut [Vec<String>]) {
+    rows.sort_by(|a, b| {
+        variant_rank(a.get(1).map(String::as_str).unwrap_or(""))
+            .cmp(&variant_rank(b.get(1).map(String::as_str).unwrap_or("")))
+            .then_with(|| a.cmp(b))
+    });
 }
 
 /// Write aggregate metrics as a markdown table at a given top-k cutoff.
@@ -107,6 +132,7 @@ pub fn generate_aggregate_csv(
         ]);
     }
 
+    sort_rows_by_variant(&mut rows);
     write_md_table(&mut f, headers, &rows)?;
     Ok(())
 }
@@ -201,6 +227,7 @@ pub fn generate_aggregate_by_query_type_csv(
         ]);
     }
 
+    sort_rows_by_variant(&mut rows);
     write_md_table(&mut f, headers, &rows)?;
     Ok(())
 }
@@ -261,6 +288,7 @@ pub fn generate_per_query_csv(
         ]);
     }
 
+    sort_rows_by_variant(&mut rows);
     write_md_table(&mut f, headers, &rows)?;
     Ok(())
 }
@@ -549,9 +577,9 @@ pub fn write_test_diagnostics(
 
 /// Write top-5 relevance detail rows for every evaluation variant.
 ///
-/// The `all` variant is the primary observability source; `no_test` rows show
-/// what remains after test chunks are filtered, and `impl_only` further drops
-/// demo/sample trees. All variants now emit their relevance info instead of
+/// The `impl_only` variant is the primary observability source; `no_test`
+/// rows show the test-filtered ranking, and `all` rows the unfiltered
+/// reference. All variants now emit their relevance info instead of
 /// discarding it at the runner entry point.
 pub fn write_relevance_reports(
     base: &Path,
@@ -591,9 +619,9 @@ pub fn write_relevance_reports(
             collect(&info.related_chunks);
         }
     };
-    push_rows("all", all_relevance, &mut rows);
-    push_rows("no_test", no_test_relevance, &mut rows);
     push_rows("impl_only", impl_only_relevance, &mut rows);
+    push_rows("no_test", no_test_relevance, &mut rows);
+    push_rows("all", all_relevance, &mut rows);
 
     write_md_table(&mut f, headers, &rows)?;
     Ok(())
