@@ -35,7 +35,7 @@ use cce_orchestrator::query::assembly::{
     AssembledResult, ExpandedUnit, ExpansionOrigin, SPSRGraphAssembler, SPSRGraphConfig,
     SearchResultInput,
 };
-use cce_types::EntityId;
+use cce_types::{EntityId, RelationType};
 
 use crate::bench_data::{BenchmarkData, ChunkData, cosine_similarity, load_benchmark_data};
 use crate::bench_gen::fixture_source_path;
@@ -381,6 +381,12 @@ fn build_assembler_input(chunk: &ChunkData, hit: &HitContent, score: f64) -> Sea
 /// already present in the query's top-K hits are skipped (the assembler
 /// dedups and caps the rest). The path filter runs here so excluded
 /// neighbours never occupy an expansion budget slot.
+///
+/// The unit carries the primary hit score (ties keep caller order under the
+/// assembler's stable score sort), the benchmark edge's relation type parsed
+/// to a call-domain default, and explicit non-stdlib / non-external marks so
+/// the assembler's noise filters treat benchmark neighbours as workspace
+/// calls.
 #[allow(clippy::too_many_arguments)]
 fn neighbor_unit(
     bench: &BenchmarkData,
@@ -389,6 +395,8 @@ fn neighbor_unit(
     neighbor_id: i64,
     origin: ExpansionOrigin,
     edge_label: &str,
+    relation_type: &str,
+    score: f32,
     top_chunk_ids: &HashSet<String>,
     mode: ContentMode,
     fixture_root: &Path,
@@ -434,10 +442,17 @@ fn neighbor_unit(
         }
     };
     let name = display_name(chunk).to_string();
+    let relation = relation_type
+        .parse::<RelationType>()
+        .unwrap_or(RelationType::DirectCall);
     Some(
         ExpandedUnit::new(code, file_path, start_line, end_line, name)
             .with_entity_id(EntityId(neighbor_id as u64))
-            .with_expansion(origin, edge_label),
+            .with_expansion(origin, edge_label)
+            .with_relation_type(relation)
+            .with_score(score)
+            .with_stdlib(false)
+            .with_external(false),
     )
 }
 
@@ -446,11 +461,13 @@ fn neighbor_unit(
 ///
 /// The path filter is applied per neighbour before the units are returned,
 /// i.e. before `SPSRGraphAssembler` applies its expansion budget cap.
+/// Neighbours inherit the primary hit score.
 #[allow(clippy::too_many_arguments)]
 fn resolve_expansion(
     bench: &BenchmarkData,
     graph: &CallGraph,
     chunk: &ChunkData,
+    primary_score: f32,
     top_chunk_ids: &HashSet<String>,
     mode: ContentMode,
     fixture_root: &Path,
@@ -472,6 +489,8 @@ fn resolve_expansion(
                 edge.callee_entity_id,
                 ExpansionOrigin::Forward,
                 "calls",
+                &edge.relation_type,
+                primary_score,
                 top_chunk_ids,
                 mode,
                 fixture_root,
@@ -491,6 +510,8 @@ fn resolve_expansion(
                 edge.caller_entity_id,
                 ExpansionOrigin::Backward,
                 "called by",
+                &edge.relation_type,
+                primary_score,
                 top_chunk_ids,
                 mode,
                 fixture_root,
@@ -595,7 +616,12 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
 
     // Assembly must be enabled: the default config takes the verbatim
     // shortcut, which would make every assembled file identical to raw.
-    let mut spsr_config = SPSRGraphConfig::new().enable(true);
+    // The workspace root enables existence checks against the fixture tree
+    // so vanished files render as references instead of ghost source.
+    let fixture_root = fixture_source_path(config.spec.clone());
+    let mut spsr_config = SPSRGraphConfig::new()
+        .enable(true)
+        .with_workspace_root(fixture_root.clone());
     if config.expansion {
         spsr_config = spsr_config.with_expansion(true);
     }
@@ -610,7 +636,6 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
     }
     let mut ranked = rank_embedding(&bench);
     apply_recall_penalties(&bench, &mut ranked, config.top_k);
-    let fixture_root = fixture_source_path(config.spec.clone());
     let mut source_cache: HashMap<String, Option<Vec<String>>> = HashMap::new();
 
     let base = OutputManager::builder()
@@ -664,6 +689,7 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
                                 &bench,
                                 &graph,
                                 chunk,
+                                hit.score as f32,
                                 &top_chunk_ids,
                                 config.content_mode,
                                 &fixture_root,
@@ -690,7 +716,7 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
                 AssembledOutcome::Assembled(result) => {
                     let meta = &result.metadata;
                     assembled_md.push_str(&format!(
-                        "- assembly: expanded={}, expanded_nodes={} (fwd={}, bwd={}), files={}, original_length={}, assembled_length={}, truncated={}\n",
+                        "- assembly: expanded={}, expanded_nodes={} (fwd={}, bwd={}), files={}, original_length={}, assembled_length={}, truncated={}, downgraded={}\n",
                         meta.expanded,
                         meta.expanded_nodes,
                         meta.forward_nodes,
@@ -698,7 +724,8 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
                         meta.file_count,
                         meta.original_length,
                         meta.assembled_length,
-                        meta.truncated
+                        meta.truncated,
+                        result.downgraded_to_reference
                     ));
                     if !meta.expanded {
                         assembled_md.push_str("> not expanded — content identical to raw.\n");
@@ -832,6 +859,7 @@ mod tests {
             &bench,
             &graph,
             primary,
+            0.9,
             &top_chunk_ids,
             ContentMode::Chunk,
             Path::new("."),
@@ -846,6 +874,11 @@ mod tests {
         let forward = forward_neighbors(&ReviewFilterOptions::default());
         assert_eq!(forward.len(), 1);
         assert_eq!(forward[0].name, "c1");
+        // Review neighbours satisfy the assembler's noise-filter semantics.
+        assert!((forward[0].score - 0.9).abs() < f32::EPSILON);
+        assert!(forward[0].is_call_domain());
+        assert!(!forward[0].is_stdlib);
+        assert!(!forward[0].is_external);
     }
 
     #[test]
