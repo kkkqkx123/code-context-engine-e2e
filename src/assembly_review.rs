@@ -716,7 +716,7 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
                 AssembledOutcome::Assembled(result) => {
                     let meta = &result.metadata;
                     assembled_md.push_str(&format!(
-                        "- assembly: expanded={}, expanded_nodes={} (fwd={}, bwd={}), files={}, original_length={}, assembled_length={}, truncated={}, downgraded={}\n",
+                        "- assembly: expanded={}, expanded_nodes={} (fwd={}, bwd={}), files={}, original_length={}, assembled_length={}, truncated={}\n",
                         meta.expanded,
                         meta.expanded_nodes,
                         meta.forward_nodes,
@@ -725,7 +725,6 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
                         meta.original_length,
                         meta.assembled_length,
                         meta.truncated,
-                        result.downgraded_to_reference
                     ));
                     if !meta.expanded {
                         assembled_md.push_str("> not expanded — content identical to raw.\n");
