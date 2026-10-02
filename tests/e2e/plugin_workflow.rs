@@ -324,7 +324,6 @@ def get_user(user_id):
                 limit: 10,
                 offset: 0,
                 field_weights: HashMap::new(),
-                highlight: false,
                 project_id: 1,
                 epochs: Vec::new(),
                 excluded_files: None,

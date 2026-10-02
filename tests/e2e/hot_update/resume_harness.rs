@@ -968,7 +968,6 @@ impl HotUpdateHarness {
             limit: 10,
             offset: 0,
             field_weights: Default::default(),
-            highlight: false,
             project_id: self.project_id,
             epochs: Vec::new(),
             excluded_files: None,

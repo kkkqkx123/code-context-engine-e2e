@@ -106,7 +106,6 @@ fn search_options(operator: TermOperator, limit: usize) -> Bm25SearchOptions {
         limit,
         offset: 0,
         field_weights,
-        highlight: false,
         project_id: 1,
         epochs: Vec::new(),
         excluded_files: None,
