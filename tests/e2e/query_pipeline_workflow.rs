@@ -58,6 +58,7 @@ fn test_ranking_threshold_filtering() {
         result: ResultFilterConfig {
             min_score: 0.5,
             limit: usize::MAX,
+            ..Default::default()
         },
         ..Default::default()
     };
