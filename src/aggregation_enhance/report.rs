@@ -93,8 +93,10 @@ fn write_run_manifest(
     )?;
     writeln!(
         f,
-        "  top_k={} files, min_score={}, summary_max={}",
-        params.summary.top_k, params.summary.min_score, params.agg.summary_max
+        "  top_k={} files, min_score={}, summary_cap={}",
+        params.summary.top_k,
+        params.summary.min_score,
+        params.agg.cap_for("summary")
     )?;
     writeln!(
         f,

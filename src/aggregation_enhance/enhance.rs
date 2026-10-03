@@ -244,7 +244,8 @@ impl FileVectors {
 ///
 /// Scores every pooled file vector against the query vector, keeps files
 /// above `min_score` (top-`top_k`), then assigns chunks in matching files
-/// `summary_max * (score - min) / (1 - min)`.
+/// `summary_cap * (score - min) / (1 - min)`, where `summary_cap` is the
+/// configured per-source cap for `summary`.
 pub fn summary_boosts(
     query_vector: &[f32],
     file_vectors: &FileVectors,
@@ -281,7 +282,7 @@ pub fn summary_boosts(
         };
         if let Some(&score) = matched.get(chunk.file_path.as_str()) {
             let normalized = ((score - min_score) / (1.0 - min_score)).clamp(0.0, 1.0);
-            let value = params.agg.summary_max as f64 * normalized;
+            let value = params.agg.cap_for("summary") as f64 * normalized;
             if value > 0.0 {
                 boosts.insert(*idx, value);
             }
@@ -416,8 +417,8 @@ mod tests {
         let p = params();
         let base = vec![(0usize, 0.5), (1usize, 0.6)];
         let boosts = summary_boosts(&[1.0, 0.0], &files, &chunks, &base, &p);
-        // f1 scores 1.0 -> full summary_max; f2 scores 0.0 < min_score.
-        assert!((boosts[&0] - p.agg.summary_max as f64).abs() < 1e-9);
+        // f1 scores 1.0 -> full summary cap; f2 scores 0.0 < min_score.
+        assert!((boosts[&0] - p.agg.cap_for("summary") as f64).abs() < 1e-9);
         assert!(!boosts.contains_key(&1));
     }
 
@@ -445,7 +446,7 @@ mod tests {
         assert_eq!(p.relation.top_n, 5);
         assert_eq!(p.relation.max_hops, 2);
         assert!((p.relation.max_boost - 0.15).abs() < f32::EPSILON);
-        assert!((p.agg.summary_max - 0.15).abs() < f32::EPSILON);
+        assert!((p.agg.cap_for("summary") - 0.15).abs() < f32::EPSILON);
         assert!((p.agg.max_addition - 0.5).abs() < f32::EPSILON);
         assert_eq!(p.summary.top_k, 20);
         assert!((p.summary.min_score - 0.4).abs() < f32::EPSILON);

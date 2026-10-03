@@ -311,6 +311,7 @@ impl<'a> PreparedFusion<'a> {
             include_single_path,
             min_score: 0.0,
             dedup_by_chunk: false,
+            ..HybridFusionConfig::default()
         };
         let fused = fuse_hybrid_results(
             self.vector_results.clone(),

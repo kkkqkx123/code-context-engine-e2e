@@ -290,6 +290,9 @@ impl RerankRuntime {
                 format!("linear_weighted(alpha={alpha})")
             }
             ScoreFusionStrategy::Multiplicative => "multiplicative".to_string(),
+            ScoreFusionStrategy::ReciprocalRankFusion { k } => {
+                format!("reciprocal_rank_fusion(k={k})")
+            }
         }
     }
 }
@@ -319,6 +322,9 @@ impl RerankScoring {
                 format!("linear_weighted(alpha={alpha})")
             }
             ScoreFusionStrategy::Multiplicative => "multiplicative".to_string(),
+            ScoreFusionStrategy::ReciprocalRankFusion { k } => {
+                format!("reciprocal_rank_fusion(k={k})")
+            }
         };
         if self.normalize_initial {
             format!("{base}+norm_init")
@@ -335,6 +341,9 @@ impl RerankScoring {
                 format!("linear-weighted-alpha{alpha}")
             }
             ScoreFusionStrategy::Multiplicative => "multiplicative".to_string(),
+            ScoreFusionStrategy::ReciprocalRankFusion { k } => {
+                format!("reciprocal-rank-fusion-k{k}")
+            }
         };
         let mut dir = format!("{base}_{}", self.text_source.label());
         if self.normalize_initial {
@@ -730,17 +739,33 @@ pub fn evaluate_query_rerank(
             .map(|candidate| candidate.initial_score as f32)
             .collect()
     };
-    let mut reranked: Vec<(&CandidateRef, f32)> = candidates
-        .iter()
-        .zip(initials)
-        .map(|(candidate, initial)| {
-            let final_score =
-                scoring
-                    .fusion
-                    .calculate(scores[candidate.chunk_id.as_str()], initial, 0);
-            (candidate, final_score)
-        })
-        .collect();
+    let mut reranked: Vec<(&CandidateRef, f32)> = {
+        // Rerank order is descending rerank score with a stable tiebreak, so
+        // rank-fusion variants observe the same ordering as production.
+        let mut order: Vec<usize> = (0..candidates.len()).collect();
+        order.sort_by(|&left, &right| {
+            scores[candidates[right].chunk_id.as_str()]
+                .total_cmp(&scores[candidates[left].chunk_id.as_str()])
+        });
+        let mut rerank_rank = vec![0usize; candidates.len()];
+        for (rank, index) in order.iter().enumerate() {
+            rerank_rank[*index] = rank;
+        }
+        candidates
+            .iter()
+            .zip(initials)
+            .enumerate()
+            .map(|(initial_rank, (candidate, initial))| {
+                let final_score = scoring.fusion.calculate(
+                    scores[candidate.chunk_id.as_str()],
+                    initial,
+                    rerank_rank[initial_rank],
+                    initial_rank,
+                );
+                (candidate, final_score)
+            })
+            .collect()
+    };
     // Stable sort: score ties keep recall order, mirroring production merge.
     reranked.sort_by(|left, right| right.1.total_cmp(&left.1));
 

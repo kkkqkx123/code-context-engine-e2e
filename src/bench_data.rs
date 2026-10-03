@@ -489,16 +489,24 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
 /// Production BM25 configuration for offline scoring.
 ///
 /// k1/b come from `Bm25AlgorithmConfig::default` and field weights from
-/// `Bm25FusionConfig::default` — the same defaults the running server uses.
+/// `Bm25RetrievalConfig::default` — the same defaults the running server uses.
 pub fn production_bm25_config() -> crate::infra::Bm25Config {
     let algorithm = cce_config::modules::Bm25AlgorithmConfig::default();
-    let fusion = cce_config::modules::search::Bm25FusionConfig::default();
+    let retrieval = cce_config::modules::search::Bm25RetrievalConfig::default();
     crate::infra::Bm25Config {
         k1: algorithm.k1 as f64,
         b: algorithm.b as f64,
-        title_weight: fusion.field_weights.get("title").copied().unwrap_or(2.0) as f64,
-        keywords_weight: fusion.field_weights.get("keywords").copied().unwrap_or(2.0) as f64,
-        content_weight: fusion.field_weights.get("content").copied().unwrap_or(1.0) as f64,
+        title_weight: retrieval.field_weights.get("title").copied().unwrap_or(2.0) as f64,
+        keywords_weight: retrieval
+            .field_weights
+            .get("keywords")
+            .copied()
+            .unwrap_or(2.0) as f64,
+        content_weight: retrieval
+            .field_weights
+            .get("content")
+            .copied()
+            .unwrap_or(1.0) as f64,
     }
 }
 

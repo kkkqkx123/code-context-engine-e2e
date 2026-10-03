@@ -125,6 +125,7 @@ fn test_hybrid_fusion_weighted() {
         include_single_path: true,
         min_score: 0.0,
         dedup_by_chunk: false,
+        ..HybridFusionConfig::default()
     };
 
     // Vector results
@@ -173,6 +174,7 @@ fn test_fusion_with_empty_bm25() {
         include_single_path: true,
         min_score: 0.0,
         dedup_by_chunk: false,
+        ..HybridFusionConfig::default()
     };
 
     let vector_results = vec![

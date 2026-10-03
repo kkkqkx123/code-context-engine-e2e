@@ -292,7 +292,7 @@ fn relation_cap(params: &EnhanceParams) -> f32 {
 }
 
 fn summary_cap(params: &EnhanceParams) -> f32 {
-    params.agg.summary_max
+    params.agg.cap_for("summary")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -441,7 +441,7 @@ fn evaluate_fused(
             for (i, entry) in fused.iter().enumerate() {
                 if let Some(&score) = matched.get(entry.coverage.file_path.as_str()) {
                     let norm = ((score - min_score) / (1.0 - min_score)).clamp(0.0, 1.0);
-                    let value = ctx.params.agg.summary_max as f64 * norm;
+                    let value = ctx.params.agg.cap_for("summary") as f64 * norm;
                     if value > 0.0 {
                         sum.insert(i, value);
                     }
