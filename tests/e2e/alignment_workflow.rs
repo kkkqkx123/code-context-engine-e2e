@@ -544,15 +544,11 @@ async fn hybrid_harness(
     (query_test, server, metrics)
 }
 
-/// Derive the fusion alignment key, mirroring production `alignment_key`.
+/// Derive the fusion alignment key, delegating to the shared `cce_types`
+/// derivation also consumed by the production fusion pipeline.
 fn alignment_key_of(item: &SearchResult) -> String {
-    if let Some(entity_id) = item.entity_ids.first() {
-        format!("e:{}", entity_id.0)
-    } else if let Some(segment_id) = &item.segment_id {
-        format!("s:{}", segment_id)
-    } else {
-        format!("c:{}", item.id)
-    }
+    cce_types::alignment_key(&item.entity_ids, item.segment_id.as_deref(), &item.id)
+        .unwrap_or_else(|| format!("c:{}", item.id))
 }
 
 /// B1: pipeline smoke over a real fixture. After the F0 fix the vector path

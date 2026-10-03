@@ -37,13 +37,8 @@ fn no_threshold_config() -> cce_orchestrator::SearchConfig {
 }
 
 fn alignment_key_of(item: &SearchResult) -> String {
-    if let Some(entity_id) = item.entity_ids.first() {
-        format!("e:{}", entity_id.0)
-    } else if let Some(segment_id) = &item.segment_id {
-        format!("s:{}", segment_id)
-    } else {
-        format!("c:{}", item.id)
-    }
+    cce_types::alignment_key(&item.entity_ids, item.segment_id.as_deref(), &item.id)
+        .unwrap_or_else(|| format!("c:{}", item.id))
 }
 
 fn fmt_keys(items: &[SearchResult]) -> String {

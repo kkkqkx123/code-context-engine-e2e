@@ -36,17 +36,18 @@ use cce_types::EntityId;
 
 /// Derive the primary cross-path alignment key for a chunk.
 ///
-/// Mirrors the production key priority: entity id, then segment id, then chunk
-/// id. `(file_path, entity_name)` was previously used as an approximate proxy;
-/// this is replaced by the real entity/segment ids from the chunker.
+/// Delegates to the shared derivation in `cce_types` (the same source the
+/// production fusion pipeline consumes): entity id, then segment id, then
+/// chunk id. `(file_path, entity_name)` was previously used as an approximate
+/// proxy; this is replaced by the real entity/segment ids from the chunker.
 pub fn alignment_key(chunk: &ChunkData) -> String {
-    if let Some(eid) = chunk.entity_ids.first() {
-        format!("e:{}", eid)
-    } else if !chunk.segment_id.is_empty() {
-        format!("s:{}", chunk.segment_id)
-    } else {
-        format!("c:{}", chunk.chunk_id)
-    }
+    let entity_ids: Vec<EntityId> = chunk
+        .entity_ids
+        .iter()
+        .map(|id| EntityId(*id as u64))
+        .collect();
+    cce_types::alignment_key(&entity_ids, Some(&chunk.segment_id), &chunk.chunk_id)
+        .unwrap_or_else(|| format!("c:{}", chunk.chunk_id))
 }
 
 /// Alignment keys for a chunk, expanding multi-entity chunks one key per entity.
@@ -59,7 +60,7 @@ pub fn alignment_keys(chunk: &ChunkData) -> Vec<String> {
         chunk
             .entity_ids
             .iter()
-            .map(|id| format!("e:{}", id))
+            .map(|id| cce_types::entity_alignment_key(&EntityId(*id as u64)))
             .collect()
     } else {
         vec![alignment_key(chunk)]
@@ -72,17 +73,8 @@ pub fn alignment_keys(chunk: &ChunkData) -> Vec<String> {
 /// the key resolves from the result's own entity id — not from the chunk it
 /// points at, whose `entity_ids` may list several entities.
 fn result_key(result: &SearchResult) -> String {
-    if let Some(eid) = result.entity_ids.first() {
-        format!("e:{}", eid.0)
-    } else if let Some(seg) = result.segment_id.as_deref() {
-        if seg.is_empty() {
-            format!("c:{}", result.id)
-        } else {
-            format!("s:{}", seg)
-        }
-    } else {
-        format!("c:{}", result.id)
-    }
+    cce_types::alignment_key(&result.entity_ids, result.segment_id.as_deref(), &result.id)
+        .unwrap_or_else(|| format!("c:{}", result.id))
 }
 
 /// One retrieval path with its ranked chunks.
