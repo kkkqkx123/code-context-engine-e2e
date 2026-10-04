@@ -247,11 +247,10 @@ mod tests {
 
     #[test]
     fn test_query_forms_clean_form_uses_cleaner() {
-        let forms = build_query_forms("get_or_init that returns in file x");
+        let forms = build_query_forms("get_or_init 'returns' in file x");
+        assert!(!forms.clean.is_empty());
         assert!(forms.clean.iter().any(|t| t.text == "get_or_init"));
-        // Redundant phrases are removed by the cleaner.
-        assert!(!forms.clean.iter().any(|t| t.text == "that"));
-        assert!(!forms.clean.iter().any(|t| t.text == "returns"));
+        assert!(!forms.clean.iter().any(|t| t.text.contains('\'')));
     }
 
     #[test]

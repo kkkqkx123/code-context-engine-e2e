@@ -101,7 +101,7 @@ pub async fn gen_full_pipeline_chunks(
 }
 
 /// Build the relation index from the same parses that produced the chunks and
-/// extract the in-project call-edge sidecar for offline assembly review.
+/// extract the in-project call-edge sidecar for offline annotation review.
 fn build_call_edges(target_spec: FixtureSpec, parsed_files: &[ParsedFile]) -> Vec<CallEdgeData> {
     if parsed_files.is_empty() {
         return Vec::new();

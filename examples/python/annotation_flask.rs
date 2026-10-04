@@ -1,24 +1,24 @@
-//! Assembly review export for the flask fixture.
+//! Annotation review export for the flask fixture.
 //!
-//! Same pipeline as `assembly_oncecell`, over the `full_pipeline`
+//! Same pipeline as `annotation_oncecell`, over the `full_pipeline`
 //! flask benchmark snapshot. Requires
 //! `data/benchmark/full_pipeline/flask/bge-m3/bench_data.rkyv`
 //! (run `gen_bench_flask` first if missing).
 //!
 //! Output:
-//!   outputs/scenarios/python/assembly/flask/
+//!   outputs/scenarios/python/annotation/flask/
 //!   ├── index.md
-//!   └── {query_id}.md          — raw recall hits + assembled content per query
+//!   └── {query_id}.md          — raw recall hits + annotated content per query
 
 use cce_e2e_tests::FixtureSpec;
-use cce_e2e_tests::assembly_review::{
-    AssemblyReviewConfig, ContentMode, RecallMode, run_assembly_review,
+use cce_e2e_tests::annotation_review::{
+    AnnotationReviewConfig, ContentMode, RecallMode, run_annotation_review,
 };
 use cce_e2e_tests::review_filter::ReviewFilterOptions;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    run_assembly_review(AssemblyReviewConfig {
+    run_annotation_review(AnnotationReviewConfig {
         project: "flask",
         language: "python",
         spec: FixtureSpec::python_flask(),

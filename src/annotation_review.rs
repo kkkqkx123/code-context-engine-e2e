@@ -1,4 +1,4 @@
-//! Offline assembly-review export for the SPSR-Graph assembler.
+//! Offline annotation-review export for the RelationAnnotator.
 //!
 //! For every query in the `full_pipeline` benchmark snapshot this job replays
 //! embedding recall offline (cosine over the stored chunk/query vectors, no
@@ -6,33 +6,32 @@
 //! under:
 //!
 //! ```text
-//! outputs/scenarios/{lang}/assembly/{project}/
+//! outputs/scenarios/{lang}/annotation/{project}/
 //! ├── index.md
 //! └── {query_id}.md
 //! ```
 //!
 //! Each `{query_id}.md` holds the plain top-K recall hits (control group)
 //! side by side with the same hits passed through
-//! `SPSRGraphAssembler::assemble_single` (assembly enabled), plus the
-//! `AssemblyMetadata` so reviewers can tell "no effect" apart from
-//! "assembly switched off". When expansion is enabled, one call-graph hop
+//! `RelationAnnotator::annotate_single` (annotation enabled), plus the
+//! `AnnotationMetadata` so reviewers can tell "no effect" apart from
+//! "annotation switched off". When expansion is enabled, one call-graph hop
 //! (callees first, then callers) is resolved from the benchmark's
 //! `call_edges` sidecar, hard-filtered by the job's path policy
-//! (`ReviewFilterOptions`, applied before the assembler's expansion budget
+//! (`ReviewFilterOptions`, applied before the annotator's expansion budget
 //! cap), and attached to every hit. See
-//! `docs/plan/tests/assembly-review-export-design.md` and
-//! `docs/plan/tests/assembly-review-expansion-path-filter.md`.
+//! `docs/plan/tests/annotation-review-export-design.md`.
 //!
 //! Only `full_pipeline` snapshots are consumed: the other baselines carry
 //! raw source slices with no entity structure and no call edges, so
-//! assembly is meaningless on them. The baseline therefore appears nowhere
+//! annotation is meaningless on them. The baseline therefore appears nowhere
 //! in the output paths.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use cce_orchestrator::query::assembly::{
-    AssembledResult, ExpandedUnit, ExpansionOrigin, SPSRGraphAssembler, SPSRGraphConfig,
+use cce_orchestrator::query::annotation::{
+    AnnotatedResult, ExpandedUnit, ExpansionOrigin, RelationAnnotationConfig, RelationAnnotator,
     SearchResultInput,
 };
 use cce_types::{EntityId, RelationType};
@@ -43,7 +42,7 @@ use crate::judgments::evaluate::BenchmarkPaths;
 use crate::review_filter::ReviewFilterOptions;
 use crate::{FixtureSpec, OutputCategory, OutputManager};
 
-/// Which text the assembler consumes for a hit.
+/// Which text the annotator consumes for a hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentMode {
     /// Use the benchmark chunk text (`extract_unit_from_content` path).
@@ -79,11 +78,11 @@ impl RecallMode {
 
 /// Benchmark snapshot consumed by the review. Fixed: only `full_pipeline`
 /// carries NL-converted chunk text with entity structure; the other
-/// baselines hold raw source slices where assembly is meaningless.
+/// baselines hold raw source slices where annotation is meaningless.
 const BASELINE: &str = "full_pipeline";
 
-/// One assembly-review export job.
-pub struct AssemblyReviewConfig {
+/// One annotation-review export job.
+pub struct AnnotationReviewConfig {
     /// Benchmark project name, also the rkyv directory and output fixture
     /// name (e.g. `"once_cell"`, `"flask"`).
     pub project: &'static str,
@@ -100,7 +99,7 @@ pub struct AssemblyReviewConfig {
     /// with the call-edge sidecar.
     pub expansion: bool,
     /// Path policy applied to expansion neighbors before they reach the
-    /// assembler's expansion budget cap. Mirrors the main query path's file
+    /// annotator's expansion budget cap. Mirrors the main query path's file
     /// filters; default (`ReviewFilterOptions::default()`) keeps the review
     /// scope that includes `tests/` hits.
     pub filter: ReviewFilterOptions,
@@ -301,18 +300,18 @@ fn rank_embedding(bench: &BenchmarkData) -> Vec<Vec<ScoredHit>> {
         .collect()
 }
 
-/// Assembler content plus the line window and display path for one hit.
+/// Annotator content plus the line window and display path for one hit.
 struct HitContent {
     content: String,
     start_line: u32,
     end_line: u32,
-    /// Path handed to the assembler. Absolute in source mode so the
+    /// Path handed to the annotator. Absolute in source mode so the
     /// file-coverage replacement can read the file; the benchmark-relative
     /// path is always used for display.
-    assembler_path: String,
+    annotation_path: String,
 }
 
-/// Resolve the text the assembler consumes for a hit.
+/// Resolve the text the annotator consumes for a hit.
 fn resolve_hit_content(
     chunk: &ChunkData,
     chunk_text: &str,
@@ -329,7 +328,7 @@ fn resolve_hit_content(
                 content: chunk_text.to_string(),
                 start_line: 1,
                 end_line: line_count,
-                assembler_path: chunk.file_path.clone(),
+                annotation_path: chunk.file_path.clone(),
             })
         }
         ContentMode::Source => {
@@ -352,20 +351,20 @@ fn resolve_hit_content(
                 content,
                 start_line: start,
                 end_line: end,
-                assembler_path: abs.to_string_lossy().replace('\\', "/"),
+                annotation_path: abs.to_string_lossy().replace('\\', "/"),
             })
         }
     }
 }
 
-/// Build the assembler input for one hit.
-fn build_assembler_input(chunk: &ChunkData, hit: &HitContent, score: f64) -> SearchResultInput {
+/// Build the annotator input for one hit.
+fn build_annotation_input(chunk: &ChunkData, hit: &HitContent, score: f64) -> SearchResultInput {
     SearchResultInput {
         id: chunk.chunk_id.clone(),
         entity_id: chunk.entity_ids.first().map(|&id| EntityId(id as u64)),
         name: chunk.entity_name.clone(),
         kind: String::new(),
-        file_path: hit.assembler_path.clone(),
+        file_path: hit.annotation_path.clone(),
         start_line: hit.start_line,
         end_line: hit.end_line,
         content: hit.content.clone(),
@@ -378,14 +377,14 @@ fn build_assembler_input(chunk: &ChunkData, hit: &HitContent, score: f64) -> Sea
 /// The neighbour is rendered from its own embedding chunk: NL text with
 /// 1-based remapped lines in chunk mode, absolute source lines in source
 /// mode. Neighbours without a chunk, excluded by the job's path filter, or
-/// already present in the query's top-K hits are skipped (the assembler
+/// already present in the query's top-K hits are skipped (the annotator
 /// dedups and caps the rest). The path filter runs here so excluded
 /// neighbours never occupy an expansion budget slot.
 ///
 /// The unit carries the primary hit score (ties keep caller order under the
-/// assembler's stable score sort), the benchmark edge's relation type parsed
+/// annotator's stable score sort), the benchmark edge's relation type parsed
 /// to a call-domain default, and explicit non-stdlib / non-external marks so
-/// the assembler's noise filters treat benchmark neighbours as workspace
+/// the annotator's noise filters treat benchmark neighbours as workspace
 /// calls.
 #[allow(clippy::too_many_arguments)]
 fn neighbor_unit(
@@ -460,7 +459,7 @@ fn neighbor_unit(
 /// units for one hit chunk.
 ///
 /// The path filter is applied per neighbour before the units are returned,
-/// i.e. before `SPSRGraphAssembler` applies its expansion budget cap.
+/// i.e. before `RelationAnnotator` applies its expansion budget cap.
 /// Neighbours inherit the primary hit score.
 #[allow(clippy::too_many_arguments)]
 fn resolve_expansion(
@@ -524,9 +523,9 @@ fn resolve_expansion(
     (forward, backward)
 }
 
-/// Rendered outcome for one hit in the `assembled/` tree.
-enum AssembledOutcome {
-    Assembled(Box<AssembledResult>),
+/// Rendered outcome for one hit in the `annotated/` tree.
+enum AnnotatedOutcome {
+    Annotated(Box<AnnotatedResult>),
     Fallback { note: String, raw: String },
 }
 
@@ -596,8 +595,8 @@ fn render_query_header(
     )
 }
 
-/// Run the review: offline recall, per-query assembly, markdown export.
-pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result<()> {
+/// Run the review: offline recall, per-query annotation, markdown export.
+pub async fn run_annotation_review(config: AnnotationReviewConfig) -> anyhow::Result<()> {
     let paths = BenchmarkPaths::new(config.project);
     let data_path = paths.data_dir(BASELINE);
     if !data_path.exists() {
@@ -614,18 +613,18 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
         data_path.display()
     );
 
-    // Assembly must be enabled: the default config takes the verbatim
-    // shortcut, which would make every assembled file identical to raw.
+    // Annotation must be enabled: the default config takes the verbatim
+    // shortcut, which would make every annotated file identical to raw.
     // The workspace root enables existence checks against the fixture tree
     // so vanished files render as references instead of ghost source.
     let fixture_root = fixture_source_path(config.spec.clone());
-    let mut spsr_config = SPSRGraphConfig::new()
+    let mut annotation_config = RelationAnnotationConfig::new()
         .enable(true)
         .with_workspace_root(fixture_root.clone());
     if config.expansion {
-        spsr_config = spsr_config.with_expansion(true);
+        annotation_config = annotation_config.with_expansion(true);
     }
-    let assembler = SPSRGraphAssembler::new(spsr_config);
+    let annotator = RelationAnnotator::new(annotation_config);
     let graph = CallGraph::build(&bench);
     if config.expansion && bench.call_edges.is_empty() {
         println!(
@@ -641,7 +640,7 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
     let base = OutputManager::builder()
         .category(OutputCategory::Scenarios)
         .language(config.language)
-        .scenario(format!("assembly/{}", config.project))
+        .scenario(format!("annotation/{}", config.project))
         .build();
     let base_dir = base.ensure_output_dir()?;
 
@@ -658,14 +657,14 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
             .map(|hit| bench.embedding.chunks[hit.chunk_idx].chunk_id.clone())
             .collect();
 
-        let mut assembled_md = render_query_header(
+        let mut annotated_md = render_query_header(
             &query.id,
             &query.text,
             &query.query_type.to_string(),
             &mode_label,
             config.content_mode.label(),
         );
-        assembled_md.push_str(
+        annotated_md.push_str(
             "> Scope: primary recall includes `tests/` hits (soft score demotion only, \
              `export_py` exclude_tests does not apply); expansion neighbors are \
              hard-filtered by the job's path filter (default: none).\n\n",
@@ -675,15 +674,15 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
             let chunk = &bench.embedding.chunks[hit.chunk_idx];
             let chunk_text = bench.embedding.texts.get(hit.chunk_idx).map_or("", |t| t);
 
-            assembled_md.push_str(&render_hit_header(rank, chunk, hit.score));
-            assembled_md.push_str("#### Content (raw)\n\n");
-            assembled_md.push_str(chunk_text);
-            assembled_md.push_str("\n\n#### Content (assembled)\n\n");
+            annotated_md.push_str(&render_hit_header(rank, chunk, hit.score));
+            annotated_md.push_str("#### Content (raw)\n\n");
+            annotated_md.push_str(chunk_text);
+            annotated_md.push_str("\n\n#### Content (annotated)\n\n");
 
             let outcome =
                 match resolve_hit_content(chunk, chunk_text, config.content_mode, &fixture_root) {
                     Ok(resolved) => {
-                        let input = build_assembler_input(chunk, &resolved, hit.score);
+                        let input = build_annotation_input(chunk, &resolved, hit.score);
                         let (forward, backward) = if config.expansion {
                             resolve_expansion(
                                 &bench,
@@ -699,48 +698,48 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
                         } else {
                             (Vec::new(), Vec::new())
                         };
-                        match assembler.assemble_single(input, forward, backward).await {
-                            Ok(result) => AssembledOutcome::Assembled(Box::new(result)),
-                            Err(e) => AssembledOutcome::Fallback {
-                                note: format!("assembly failed ({e}); content identical to raw."),
+                        match annotator.annotate_single(input, forward, backward).await {
+                            Ok(result) => AnnotatedOutcome::Annotated(Box::new(result)),
+                            Err(e) => AnnotatedOutcome::Fallback {
+                                note: format!("annotation failed ({e}); content identical to raw."),
                                 raw: chunk_text.to_string(),
                             },
                         }
                     }
-                    Err(note) => AssembledOutcome::Fallback {
+                    Err(note) => AnnotatedOutcome::Fallback {
                         note: format!("{note}; content identical to raw."),
                         raw: chunk_text.to_string(),
                     },
                 };
             match outcome {
-                AssembledOutcome::Assembled(result) => {
+                AnnotatedOutcome::Annotated(result) => {
                     let meta = &result.metadata;
-                    assembled_md.push_str(&format!(
-                        "- assembly: expanded={}, expanded_nodes={} (fwd={}, bwd={}), files={}, original_length={}, assembled_length={}, truncated={}\n",
+                    annotated_md.push_str(&format!(
+                        "- annotation: expanded={}, expanded_nodes={} (fwd={}, bwd={}), files={}, original_length={}, annotated_length={}, truncated={}\n",
                         meta.expanded,
                         meta.expanded_nodes,
                         meta.forward_nodes,
                         meta.backward_nodes,
                         meta.file_count,
                         meta.original_length,
-                        meta.assembled_length,
+                        meta.annotated_length,
                         meta.truncated,
                     ));
                     if !meta.expanded {
-                        assembled_md.push_str("> not expanded — content identical to raw.\n");
+                        annotated_md.push_str("> not expanded — content identical to raw.\n");
                     }
-                    assembled_md.push('\n');
-                    assembled_md.push_str(&result.assembled_content);
-                    assembled_md.push_str("\n\n");
+                    annotated_md.push('\n');
+                    annotated_md.push_str(&result.annotated_content);
+                    annotated_md.push_str("\n\n");
                 }
-                AssembledOutcome::Fallback { note, raw } => {
-                    assembled_md.push_str(&format!("> {note}\n\n{raw}\n\n"));
+                AnnotatedOutcome::Fallback { note, raw } => {
+                    annotated_md.push_str(&format!("> {note}\n\n{raw}\n\n"));
                 }
             }
         }
 
         let file_name = format!("{}.md", sanitize_query_id(&query.id));
-        std::fs::write(base_dir.join(&file_name), &assembled_md)?;
+        std::fs::write(base_dir.join(&file_name), &annotated_md)?;
 
         let top1 = top.first().map(|hit| {
             let chunk = &bench.embedding.chunks[hit.chunk_idx];
@@ -753,11 +752,11 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
     }
 
     let mut index = format!(
-        "# Assembly review: {} ({}, {}, content={}, expansion={})\n\n\
+        "# Annotation review: {} ({}, {}, content={}, expansion={})\n\n\
          > Scope: primary recall includes `tests/` hits; the `exclude_tests` filter in \
          `export_py` applies only to written summary/chunk/structured reports, not to \
-         assembly review recall. Expansion neighbors are hard-filtered by the job's \
-         path filter before the assembler budget cap (default: none).\n\n\
+         annotation review recall. Expansion neighbors are hard-filtered by the job's \
+         path filter before the annotator budget cap (default: none).\n\n\
          | query_id | type | query | top-1 hit |\n|---|---|---|---|\n",
         config.project,
         BASELINE,
@@ -777,7 +776,7 @@ pub async fn run_assembly_review(config: AssemblyReviewConfig) -> anyhow::Result
     std::fs::write(base_dir.join("index.md"), &index)?;
 
     println!(
-        "Assembly review written for {} queries -> {}",
+        "Annotation review written for {} queries -> {}",
         bench.queries.len(),
         base_dir.display()
     );
@@ -873,7 +872,7 @@ mod tests {
         let forward = forward_neighbors(&ReviewFilterOptions::default());
         assert_eq!(forward.len(), 1);
         assert_eq!(forward[0].name, "c1");
-        // Review neighbours satisfy the assembler's noise-filter semantics.
+        // Review neighbours satisfy the annotator's noise-filter semantics.
         assert!((forward[0].score - 0.9).abs() < f32::EPSILON);
         assert!(forward[0].is_call_domain());
         assert!(!forward[0].is_stdlib);

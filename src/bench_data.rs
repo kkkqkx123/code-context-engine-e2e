@@ -437,13 +437,13 @@ pub struct BenchmarkData {
     /// (single source of truth, zero tokenizer drift).
     pub bm25_documents: Vec<Bm25DocRecord>,
     /// In-project direct call edges (full_pipeline only), used by the
-    /// offline assembly-review example to drive relation expansion. Empty
+    /// offline annotation-review example to drive relation expansion. Empty
     /// for baselines that do not build a relation index.
     #[serde(default)]
     pub call_edges: Vec<CallEdgeData>,
 }
 
-/// One resolved in-project call edge for offline assembly expansion.
+/// One resolved in-project call edge for offline annotation expansion.
 ///
 /// Keyed by the project-scoped `EntityId`s that also appear in
 /// `ChunkData::entity_ids`, so the review harness can map a recalled chunk

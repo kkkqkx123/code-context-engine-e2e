@@ -1,22 +1,22 @@
-//! Assembly review export for the mediatr fixture.
+//! Annotation review export for the mediatr fixture.
 //!
 //! Requires `data/benchmark/full_pipeline/mediatr/bge-m3/bench_data.rkyv`
 //! (run `gen_bench_mediatr` first if missing).
 //!
 //! Output:
-//!   outputs/scenarios/csharp/assembly/mediatr/
+//!   outputs/scenarios/csharp/annotation/mediatr/
 //!   ├── index.md
-//!   └── {query_id}.md          — raw recall hits + assembled content per query
+//!   └── {query_id}.md          — raw recall hits + annotated content per query
 
 use cce_e2e_tests::FixtureSpec;
-use cce_e2e_tests::assembly_review::{
-    AssemblyReviewConfig, ContentMode, RecallMode, run_assembly_review,
+use cce_e2e_tests::annotation_review::{
+    AnnotationReviewConfig, ContentMode, RecallMode, run_annotation_review,
 };
 use cce_e2e_tests::review_filter::ReviewFilterOptions;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    run_assembly_review(AssemblyReviewConfig {
+    run_annotation_review(AnnotationReviewConfig {
         project: "mediatr",
         language: "csharp",
         spec: FixtureSpec::csharp_mediatr(),
