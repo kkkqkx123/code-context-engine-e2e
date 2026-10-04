@@ -4,7 +4,7 @@
 //! sidecar round-trip, and offline control-vs-reranked evaluation on a tiny
 //! in-memory dataset. No network, no model calls, no fixture files.
 
-use cce_config::modules::search::ScoreFusionStrategy;
+use cce_config::modules::search::RerankFusionStrategy;
 use cce_e2e_tests::bench_data::{
     BenchmarkData, Bm25DocRecord, ChunkData, ChunkSourceRange, QueryData, QueryType,
     RelevanceJudgment, RelevanceLevel, RetrieverDataset, SourceRange,
@@ -157,7 +157,7 @@ fn test_runtime() -> RerankRuntime {
         model_name: "test-model".to_string(),
         mode: "test".to_string(),
         depth: 50,
-        fusion: ScoreFusionStrategy::LinearWeighted { alpha: 0.7 },
+        fusion: RerankFusionStrategy::LinearWeighted { alpha: 0.7 },
         timeout_ms: 1000,
         text_source: RerankTextSource::EmbText,
     }
@@ -167,7 +167,7 @@ fn test_scoring(normalize_initial: bool) -> RerankScoring {
     RerankScoring {
         model_key: "test-reranker".to_string(),
         depth: 50,
-        fusion: ScoreFusionStrategy::LinearWeighted { alpha: 0.7 },
+        fusion: RerankFusionStrategy::LinearWeighted { alpha: 0.7 },
         normalize_initial,
         text_source: RerankTextSource::EmbText,
     }

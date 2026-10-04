@@ -34,7 +34,7 @@ use crate::bench_data::{BenchmarkData, ChunkData, QueryType, RelevanceJudgment, 
 use crate::judgments::evaluate::{BASELINES, BenchmarkPaths, DEFAULT_TOP_K, TOP_K_VALUES};
 use crate::range_evaluator::RankedScan;
 use crate::retrieval_method::{RecallRankings, rank_recall};
-use cce_config::modules::search::ScoreFusionStrategy;
+use cce_config::modules::search::RerankFusionStrategy;
 
 /// Registry key of the rerank model under `[llm.rerank_models]`.
 pub const RERANK_MODEL_KEY: &str = "bge-reranker";
@@ -274,7 +274,7 @@ pub struct RerankRuntime {
     /// Candidate depth (fixed by the matrix).
     pub depth: usize,
     /// Final-score fusion applied offline at scoring time.
-    pub fusion: ScoreFusionStrategy,
+    pub fusion: RerankFusionStrategy,
     /// Per-call timeout in milliseconds.
     pub timeout_ms: u64,
     /// Candidate text fed to the rerank model.
@@ -285,12 +285,12 @@ impl RerankRuntime {
     /// Human-readable fusion label for manifests.
     pub fn fusion_label(&self) -> String {
         match self.fusion {
-            ScoreFusionStrategy::RerankOnly => "rerank_only".to_string(),
-            ScoreFusionStrategy::LinearWeighted { alpha } => {
+            RerankFusionStrategy::RerankOnly => "rerank_only".to_string(),
+            RerankFusionStrategy::LinearWeighted { alpha } => {
                 format!("linear_weighted(alpha={alpha})")
             }
-            ScoreFusionStrategy::Multiplicative => "multiplicative".to_string(),
-            ScoreFusionStrategy::ReciprocalRankFusion { k } => {
+            RerankFusionStrategy::Multiplicative => "multiplicative".to_string(),
+            RerankFusionStrategy::ReciprocalRankFusion { k } => {
                 format!("reciprocal_rank_fusion(k={k})")
             }
         }
@@ -305,7 +305,7 @@ pub struct RerankScoring {
     /// Candidate depth embedded in the sidecar filenames/headers.
     pub depth: usize,
     /// Final-score fusion applied offline (re-runnable without new calls).
-    pub fusion: ScoreFusionStrategy,
+    pub fusion: RerankFusionStrategy,
     /// Min-max normalize initial scores per query to [0, 1] before blending,
     /// so `alpha` weighs comparable scales across recall methods.
     pub normalize_initial: bool,
@@ -317,12 +317,12 @@ impl RerankScoring {
     /// Human-readable fusion label for manifests and console output.
     pub fn fusion_label(&self) -> String {
         let base = match self.fusion {
-            ScoreFusionStrategy::RerankOnly => "rerank_only".to_string(),
-            ScoreFusionStrategy::LinearWeighted { alpha } => {
+            RerankFusionStrategy::RerankOnly => "rerank_only".to_string(),
+            RerankFusionStrategy::LinearWeighted { alpha } => {
                 format!("linear_weighted(alpha={alpha})")
             }
-            ScoreFusionStrategy::Multiplicative => "multiplicative".to_string(),
-            ScoreFusionStrategy::ReciprocalRankFusion { k } => {
+            RerankFusionStrategy::Multiplicative => "multiplicative".to_string(),
+            RerankFusionStrategy::ReciprocalRankFusion { k } => {
                 format!("reciprocal_rank_fusion(k={k})")
             }
         };
@@ -336,12 +336,12 @@ impl RerankScoring {
     /// Filesystem-safe output directory variant for this scoring.
     pub fn variant_dir(&self) -> String {
         let base = match self.fusion {
-            ScoreFusionStrategy::RerankOnly => "rerank_only".to_string(),
-            ScoreFusionStrategy::LinearWeighted { alpha } => {
+            RerankFusionStrategy::RerankOnly => "rerank_only".to_string(),
+            RerankFusionStrategy::LinearWeighted { alpha } => {
                 format!("linear-weighted-alpha{alpha}")
             }
-            ScoreFusionStrategy::Multiplicative => "multiplicative".to_string(),
-            ScoreFusionStrategy::ReciprocalRankFusion { k } => {
+            RerankFusionStrategy::Multiplicative => "multiplicative".to_string(),
+            RerankFusionStrategy::ReciprocalRankFusion { k } => {
                 format!("reciprocal-rank-fusion-k{k}")
             }
         };
@@ -1147,7 +1147,7 @@ mod tests {
         let scoring = RerankScoring {
             model_key: RERANK_MODEL_KEY.to_string(),
             depth: RERANK_CANDIDATE_DEPTH,
-            fusion: ScoreFusionStrategy::RerankOnly,
+            fusion: RerankFusionStrategy::RerankOnly,
             normalize_initial: false,
             text_source: RerankTextSource::EmbText,
         };
@@ -1205,7 +1205,7 @@ mod tests {
         let scoring = RerankScoring {
             model_key: RERANK_MODEL_KEY.to_string(),
             depth: RERANK_CANDIDATE_DEPTH,
-            fusion: ScoreFusionStrategy::LinearWeighted { alpha: 0.7 },
+            fusion: RerankFusionStrategy::LinearWeighted { alpha: 0.7 },
             normalize_initial: true,
             text_source: RerankTextSource::EmbText,
         };

@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 
 use cce_config::ConfigLoader;
-use cce_config::modules::search::ScoreFusionStrategy;
+use cce_config::modules::search::RerankFusionStrategy;
 use cce_e2e_tests::bench_data::EvaluationScope;
 use cce_e2e_tests::judgments::once_cell::once_cell_relevance_judgments;
 use cce_e2e_tests::rerank_benchmark::{
@@ -64,9 +64,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(String::as_str)
     {
         None | Some("config") => config.rerank.score_fusion_strategy,
-        Some("rerank_only") => ScoreFusionStrategy::RerankOnly,
-        Some("multiplicative") => ScoreFusionStrategy::Multiplicative,
-        Some("linear_weighted") => ScoreFusionStrategy::LinearWeighted { alpha: 0.7 },
+        Some("rerank_only") => RerankFusionStrategy::RerankOnly,
+        Some("multiplicative") => RerankFusionStrategy::Multiplicative,
+        Some("linear_weighted") => RerankFusionStrategy::LinearWeighted { alpha: 0.7 },
         Some(other) => {
             return Err(format!(
                 "unknown fusion '{other}': expected config|rerank_only|multiplicative|linear_weighted"
