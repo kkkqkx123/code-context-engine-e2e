@@ -18,8 +18,8 @@ use tokio::sync::Mutex;
 use cce_config::modules::{DistanceMetric, QdrantConfig};
 use cce_config::{AstToNlConfig, NestProcessorConfig};
 use cce_e2e_tests::mock_qdrant::CapturingMockQdrant;
-use cce_e2e_tests::stub_embedder::HashEmbedder;
-use cce_llm::Embedder;
+use cce_llm_client::OpenAICompatibleProvider;
+use cce_llm_client::services::embedding::mock_server::MockEmbeddingServer;
 use cce_orchestrator::hot_update::processors::ProcessorContext;
 use cce_orchestrator::hot_update::{BatchChangeResult, FileChangeType, ParseResultWithChanges};
 use cce_orchestrator::index::StorageCoordinator;
@@ -106,7 +106,10 @@ impl DriftScaffold {
     /// Storage coordinator pointed at the shared durable state. The epoch is
     /// only a fallback: `prepare_operation` advances it to the candidate
     /// epoch before any write happens.
-    pub fn storage_with_embedder(&self, embedder: Arc<dyn Embedder>) -> Arc<StorageCoordinator> {
+    pub fn storage_with_embedder(
+        &self,
+        embedder: Arc<OpenAICompatibleProvider>,
+    ) -> Arc<StorageCoordinator> {
         self.storage_inner(Some(embedder))
     }
 
@@ -115,7 +118,10 @@ impl DriftScaffold {
         self.storage_inner(None)
     }
 
-    fn storage_inner(&self, embedder: Option<Arc<dyn Embedder>>) -> Arc<StorageCoordinator> {
+    fn storage_inner(
+        &self,
+        embedder: Option<Arc<OpenAICompatibleProvider>>,
+    ) -> Arc<StorageCoordinator> {
         let active_epoch = self.active_epoch();
         let qdrant_config = QdrantConfig {
             url: self.qdrant.url().to_string(),
@@ -421,9 +427,14 @@ impl DriftScaffold {
         qdrant_types::to_qdrant_point_id(logical_point_id).to_string()
     }
 
-    /// Deterministic embedder bound to `model_name`.
-    pub fn embedder(model_name: &str) -> Arc<HashEmbedder> {
-        Arc::new(HashEmbedder::new(model_name, EMBEDDER_DIMENSION))
+    /// Deterministic embedder bound to `model_name`, backed by a mock server.
+    pub fn embedder(model_name: &str) -> Arc<OpenAICompatibleProvider> {
+        let server = MockEmbeddingServer::start();
+        let config = server.app_config(model_name, EMBEDDER_DIMENSION);
+        Arc::new(
+            OpenAICompatibleProvider::from_model(&config, model_name)
+                .expect("mock embedder must build"),
+        )
     }
 }
 

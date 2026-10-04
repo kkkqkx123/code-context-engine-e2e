@@ -1,4 +1,4 @@
-//! Deterministic embedder stub for drift-sweep tests.
+//! Deterministic vector generator for drift-sweep tests.
 //!
 //! Vectors are derived from an FNV-1a hash of `(model_name, text)`, so the
 //! same input always yields byte-identical output within and across runs,
@@ -9,9 +9,6 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-use async_trait::async_trait;
-use cce_llm::{Embedder, EmbeddingResult, LlmError};
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -25,8 +22,8 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// Deterministic embedder: vectors are pure functions of model name + input
-/// text. Records every embedded text and every batch call for assertions.
+/// Deterministic vector generator: vectors are pure functions of model name +
+/// input text. Records every embedded text and every batch call for assertions.
 pub struct HashEmbedder {
     model_name: String,
     dimension: usize,
@@ -57,7 +54,8 @@ impl HashEmbedder {
             .clone()
     }
 
-    fn vector_for(&self, text: &str) -> Vec<f32> {
+    /// Deterministic vector for `text` under the current model name.
+    pub fn vector_for(&self, text: &str) -> Vec<f32> {
         (0..self.dimension)
             .map(|index| {
                 let hash = fnv1a(format!("{}:{text}:{index}", self.model_name).as_bytes());
@@ -65,44 +63,6 @@ impl HashEmbedder {
                 scaled / 10_000.0
             })
             .collect()
-    }
-}
-
-#[async_trait]
-impl Embedder for HashEmbedder {
-    async fn embed(&self, texts: &[&str]) -> Result<EmbeddingResult, LlmError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        self.seen_texts
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .extend(texts.iter().map(|text| (*text).to_string()));
-        Ok(EmbeddingResult {
-            embeddings: texts.iter().map(|text| self.vector_for(text)).collect(),
-            prompt_tokens: 0,
-            total_tokens: 0,
-        })
-    }
-
-    async fn embed_one(&self, text: &str) -> Result<Vec<f32>, LlmError> {
-        self.embed(&[text])
-            .await
-            .map(|result| result.embeddings.first().cloned().unwrap_or_default())
-    }
-
-    async fn embed_vectors(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, LlmError> {
-        self.embed(texts).await.map(|result| result.embeddings)
-    }
-
-    fn dimension(&self) -> usize {
-        self.dimension
-    }
-
-    fn model_name(&self) -> &str {
-        &self.model_name
-    }
-
-    fn is_healthy(&self) -> bool {
-        true
     }
 }
 
