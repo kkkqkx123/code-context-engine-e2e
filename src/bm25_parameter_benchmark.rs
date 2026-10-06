@@ -15,7 +15,7 @@ use crate::FixtureSpec;
 use crate::bench_data::{ChunkData, RelevanceJudgment};
 use crate::bench_gen::{chunk_data_from_result, scan_fixture};
 use crate::infra::{
-    Bm25Config, InMemoryTermIndex, QueryForms, build_query_forms, build_term_index, score_all,
+    Bm25Config, ExpandedQuery, InMemoryTermIndex, build_term_index, expand_query, score_all,
 };
 use crate::range_evaluator::{evaluate_ranked_chunks_range_based_cutoffs, is_relevant_to_query};
 use cce_storage_bm25::TermOperator;
@@ -157,7 +157,7 @@ struct Manifest {
 struct PreparedQuery<'a> {
     judgment: &'a RelevanceJudgment,
     query_text: String,
-    query_forms: QueryForms,
+    query_forms: ExpandedQuery,
 }
 
 struct EvaluationContext<'a> {
@@ -223,8 +223,6 @@ async fn run_bm25_parameter_sweep(
         );
     }
 
-    let context = build_evaluation_context(&chunks, &judgments);
-
     let index_start = Instant::now();
     let term_index = build_term_index(&documents);
     let index_build = index_start.elapsed();
@@ -233,6 +231,8 @@ async fn run_bm25_parameter_sweep(
         term_index.postings.len(),
         term_index.n_docs
     );
+
+    let context = build_evaluation_context(&chunks, &judgments, &term_index);
 
     let mut all_observations: Vec<QueryObservation> = Vec::new();
 
@@ -292,7 +292,7 @@ async fn run_bm25_parameter_sweep(
         fixture: fixture_name.to_string(),
         judgment_count: judgments.len(),
         document_count: documents.len(),
-        tokenizer: "MixedTokenizer (production, dual-form queries)".to_string(),
+        tokenizer: "MixedTokenizer (production query expansion)".to_string(),
         stage_one_parameter_count: stage_one_sets.len(),
         stage_two_parameter_count: stage_two_sets.len(),
         unique_parameter_count: aggregate.len(),
@@ -376,11 +376,12 @@ fn stage_two_parameter_sets(
 fn build_evaluation_context<'a>(
     chunks: &'a [ChunkData],
     judgments: &'a [RelevanceJudgment],
+    term_index: &InMemoryTermIndex,
 ) -> EvaluationContext<'a> {
     let queries = judgments
         .iter()
         .map(|judgment| {
-            let query_forms = build_query_forms(&judgment.query_text);
+            let query_forms = expand_query(&judgment.query_text, term_index);
             PreparedQuery {
                 judgment,
                 query_text: judgment.query_text.clone(),
@@ -399,13 +400,13 @@ fn evaluate_parameter_set(
     context: &EvaluationContext<'_>,
 ) -> Result<Vec<QueryObservation>> {
     let config = key.to_bm25_config();
-    let query_forms_list: Vec<QueryForms> = context
+    let query_forms_list: Vec<ExpandedQuery> = context
         .queries
         .iter()
         .map(|pq| pq.query_forms.clone())
         .collect();
 
-    // Production query semantics: dual forms, split-token down-weighting,
+    // Production query semantics: whole/split token expansion, field weights,
     // Or operator (production default).
     let all_ranked = score_all(
         term_index,

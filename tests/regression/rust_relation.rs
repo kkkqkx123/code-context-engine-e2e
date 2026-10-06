@@ -197,7 +197,7 @@ async fn test_rust_relation_presentation() {
         .query_backward_by_entity(load_user_id, 5)
         .expect("Backward traversal from load_user should succeed");
     let path_main_to_load_user = call_query
-        .find_call_chain(main_id, load_user_id, 6)
+        .find_call_chain(main_id, load_user_id, 6, 10_000)
         .expect("Path query from main to load_user should not error");
     assert!(
         path_main_to_load_user.is_some(),

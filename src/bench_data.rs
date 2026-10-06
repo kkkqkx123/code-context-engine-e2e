@@ -512,13 +512,14 @@ pub fn production_bm25_config() -> crate::infra::Bm25Config {
 
 /// Score every query against every BM25 document with production semantics.
 ///
-/// Builds the in-memory three-field term index from the documents, then
-/// delegates to `infra::score_all` (dual-form raw+clean query, split-token
-/// down-weighting, field weights, `Or`/`And` operator). Returns
-/// `scores[query_idx][doc_idx]`, index-aligned with the input documents.
+/// Builds the in-memory three-field term index from the documents, expands each
+/// query with production BM25 query semantics, then scores it with
+/// `infra::score_all` (whole/split token expansion, field weights,
+/// `Or`/`And` operator). Returns `scores[query_idx][doc_idx]`, index-aligned
+/// with the input documents.
 pub fn compute_bm25_scores(
     documents: &[Bm25DocRecord],
-    queries: &[crate::infra::QueryForms],
+    query_texts: &[String],
     operator: cce_storage_bm25::TermOperator,
 ) -> Vec<Vec<f64>> {
     let bm25_docs: Vec<cce_storage_bm25::Bm25Document> = documents
@@ -532,8 +533,12 @@ pub fn compute_bm25_scores(
         })
         .collect();
     let term_index = crate::infra::build_term_index(&bm25_docs);
+    let queries: Vec<crate::infra::ExpandedQuery> = query_texts
+        .iter()
+        .map(|text| crate::infra::expand_query(text, &term_index))
+        .collect();
     let config = production_bm25_config();
-    let ranked = crate::infra::score_all(&term_index, queries, &config, operator, documents.len());
+    let ranked = crate::infra::score_all(&term_index, &queries, &config, operator, documents.len());
     ranked
         .into_iter()
         .map(|ranked| {
@@ -614,7 +619,7 @@ mod tests {
     #[test]
     fn bm25_scores_use_production_tokenizer() {
         let q = "TypesBuilder";
-        let queries = vec![crate::infra::build_query_forms(q)];
+        let queries = vec![q.to_string()];
         let documents = vec![
             Bm25DocRecord {
                 title: "TypesBuilder".into(),
@@ -636,16 +641,26 @@ mod tests {
     }
 
     #[test]
-    fn raw_and_cleaned_query_forms_remain_distinct() {
-        let raw = crate::infra::build_query_forms("RegexMatcher::find_at");
-        let cleaned = crate::infra::build_query_forms("regex matcher find_at");
+    fn qualified_identifier_and_plain_words_produce_different_expansions() {
+        let docs = vec![
+            cce_storage_bm25::Bm25Document::new("d:0")
+                .with_field("title", "RegexMatcher::find_at")
+                .with_field("keywords", "regex matcher find at")
+                .with_field("content", "RegexMatcher::find_at"),
+        ];
+        let index = crate::infra::build_term_index(&docs);
+        let raw = crate::infra::expand_query("RegexMatcher::find_at", &index);
+        let plain = crate::infra::expand_query("regex matcher find_at", &index);
 
-        assert_ne!(raw.raw, cleaned.raw);
-        // The cleaned form drops the original qualified identifier token.
-        assert!(raw.raw.iter().any(|t| t.text == "regexmatcher::find_at"));
+        assert_ne!(raw.terms, plain.terms);
         assert!(
-            !cleaned
-                .raw
+            raw.terms
+                .iter()
+                .any(|t| t.text == "regexmatcher::find_at" && t.scale == 1.0)
+        );
+        assert!(
+            !plain
+                .terms
                 .iter()
                 .any(|t| t.text == "regexmatcher::find_at")
         );

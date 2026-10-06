@@ -2,12 +2,12 @@
 //! (`cce_e2e_tests::infra::score_all`) must reproduce the production tantivy
 //! BM25 retrieval (`Bm25Retrieval::search`) ranking and scores exactly.
 //!
-//! This is the guard against the 45b6-style drift: benchmark BM25 numbers are
-//! only meaningful when the offline scorer mirrors the production query
-//! builder (dual raw+clean forms, split-token down-weighting, field boosts),
-//! the production tokenizer (MixedTokenizer), and tantivy's BM25 statistics
-//! semantics (global doc count for idf, average fieldnorm over all docs,
-//! fieldnorm quantization).
+//! This is the BM25 drift guard: benchmark numbers are only meaningful when
+//! the offline scorer mirrors the production query builder (whole/split token
+//! expansion, split-token down-weighting, field boosts), the production
+//! tokenizer (MixedTokenizer), and tantivy's BM25 statistics semantics
+//! (global doc count for idf, average fieldnorm over all docs, fieldnorm
+//! quantization).
 //!
 //! Requirements for exactness (mirrored by the scorer):
 //! - All docs carry all three fields (empty-field norms differ between the
@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 
 use cce_e2e_tests::bench_data::production_bm25_config;
-use cce_e2e_tests::infra::{build_query_forms, build_term_index, score_all};
+use cce_e2e_tests::infra::{build_term_index, expand_query, score_all};
 use cce_storage_bm25::{
     Bm25AlgorithmConfig, Bm25Retrieval, Bm25SearchOptions, IndexManager, IndexManagerConfig,
     TermOperator, batch_add_documents,
@@ -172,7 +172,7 @@ fn offline_scorer_matches_production_tantivy_bm25() {
             .collect();
 
         // Offline ranking.
-        let forms = build_query_forms(query);
+        let forms = expand_query(query, &index);
         let ranked = score_all(&index, &[forms], &config, operator, limit);
         let ranked = &ranked[0];
         let offline: Vec<(String, f64)> = ranked

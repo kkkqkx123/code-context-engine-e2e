@@ -74,14 +74,9 @@ fn main() {
 
         // Compute BM25 scores
         let bm25_all = if !bench.bm25_documents.is_empty() {
-            let query_forms: Vec<cce_e2e_tests::infra::QueryForms> = bench
-                .query_texts
-                .iter()
-                .map(|t| cce_e2e_tests::infra::build_query_forms(t))
-                .collect();
             compute_bm25_scores(
                 &bench.bm25_documents,
-                &query_forms,
+                &bench.query_texts,
                 cce_storage_bm25::TermOperator::Or,
             )
         } else {

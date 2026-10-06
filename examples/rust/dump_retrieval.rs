@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use cce_e2e_tests::bench_data::{compute_bm25_scores, cosine_similarity, load_benchmark_data};
-use cce_e2e_tests::infra::build_query_forms;
 use cce_e2e_tests::judgments::evaluate::BASELINES;
 use cce_storage_bm25::TermOperator;
 
@@ -159,15 +158,8 @@ fn main() {
                 .iter()
                 .map(|c| c.entity_name.clone())
                 .collect();
-            let bm25_scores = compute_bm25_scores(
-                &bench.bm25_documents,
-                &bench
-                    .query_texts
-                    .iter()
-                    .map(|t| build_query_forms(t))
-                    .collect::<Vec<_>>(),
-                TermOperator::Or,
-            );
+            let bm25_scores =
+                compute_bm25_scores(&bench.bm25_documents, &bench.query_texts, TermOperator::Or);
 
             for (q_idx, query) in bench.queries.iter().enumerate() {
                 let ranked = top_k_scores(&bm25_scores[q_idx], top_k);

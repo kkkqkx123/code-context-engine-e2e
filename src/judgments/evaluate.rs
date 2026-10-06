@@ -10,7 +10,6 @@ use crate::bench_data::{
     BenchmarkData, ChunkData, QueryType, RelevanceJudgment, RelevanceLevel, compute_bm25_scores,
     cosine_similarity,
 };
-use crate::infra::{QueryForms, build_query_forms};
 use crate::range_evaluator::{RangeBasedPerQueryScore, RankedScan, is_relevant_to_query};
 use cce_storage_bm25::TermOperator;
 use cce_types::{TestInfo, TestStatus, segments};
@@ -213,18 +212,13 @@ fn collect_embedding_diagnostics(bench: &BenchmarkData) -> TestDiagnostics {
 }
 
 /// Score all BM25 queries against the benchmark corpus with production
-/// semantics: dual-form (raw + cleaned) queries tokenized by the shared
-/// `MixedTokenizer`, three-field weighted scoring, `Or` operator.
+/// semantics: `MixedTokenizer` query expansion, three-field weighted scoring,
+/// `Or` operator.
 pub fn bm25_scores_for_bench(bench: &BenchmarkData) -> Vec<Vec<f64>> {
     if bench.bm25_documents.is_empty() || bench.query_texts.is_empty() {
         return Vec::new();
     }
-    let queries: Vec<QueryForms> = bench
-        .query_texts
-        .iter()
-        .map(|text| build_query_forms(text))
-        .collect();
-    compute_bm25_scores(&bench.bm25_documents, &queries, TermOperator::Or)
+    compute_bm25_scores(&bench.bm25_documents, &bench.query_texts, TermOperator::Or)
 }
 
 fn collect_bm25_diagnostics(bench: &BenchmarkData) -> TestDiagnostics {

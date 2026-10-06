@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use cce_storage_bm25::Bm25Document;
-use cce_text::{Bm25TextCleaner, MixedTokenizer};
+use cce_storage_bm25::{Bm25Document, expand_query_tokens};
+use cce_text::MixedTokenizer;
 
 const FIELD_NAMES: [&str; 3] = ["title", "keywords", "content"];
 
@@ -60,6 +60,13 @@ impl InMemoryTermIndex {
             return 0.0;
         }
         self.field_total_tokens[field.index()] as f64 / self.n_docs as f64
+    }
+
+    pub fn term_doc_freq(&self, term: &str) -> u64 {
+        self.term_field_df
+            .get(term)
+            .map(|df| df.iter().map(|count| u64::from(*count)).sum())
+            .unwrap_or(0)
     }
 }
 
@@ -129,58 +136,38 @@ pub fn tokenize_text(text: &str) -> Vec<String> {
     MixedTokenizer::new().tokenize(text)
 }
 
-/// A single query token with its split/auxiliary flag.
-///
-/// Mirrors `MixedToken`: `is_split` is true when the token is a split form
-/// (position_length == 0 in the production tokenizer), which production
-/// down-weights by 0.5 when building the query.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A single production-expanded query term.
+#[derive(Debug, Clone, PartialEq)]
 pub struct QueryTerm {
     pub text: String,
-    pub is_split: bool,
+    pub scale: f64,
 }
 
-/// The dual query forms produced by production `Bm25Retrieval::parse_query`:
-/// a raw form (original query text) and a cleaned form (`Bm25TextCleaner`).
-/// Both tokenize through the production `MixedTokenizer`.
+/// A query produced by the production BM25 query-expansion pipeline.
 #[derive(Debug, Clone, Default)]
-pub struct QueryForms {
-    pub raw: Vec<QueryTerm>,
-    pub clean: Vec<QueryTerm>,
+pub struct ExpandedQuery {
+    pub terms: Vec<QueryTerm>,
 }
 
-impl QueryForms {
-    /// Returns whether any term exists across both forms.
+impl ExpandedQuery {
     pub fn is_empty(&self) -> bool {
-        self.raw.is_empty() && self.clean.is_empty()
+        self.terms.is_empty()
     }
 }
 
-/// Tokenize a single query form with the production tokenizer, marking split
-/// (auxiliary) tokens so the scorer can apply the production 0.5 down-weight.
-pub fn tokenize_query_form(text: &str) -> Vec<QueryTerm> {
-    MixedTokenizer::new()
-        .tokenize_offsets(text)
+/// Build query terms exactly as production `Bm25Retrieval::parse_query` does:
+/// tokenize the query with the production tokenizer, then expand whole/split
+/// forms using the corpus document-frequency table.
+pub fn expand_query(query_text: &str, index: &InMemoryTermIndex) -> ExpandedQuery {
+    let tokens = MixedTokenizer::new().tokenize_offsets(query_text);
+    let terms = expand_query_tokens(&tokens, |text| index.term_doc_freq(text))
         .into_iter()
-        .map(|t| QueryTerm {
-            text: t.text,
-            is_split: t.position_length == 0,
+        .map(|(token, scale)| QueryTerm {
+            text: token.text,
+            scale: scale as f64,
         })
-        .collect()
-}
-
-/// Build the dual query forms exactly as production `parse_query` does:
-/// the raw form from the original text, the clean form from the
-/// `Bm25TextCleaner` output (only when cleaning actually changed the text).
-pub fn build_query_forms(query_text: &str) -> QueryForms {
-    let raw = tokenize_query_form(query_text);
-    let cleaned = Bm25TextCleaner::new().clean(query_text);
-    let clean = if !cleaned.is_empty() && cleaned != query_text {
-        tokenize_query_form(&cleaned)
-    } else {
-        Vec::new()
-    };
-    QueryForms { raw, clean }
+        .collect();
+    ExpandedQuery { terms }
 }
 
 #[cfg(test)]
@@ -226,44 +213,80 @@ mod tests {
         assert_eq!(index.doc_lengths[0], [2, 2, 7]);
     }
 
+    fn index_with_text(text: &str) -> InMemoryTermIndex {
+        let doc = Bm25Document::new("test:0")
+            .with_field("title", text)
+            .with_field("keywords", "")
+            .with_field("content", "");
+        build_term_index(&[doc])
+    }
+
     #[test]
-    fn test_query_forms_identifier_marks_split_tokens() {
-        let forms = build_query_forms("OnceCell::get_or_init");
-        // Original token, not a split.
+    fn test_query_forms_identifier_expands_whole_and_split_tokens() {
+        let index = index_with_text("OnceCell::get_or_init");
+        let forms = expand_query("OnceCell::get_or_init", &index);
         assert!(
             forms
-                .raw
+                .terms
                 .iter()
-                .any(|t| t.text == "oncecell::get_or_init" && !t.is_split)
+                .any(|t| t.text == "oncecell::get_or_init" && t.scale == 1.0)
         );
-        // Split tokens are marked as auxiliary.
         for split in ["once", "cell", "get", "or", "init"] {
             assert!(
-                forms.raw.iter().any(|t| t.text == split && t.is_split),
+                forms
+                    .terms
+                    .iter()
+                    .any(|t| t.text == split && t.scale == 0.5),
                 "expected split token {split}"
             );
         }
     }
 
     #[test]
-    fn test_query_forms_clean_form_uses_cleaner() {
-        let forms = build_query_forms("get_or_init 'returns' in file x");
-        assert!(!forms.clean.is_empty());
-        assert!(forms.clean.iter().any(|t| t.text == "get_or_init"));
-        assert!(!forms.clean.iter().any(|t| t.text.contains('\'')));
+    fn test_query_forms_whole_term_df_zero_falls_back_to_split_tokens() {
+        let index = index_with_text("once cell get or init");
+        let forms = expand_query("OnceCell::get_or_init", &index);
+        assert!(
+            !forms
+                .terms
+                .iter()
+                .any(|t| t.text == "oncecell::get_or_init")
+        );
+        for split in ["once", "cell", "get", "or", "init"] {
+            assert!(
+                forms
+                    .terms
+                    .iter()
+                    .any(|t| t.text == split && t.scale == 1.0),
+                "expected split token {split}"
+            );
+        }
     }
 
     #[test]
-    fn test_query_forms_no_clean_form_when_unchanged() {
-        let forms = build_query_forms("plain query");
+    fn test_query_forms_drops_stopwords() {
+        let index = index_with_text("read_file function");
+        let forms = expand_query("read_file function", &index);
+        assert!(
+            forms
+                .terms
+                .iter()
+                .any(|t| t.text == "read_file" && t.scale == 1.0)
+        );
+        assert!(!forms.terms.iter().any(|t| t.text == "function"));
+    }
+
+    #[test]
+    fn test_query_forms_plain_query_keeps_whole_tokens() {
+        let index = index_with_text("plain query");
+        let forms = expand_query("plain query", &index);
         assert_eq!(
             forms
-                .raw
+                .terms
                 .iter()
-                .map(|t| t.text.as_str())
+                .map(|t| (t.text.as_str(), t.scale))
                 .collect::<Vec<_>>(),
-            vec!["plain", "query"]
+            vec![("plain", 1.0), ("query", 1.0)]
         );
-        assert!(forms.clean.is_empty());
     }
 }

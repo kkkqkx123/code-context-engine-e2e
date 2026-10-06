@@ -1,6 +1,6 @@
 use cce_storage_bm25::TermOperator;
 
-use crate::infra::term_index::{Field, InMemoryTermIndex, QueryForms};
+use crate::infra::term_index::{ExpandedQuery, Field, InMemoryTermIndex};
 
 /// BM25 scoring parameters.
 #[derive(Debug, Clone)]
@@ -21,15 +21,6 @@ impl Bm25Config {
         }
     }
 }
-
-/// Production raw-form boost multipliers (`Bm25Retrieval::parse_query`):
-/// the raw form boosts title/keywords by 1.5x and halves the content weight,
-/// while the cleaned form uses the standard weights.
-const RAW_TITLE_BOOST: f64 = 1.5;
-const RAW_CONTENT_BOOST: f64 = 0.5;
-const RAW_KEYWORDS_BOOST: f64 = 1.5;
-/// Production down-weight for split (auxiliary) query tokens.
-const SPLIT_TOKEN_WEIGHT: f64 = 0.5;
 
 /// tantivy fieldnorm quantization, mirroring the vendored fork's
 /// `FIELD_NORMS_TABLE` (crates/tantivy/src/fieldnorm/code.rs): the per-doc
@@ -64,38 +55,19 @@ fn tantivy_fieldnorm(raw_len: u32) -> u32 {
     decode(lo)
 }
 
-/// Per-field weights for one query form.
-#[derive(Debug, Clone, Copy)]
-struct FormWeights {
-    title: f64,
-    content: f64,
-    keywords: f64,
-}
-
-impl FormWeights {
-    fn field(&self, field: Field) -> f64 {
-        match field {
-            Field::Title => self.title,
-            Field::Keywords => self.keywords,
-            Field::Content => self.content,
-        }
-    }
-}
-
 /// Score all documents against each query with production retrieval
 /// semantics.
 ///
 /// Mirrors `Bm25Retrieval::parse_query` / `build_query`:
-/// - Each query contributes a raw form (boosts 1.5x/0.5x/1.5x) and, when
-///   cleaning changed the text, a clean form (standard weights).
-/// - Split tokens (position_length == 0) carry a 0.5 down-weight.
+/// - Query terms are already expanded by `expand_query` with the
+///   production whole/split document-frequency logic.
+/// - Each expanded term carries the production scale used by tantivy
+///   `BoostQuery` clauses.
 /// - Per-token field clauses are summed across title/content/keywords.
-/// - `operator` maps to the form-level clause occurrence: `Or` (Should)
-///   requires a doc to match any token; `And` (Must) requires every token.
-/// - Both forms merge with OR; tantivy sums Should-clause scores, so the
-///   final score is `raw_score + clean_score` (not max).
+/// - `operator` maps to the top-level clause occurrence: `Or` (Should)
+///   requires a doc to match any term; `And` (Must) requires every term.
 ///
-/// Documents that match no query form receive a zero score and rank at the
+/// Documents that match no query term receive a zero score and rank at the
 /// tail (production never returns them; the evaluator keeps them so every
 /// chunk participates in the corpus ranking).
 ///
@@ -103,7 +75,7 @@ impl FormWeights {
 /// (descending, truncated to top_k).
 pub fn score_all(
     term_index: &InMemoryTermIndex,
-    queries: &[QueryForms],
+    queries: &[ExpandedQuery],
     config: &Bm25Config,
     operator: TermOperator,
     top_k: usize,
@@ -118,131 +90,93 @@ pub fn score_all(
         term_index.avg_field_length(Field::Content),
     ];
 
-    let raw_weights = FormWeights {
-        title: config.title_weight * RAW_TITLE_BOOST,
-        content: config.content_weight * RAW_CONTENT_BOOST,
-        keywords: config.keywords_weight * RAW_KEYWORDS_BOOST,
-    };
-    let clean_weights = FormWeights {
-        title: config.title_weight,
-        content: config.content_weight,
-        keywords: config.keywords_weight,
-    };
-
     let mut all_results = Vec::with_capacity(queries.len());
 
     for query in queries {
-        let mut forms: Vec<(Vec<crate::infra::term_index::QueryTerm>, FormWeights)> = Vec::new();
-        if !query.raw.is_empty() {
-            forms.push((query.raw.clone(), raw_weights));
-        }
-        if !query.clean.is_empty() {
-            forms.push((query.clean.clone(), clean_weights));
-        }
+        let mut matches = vec![!query.terms.is_empty() && operator == TermOperator::And; n_docs];
+        let mut doc_scores = vec![0.0_f64; n_docs];
 
-        // Per-form doc matching: Or starts empty and unions; And starts full
-        // and intersects (a form with zero terms never matches in And mode).
-        // Only active forms are allocated, so unused slots cannot leak a
-        // default `true` into the merge below.
-        let mut form_matches = vec![vec![operator == TermOperator::And; n_docs]; forms.len()];
-        // Per-form doc scores. In And mode a doc failing the form's Must
-        // constraint is excluded from that form entirely (production
-        // BooleanQuery semantics), so its partial score must not leak into
-        // the merged total; contributions are zeroed below per form.
-        let mut form_scores = vec![vec![0.0_f64; n_docs]; forms.len()];
+        for term in &query.terms {
+            let Some(postings) = term_index.postings.get(&term.text) else {
+                // No postings: the term cannot match anything.
+                if operator == TermOperator::And {
+                    matches.fill(false);
+                }
+                continue;
+            };
 
-        for (form_idx, (terms, weights)) in forms.iter().enumerate() {
-            for term in terms {
-                let Some(postings) = term_index.postings.get(&term.text) else {
-                    // No postings: the term cannot match anything.
-                    if operator == TermOperator::And {
-                        form_matches[form_idx].fill(false);
+            let idf: [f64; 3] = {
+                let mut arr = [0.0_f64; 3];
+                if let Some(dfs) = term_index.term_field_df.get(&term.text) {
+                    // idf uses the GLOBAL segment doc count as N and the
+                    // per-field document frequency as n (tantivy
+                    // `Bm25Weight::for_terms` semantics).
+                    let field_n = term_index.n_docs as f64;
+                    for field_idx in 0..3 {
+                        let df = dfs[field_idx];
+                        if df > 0 {
+                            arr[field_idx] =
+                                ((field_n - df as f64 + 0.5) / (df as f64 + 0.5) + 1.0).ln();
+                        }
                     }
+                }
+                arr
+            };
+
+            let mut term_hit_docs: Vec<usize> = Vec::new();
+            for &(doc_id, field_idx, tf) in postings {
+                let idx = field_idx as usize;
+                let Some(field) = Field::from_index(idx) else {
                     continue;
                 };
-                let scale = if term.is_split {
-                    SPLIT_TOKEN_WEIGHT
-                } else {
-                    1.0
-                };
+                term_hit_docs.push(doc_id as usize);
 
-                let idf: [f64; 3] = {
-                    let mut arr = [0.0_f64; 3];
-                    if let Some(dfs) = term_index.term_field_df.get(&term.text) {
-                        // idf uses the GLOBAL segment doc count as N and the
-                        // per-field document frequency as n (tantivy
-                        // `Bm25Weight::for_terms` semantics).
-                        let field_n = term_index.n_docs as f64;
-                        for field_idx in 0..3 {
-                            let df = dfs[field_idx];
-                            if df > 0 {
-                                arr[field_idx] =
-                                    ((field_n - df as f64 + 0.5) / (df as f64 + 0.5) + 1.0).ln();
-                            }
-                        }
-                    }
-                    arr
-                };
-
-                let mut term_hit_docs: Vec<usize> = Vec::new();
-                for &(doc_id, field_idx, tf) in postings {
-                    let idx = field_idx as usize;
-                    let idf_val = idf[idx];
-                    if idf_val == 0.0 {
-                        continue;
-                    }
-                    let Some(field) = Field::from_index(idx) else {
-                        continue;
-                    };
-                    let weight = weights.field(field) * scale;
-                    if weight == 0.0 {
-                        continue;
-                    }
-
-                    let raw_len = term_index.doc_lengths[doc_id as usize][idx];
-                    let doc_len = tantivy_fieldnorm(raw_len) as f64;
-                    let avg = avg_len[idx];
-                    if avg <= 0.0 {
-                        continue;
-                    }
-
-                    let tf_f = tf as f64;
-                    let norm = 1.0 - b + b * doc_len / avg;
-                    let bm25_score = weight * idf_val * tf_f * (k1 + 1.0) / (tf_f + k1 * norm);
-
-                    form_scores[form_idx][doc_id as usize] += bm25_score;
-                    term_hit_docs.push(doc_id as usize);
+                let idf_val = idf[idx];
+                let weight = config.field_weight(field) * term.scale;
+                if idf_val == 0.0 || weight == 0.0 {
+                    continue;
                 }
 
-                // Or mode: a doc is a candidate once any term matches.
-                // And mode: the form matches a doc only when every term hits.
-                match operator {
-                    TermOperator::Or => {
-                        for doc in term_hit_docs {
-                            form_matches[form_idx][doc] = true;
-                        }
+                let raw_len = term_index.doc_lengths[doc_id as usize][idx];
+                let doc_len = tantivy_fieldnorm(raw_len) as f64;
+                let avg = avg_len[idx];
+                if avg <= 0.0 {
+                    continue;
+                }
+
+                let tf_f = tf as f64;
+                let norm = 1.0 - b + b * doc_len / avg;
+                let bm25_score = weight * idf_val * tf_f * (k1 + 1.0) / (tf_f + k1 * norm);
+
+                doc_scores[doc_id as usize] += bm25_score;
+            }
+
+            // Or mode: a doc is a candidate once any term matches.
+            // And mode: a doc must match every term.
+            match operator {
+                TermOperator::Or => {
+                    for doc in term_hit_docs {
+                        matches[doc] = true;
                     }
-                    TermOperator::And => {
-                        let mut hit: Vec<bool> = vec![false; n_docs];
-                        for doc in term_hit_docs {
-                            hit[doc] = true;
-                        }
-                        for (i, matched) in form_matches[form_idx].iter_mut().enumerate() {
-                            *matched &= hit[i];
-                        }
+                }
+                TermOperator::And => {
+                    let mut hit: Vec<bool> = vec![false; n_docs];
+                    for doc in term_hit_docs {
+                        hit[doc] = true;
+                    }
+                    for (i, matched) in matches.iter_mut().enumerate() {
+                        *matched &= hit[i];
                     }
                 }
             }
         }
 
-        // Merge: OR across forms (Should). A form contributes only for docs
-        // that satisfy its occurrence constraint; docs matching nothing score
-        // zero.
-        let mut doc_scores = vec![0.0_f64; n_docs];
-        for (form_idx, form_match) in form_matches.iter().enumerate() {
-            for (i, matched) in form_match.iter().enumerate() {
-                if *matched {
-                    doc_scores[i] += form_scores[form_idx][i];
+        // And-mode docs that fail the occurrence constraint must not keep
+        // partial scores from terms they did match.
+        if operator == TermOperator::And {
+            for (i, matched) in matches.iter().enumerate() {
+                if !matched {
+                    doc_scores[i] = 0.0;
                 }
             }
         }
@@ -259,8 +193,8 @@ pub fn score_all(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infra::term_index::build_query_forms;
     use crate::infra::term_index::build_term_index;
+    use crate::infra::term_index::expand_query;
     use cce_storage_bm25::Bm25Document;
 
     fn make_docs() -> Vec<Bm25Document> {
@@ -290,8 +224,8 @@ mod tests {
         }
     }
 
-    fn forms(text: &str) -> Vec<crate::infra::term_index::QueryForms> {
-        vec![build_query_forms(text)]
+    fn forms(index: &InMemoryTermIndex, text: &str) -> Vec<ExpandedQuery> {
+        vec![expand_query(text, index)]
     }
 
     #[test]
@@ -300,7 +234,7 @@ mod tests {
         let index = build_term_index(&docs);
         let results = score_all(
             &index,
-            &forms("alpha"),
+            &forms(&index, "alpha"),
             &default_config(),
             TermOperator::Or,
             10,
@@ -321,7 +255,13 @@ mod tests {
             keywords_weight: 1.0,
             content_weight: 1.0,
         };
-        let results = score_all(&index, &forms("gamma"), &config, TermOperator::Or, 2);
+        let results = score_all(
+            &index,
+            &forms(&index, "gamma"),
+            &config,
+            TermOperator::Or,
+            2,
+        );
         assert_eq!(results[0].len(), 2);
     }
 
@@ -336,7 +276,13 @@ mod tests {
             keywords_weight: 0.0,
             content_weight: 0.0,
         };
-        let results = score_all(&index, &forms("alpha"), &config, TermOperator::Or, 10);
+        let results = score_all(
+            &index,
+            &forms(&index, "alpha"),
+            &config,
+            TermOperator::Or,
+            10,
+        );
         assert_eq!(results[0].iter().map(|(_, s)| *s as i64).sum::<i64>(), 0);
     }
 
@@ -361,7 +307,7 @@ mod tests {
         let index = build_term_index(&docs);
         let results = score_all(
             &index,
-            &forms("alpha gamma"),
+            &forms(&index, "alpha gamma"),
             &default_config(),
             TermOperator::Or,
             10,
@@ -398,7 +344,7 @@ mod tests {
         // "beta gamma": only doc 1 contains both.
         let results = score_all(
             &index,
-            &forms("beta gamma"),
+            &forms(&index, "beta gamma"),
             &default_config(),
             TermOperator::And,
             10,
@@ -414,10 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dual_form_scores_sum_not_max() {
-        // The clean form is an independent tantivy Should-clause whose score
-        // is added on top of the raw form (production semantics), so a query
-        // with both forms must outscore the identical raw form alone.
+    fn test_repeated_query_term_scores_add() {
         let docs = vec![
             Bm25Document::new("d:0")
                 .with_field("title", "Alpha")
@@ -428,25 +371,22 @@ mod tests {
 
         let alpha = crate::infra::term_index::QueryTerm {
             text: "alpha".to_string(),
-            is_split: false,
+            scale: 1.0,
         };
-        let raw_only: Vec<QueryForms> = vec![QueryForms {
-            raw: vec![alpha.clone()],
-            clean: vec![],
+        let one = vec![ExpandedQuery {
+            terms: vec![alpha.clone()],
         }];
-        let dual: Vec<QueryForms> = vec![QueryForms {
-            raw: vec![alpha.clone()],
-            clean: vec![alpha],
+        let two = vec![ExpandedQuery {
+            terms: vec![alpha.clone(), alpha],
         }];
-        let raw_only = score_all(&index, &raw_only, &default_config(), TermOperator::Or, 10);
-        let dual = score_all(&index, &dual, &default_config(), TermOperator::Or, 10);
-        // Adding the clean form adds the clean-form clause score (sum, not
-        // max): the merged score must be strictly higher.
+        let one = score_all(&index, &one, &default_config(), TermOperator::Or, 10);
+        let two = score_all(&index, &two, &default_config(), TermOperator::Or, 10);
+
         assert!(
-            dual[0][0].1 > raw_only[0][0].1,
-            "dual-form score must exceed raw-only: {} vs {}",
-            dual[0][0].1,
-            raw_only[0][0].1
+            two[0][0].1 > one[0][0].1,
+            "repeated production query clause must add score: {} vs {}",
+            two[0][0].1,
+            one[0][0].1
         );
     }
 
@@ -467,7 +407,7 @@ mod tests {
         let index = build_term_index(&docs);
         let results = score_all(
             &index,
-            &forms("get_or_init"),
+            &forms(&index, "get_or_init"),
             &default_config(),
             TermOperator::Or,
             10,
@@ -498,7 +438,7 @@ mod tests {
 
         let results = score_all(
             &index,
-            &forms("get"),
+            &forms(&index, "get"),
             &default_config(),
             TermOperator::Or,
             10,

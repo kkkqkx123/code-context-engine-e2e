@@ -13,7 +13,6 @@ use crate::bench_data::{
     BenchmarkData, ChunkData, QueryType, RelevanceJudgment, RelevanceLevel, compute_bm25_scores,
     cosine_similarity, load_benchmark_data,
 };
-use crate::infra::{QueryForms, build_query_forms};
 use crate::judgments::evaluate::{BASELINES, BenchmarkPaths, DEFAULT_TOP_K, TOP_K_VALUES};
 use crate::range_evaluator::RankedScan;
 use crate::retrieval_method::fusion::{FusedEntry, PreparedFusion, RankedPath, dedup_ranked};
@@ -259,12 +258,7 @@ pub fn rank_recall(bench: &BenchmarkData) -> RecallRankings {
     let bm25_all = if bench.bm25_documents.is_empty() {
         Vec::new()
     } else {
-        let queries: Vec<QueryForms> = bench
-            .query_texts
-            .iter()
-            .map(|t| build_query_forms(t))
-            .collect();
-        compute_bm25_scores(&bench.bm25_documents, &queries, TermOperator::Or)
+        compute_bm25_scores(&bench.bm25_documents, &bench.query_texts, TermOperator::Or)
     };
 
     let mut emb_ranked = Vec::with_capacity(bench.queries.len());
