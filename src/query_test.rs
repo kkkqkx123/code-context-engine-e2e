@@ -589,7 +589,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
 
         // Create query coordinator using builder pattern
         let mut coordinator_builder = QueryCoordinator::builder(
-            qdrant.clone(),
+            cce_orchestrator::index::VectorStore::Qdrant(qdrant.clone()),
             embedder,
             bm25.clone(),
             call_chain_query,

@@ -630,10 +630,16 @@ async fn build_bare_coordinator(
     let empty_index = RelationIndex::new();
     let call_chain = Arc::new(CallChainQuery::from_index(empty_index));
 
-    QueryCoordinator::builder(qdrant, embedder, bm25, call_chain, scope)
-        .with_capabilities(IndexCapabilities::new().with_vectors(true).with_bm25(true))
-        .with_sqlite(sqlite_db)
-        .build()
+    QueryCoordinator::builder(
+        cce_orchestrator::index::VectorStore::Qdrant(qdrant),
+        embedder,
+        bm25,
+        call_chain,
+        scope,
+    )
+    .with_capabilities(IndexCapabilities::new().with_vectors(true).with_bm25(true))
+    .with_sqlite(sqlite_db)
+    .build()
 }
 
 fn mock_vector(dim: usize, seed: u32) -> Vec<f32> {
