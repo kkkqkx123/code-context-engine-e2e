@@ -11,8 +11,8 @@ use cce_orchestrator::index::{
 };
 use cce_plugin::PluginRegistry;
 use cce_storage_bm25::Bm25Client;
-use cce_storage_sqlite::RelationSnapshotRepository;
-use cce_storage_sqlite::SqliteClient;
+use cce_storage_relation_sqlite::RelationSnapshotRepository;
+use cce_storage_relation_sqlite::SqliteClient;
 use cce_types::{CanonicalRelationSnapshot, SnapshotDelta, StorageError};
 
 /// Minimal relation-snapshot publisher for workflow tests.

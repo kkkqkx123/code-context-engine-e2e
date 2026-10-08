@@ -11,7 +11,7 @@
 
 use cce_config::AstToNlConfig;
 use cce_orchestrator::operation::OperationStatus;
-use cce_storage_sqlite::types::CheckpointStatus;
+use cce_storage_relation_sqlite::types::CheckpointStatus;
 
 use crate::helper::init_minimal_logging;
 use crate::hot_update::resume_harness::{

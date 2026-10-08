@@ -203,10 +203,10 @@ fn main() {
 
 /// Probe Qdrant availability without touching the index.
 async fn probe_qdrant() -> Result<(), String> {
-    let mut config = cce_storage_qdrant::QdrantConfig::with_url("http://localhost:6333");
+    let mut config = cce_storage_vector_qdrant::QdrantConfig::with_url("http://localhost:6333");
     config.vector_size = cce_e2e_tests::mock_embedding_server::MOCK_EMBEDDING_DIMENSION;
     let client =
-        cce_storage_qdrant::QdrantClient::new(config, "test").map_err(|e| e.to_string())?;
+        cce_storage_vector_qdrant::QdrantClient::new(config, "test").map_err(|e| e.to_string())?;
     client.initialize().await.map_err(|e| e.to_string())?;
     Ok(())
 }

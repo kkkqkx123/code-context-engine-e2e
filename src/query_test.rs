@@ -13,7 +13,7 @@ use cce_orchestrator::{
     SearchConfig, SearchSources,
 };
 use cce_storage_bm25::Bm25Config;
-use cce_storage_qdrant::QdrantConfig;
+use cce_storage_vector_qdrant::QdrantConfig;
 
 use super::EmbeddingConfig;
 use crate::fixture::FixtureAccess;
@@ -47,9 +47,9 @@ pub struct QueryWorkflowTest<F: FixtureAccess> {
     /// Shared BM25 client (index + query use same instance)
     bm25_client: Option<Arc<tokio::sync::Mutex<cce_storage_bm25::Bm25Client>>>,
     /// Shared Qdrant client (index + query use same instance)
-    qdrant_client: Option<Arc<cce_storage_qdrant::QdrantClient>>,
+    qdrant_client: Option<Arc<cce_storage_vector_qdrant::QdrantClient>>,
     /// Shared SQLite database (index + query use same instance)
-    sqlite_db: Option<Arc<cce_storage_sqlite::SqliteClient>>,
+    sqlite_db: Option<Arc<cce_storage_relation_sqlite::SqliteClient>>,
     /// Shared embedder for vector index and query (optional; without it,
     /// vector storage is skipped during indexing)
     embedder: Option<Arc<OpenAICompatibleProvider>>,
@@ -195,7 +195,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
     /// Uses a unique per-instance BM25 index path to prevent cross-test data pollution.
     pub async fn index(&mut self) -> Result<&IndexResult> {
         use cce_orchestrator::CheckpointManager;
-        use cce_storage_sqlite::SqliteClient;
+        use cce_storage_relation_sqlite::SqliteClient;
 
         let mut orchestrator =
             IndexOrchestrator::new(self.project_id).expect("failed to create IndexOrchestrator");
@@ -212,7 +212,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             .clone()
             .unwrap_or_else(|| self.fixture.root_path().to_string_lossy().to_string());
         let project_group_id =
-            cce_storage_qdrant::generate_project_group_id(self.project_id, &workspace_key);
+            cce_storage_vector_qdrant::generate_project_group_id(self.project_id, &workspace_key);
         self.project_group_id = Some(project_group_id.clone());
         orchestrator = orchestrator.with_project_fingerprint(project_group_id);
 
@@ -246,7 +246,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             // Match the collection dimension to the configured embedder.
             let mut qdrant_config = QdrantConfig::with_url("http://localhost:6333");
             qdrant_config.vector_size = self.embedding_config.dimension;
-            let qdrant = Arc::new(cce_storage_qdrant::QdrantClient::new(
+            let qdrant = Arc::new(cce_storage_vector_qdrant::QdrantClient::new(
                 qdrant_config,
                 "test",
             )?);
@@ -464,7 +464,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         use cce_llm_client::OpenAICompatibleProvider;
         use cce_orchestrator::query::{IndexCapabilities, QueryCoordinator};
         use cce_relation::{CallChainQuery, RelationIndex};
-        use cce_storage_qdrant::QdrantClient;
+        use cce_storage_vector_qdrant::QdrantClient;
         use std::sync::Arc;
 
         // Create in-memory storage clients for testing
@@ -547,7 +547,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
                 .scenario_name
                 .clone()
                 .unwrap_or_else(|| self.fixture.root_path().to_string_lossy().to_string());
-            cce_storage_qdrant::generate_project_group_id(self.project_id, &workspace_key)
+            cce_storage_vector_qdrant::generate_project_group_id(self.project_id, &workspace_key)
         });
         let scope =
             ProjectScope::new(self.project_id, project_group_id).expect("valid project scope");

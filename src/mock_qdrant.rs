@@ -84,7 +84,7 @@ impl CapturingMockQdrant {
 ///
 /// Only `PUT …/points` bodies are inspected; every request gets a minimal
 /// successful JSON response, which satisfies all write/delete/count paths of
-/// [`QdrantClient`](cce_storage_qdrant::QdrantClient) used by
+/// [`QdrantClient`](cce_storage_vector_qdrant::QdrantClient) used by
 /// these tests.
 async fn serve_connection(
     mut socket: tokio::net::TcpStream,

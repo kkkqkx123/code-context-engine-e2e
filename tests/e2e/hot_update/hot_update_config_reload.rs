@@ -12,7 +12,7 @@ use cce_config::{AstToNlConfig, HotUpdateConfig};
 use cce_orchestrator::IndexOrchestrator;
 use cce_orchestrator::hot_update::progress::module_input_fingerprint;
 use cce_orchestrator::index::IndexOptions;
-use cce_storage_sqlite::snapshot_store::SqliteSnapshotStore;
+use cce_storage_relation_sqlite::snapshot_store::SqliteSnapshotStore;
 
 use crate::helper::init_minimal_logging;
 use crate::hot_update::resume_harness::{

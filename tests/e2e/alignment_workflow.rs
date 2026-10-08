@@ -41,9 +41,9 @@ use cce_relation::{CallChainQuery, RelationIndex};
 use cce_scanner::FileEntry;
 use cce_storage_bm25::Bm25Document;
 use cce_storage_bm25::{Bm25Client, Bm25Config};
-use cce_storage_qdrant::QdrantConfig;
-use cce_storage_qdrant::{QdrantClient, generate_project_group_id};
-use cce_storage_sqlite::SqliteClient;
+use cce_storage_relation_sqlite::SqliteClient;
+use cce_storage_vector_qdrant::QdrantConfig;
+use cce_storage_vector_qdrant::{QdrantClient, generate_project_group_id};
 use cce_types::language::LanguageInfo;
 use cce_types::{OutputMode, PointKind};
 
@@ -681,7 +681,7 @@ async fn test_empty_data_point_pipeline_smoke() {
         .expect("connect to Qdrant at localhost:6333");
     qdrant.delete_by_group(&group_id).await.ok();
 
-    use cce_storage_qdrant::{Payload, VectorPoint};
+    use cce_storage_vector_qdrant::{Payload, VectorPoint};
     let point = |id: &str, file: &str, entity: Option<i64>, segment: Option<&str>| VectorPoint {
         id: id.to_string(),
         vector: mock_vector(MOCK_EMBEDDING_DIMENSION, fnv_seed(id)),
