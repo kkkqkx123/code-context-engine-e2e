@@ -27,7 +27,7 @@ use cce_orchestrator::{
     Bm25UpdateProcessor, CheckpointManager, EmbeddingUpdateProcessor, UpdateProcessor,
 };
 use cce_storage_bm25::{Bm25Client, Bm25Config};
-use cce_storage_relation_sqlite::SqliteClient;
+use cce_storage_metadb_sqlite::SqliteClient;
 use cce_storage_vector_qdrant::{QdrantClient, types as qdrant_types};
 
 /// Qdrant payload isolation group used for every scenario.
@@ -148,7 +148,7 @@ impl DriftScaffold {
     }
 
     fn active_epoch(&self) -> i64 {
-        use cce_storage_relation_sqlite::ProjectIndexManifestRepository;
+        use cce_storage_metadb_sqlite::ProjectIndexManifestRepository;
         let conn = self.sqlite.read_connection().expect("read connection");
         ProjectIndexManifestRepository::get_active(&conn, PROJECT_ID)
             .ok()

@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use cce_relation::RelationIndex;
-use cce_relation::type_inference::types::ScopedTypeContext;
+use cce_codegraph::RelationIndex;
+use cce_codegraph::type_inference::types::ScopedTypeContext;
 use cce_types::{Entity, EntityId, ParsedFile};
 
 use crate::output_manager::{OutputCategory, OutputManager};

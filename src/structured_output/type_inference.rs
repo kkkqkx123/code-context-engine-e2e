@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
-use cce_relation::RelationIndex;
+use cce_codegraph::RelationIndex;
 use cce_types::ParsedFile;
 use cce_types::language::Language;
 
@@ -126,7 +126,7 @@ pub fn render_type_inference_with_index(
                 let priority = binding
                     .origin
                     .map(|o| {
-                        cce_relation::type_inference::types::origin_priority(Some(o)).to_string()
+                        cce_codegraph::type_inference::types::origin_priority(Some(o)).to_string()
                     })
                     .unwrap_or_else(|| "0".to_string());
                 let shape = binding

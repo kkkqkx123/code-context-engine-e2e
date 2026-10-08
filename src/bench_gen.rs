@@ -320,8 +320,8 @@ pub fn normalize_file_path(abs_path: &str) -> String {
 /// (caller, callee). Entity IDs come from the same `ParsedFile` snapshots
 /// that produced the chunk data, so they align with
 /// `ChunkData::entity_ids` without a cross-process id mapping.
-pub fn collect_call_edges(index: &cce_relation::RelationIndex) -> Vec<CallEdgeData> {
-    use cce_relation::index::{EntityIndexOps, RelationQueryOps};
+pub fn collect_call_edges(index: &cce_codegraph::RelationIndex) -> Vec<CallEdgeData> {
+    use cce_codegraph::index::{EntityIndexOps, RelationQueryOps};
 
     let mut edges = Vec::new();
     let mut seen = std::collections::HashSet::new();

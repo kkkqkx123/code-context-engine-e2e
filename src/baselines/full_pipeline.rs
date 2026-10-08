@@ -1,7 +1,7 @@
 use cce_orchestrator::index::FileProcessor;
 use cce_parser::ast_to_nl::chunker::{ChunkPath, ChunkedResult};
 use cce_parser::grouper::GroupType;
-use cce_relation::IndexBuilder;
+use cce_codegraph::IndexBuilder;
 use cce_types::{OutputMode, ParsedFile};
 
 use crate::FixtureSpec;

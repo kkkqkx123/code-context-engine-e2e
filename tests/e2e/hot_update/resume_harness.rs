@@ -35,8 +35,8 @@ use cce_orchestrator::{
 };
 use cce_parser::summary::{FileSummary, RuleBasedGenerator, SummaryGenerator};
 use cce_storage_bm25::{Bm25Client, Bm25Config};
-use cce_storage_relation_sqlite::SqliteClient;
-use cce_storage_relation_sqlite::{GenerationOverrideRepository, ProjectIndexManifestRepository};
+use cce_storage_metadb_sqlite::SqliteClient;
+use cce_storage_metadb_sqlite::{GenerationOverrideRepository, ProjectIndexManifestRepository};
 use cce_utils::hash::hash_serializable;
 
 use crate::helper::EmptyFixture;
@@ -613,7 +613,7 @@ impl HotUpdateHarness {
 
     pub fn active_manifest(
         &self,
-    ) -> anyhow::Result<Option<cce_storage_relation_sqlite::ProjectIndexManifest>> {
+    ) -> anyhow::Result<Option<cce_storage_metadb_sqlite::ProjectIndexManifest>> {
         let conn = self.sqlite.read_connection()?;
         ProjectIndexManifestRepository::get_active(&conn, self.project_id)
             .context("failed to read active manifest")
@@ -622,7 +622,7 @@ impl HotUpdateHarness {
     pub fn building_manifest(
         &self,
         operation_id: &str,
-    ) -> anyhow::Result<Option<cce_storage_relation_sqlite::ProjectIndexManifest>> {
+    ) -> anyhow::Result<Option<cce_storage_metadb_sqlite::ProjectIndexManifest>> {
         let conn = self.sqlite.read_connection()?;
         ProjectIndexManifestRepository::get_building_by_operation(
             &conn,
@@ -651,7 +651,7 @@ impl HotUpdateHarness {
     pub async fn checkpoint_of(
         &self,
         operation_id: &str,
-    ) -> Option<cce_storage_relation_sqlite::types::CheckpointRecord> {
+    ) -> Option<cce_storage_metadb_sqlite::types::CheckpointRecord> {
         self.checkpoint_manager
             .get_checkpoint(operation_id)
             .await

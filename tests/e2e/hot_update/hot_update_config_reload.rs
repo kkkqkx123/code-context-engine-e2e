@@ -12,7 +12,7 @@ use cce_config::{AstToNlConfig, HotUpdateConfig};
 use cce_orchestrator::IndexOrchestrator;
 use cce_orchestrator::hot_update::progress::module_input_fingerprint;
 use cce_orchestrator::index::IndexOptions;
-use cce_storage_relation_sqlite::snapshot_store::SqliteSnapshotStore;
+use cce_storage_metadb_sqlite::snapshot_store::SqliteSnapshotStore;
 
 use crate::helper::init_minimal_logging;
 use crate::hot_update::resume_harness::{
@@ -446,8 +446,8 @@ async fn test_build_config_change_triggers_relation_rebuild() {
     );
 
     // The rebuilt epoch must be loadable and contain the rebuilt files.
-    use cce_relation::index::snapshot_loader::RelationSnapshotLoader;
-    use cce_relation::index::snapshot_query::SnapshotFileQueryOps;
+    use cce_codegraph::index::snapshot_loader::RelationSnapshotLoader;
+    use cce_codegraph::index::snapshot_query::SnapshotFileQueryOps;
     let rebuilt = RelationSnapshotLoader::load(
         &SqliteSnapshotStore::new(harness.sqlite.as_ref().clone()),
         harness.project_id,

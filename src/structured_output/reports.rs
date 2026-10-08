@@ -6,9 +6,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as _;
 
-use cce_relation::RelationIndex;
-use cce_relation::index::{EntityIndexOps, RelationQueryOps};
-use cce_relation::type_inference::types::ScopedTypeContext;
+use cce_codegraph::RelationIndex;
+use cce_codegraph::index::{EntityIndexOps, RelationQueryOps};
+use cce_codegraph::type_inference::types::ScopedTypeContext;
 use cce_types::{Entity, EntityId, EntityKind, ParsedFile};
 
 use crate::review_filter::ReviewFilterOptions;
@@ -642,13 +642,13 @@ pub fn render_file_report(
     writeln!(out).expect("write");
     let merged_owned: Option<ScopedTypeContext> = inferred.cloned().or_else(|| {
         parsed_file.map(|pf| {
-            let ctx = cce_relation::type_inference::TypeInferenceEngine::infer_types(
+            let ctx = cce_codegraph::type_inference::TypeInferenceEngine::infer_types(
                 pf,
-                &cce_relation::type_inference::traits::InferenceContext::default(),
+                &cce_codegraph::type_inference::traits::InferenceContext::default(),
             );
-            let ctx_two = cce_relation::type_inference::TypeInferenceEngine::infer_types_two_pass(
+            let ctx_two = cce_codegraph::type_inference::TypeInferenceEngine::infer_types_two_pass(
                 pf,
-                &cce_relation::type_inference::traits::InferenceContext::default(),
+                &cce_codegraph::type_inference::traits::InferenceContext::default(),
             );
             let mut merged = ctx.clone();
             merged.merge_from(&ctx_two);
@@ -688,7 +688,7 @@ pub fn render_file_report(
                     let priority = binding
                         .origin
                         .map(|o| {
-                            cce_relation::type_inference::types::origin_priority(Some(o))
+                            cce_codegraph::type_inference::types::origin_priority(Some(o))
                                 .to_string()
                         })
                         .unwrap_or_else(|| "0".to_string());

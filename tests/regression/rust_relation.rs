@@ -4,13 +4,13 @@
 //! function calls, call chains, and file dependencies for the relation_demo fixture.
 
 use cce_orchestrator::{IndexOptions, IndexOrchestrator};
-use cce_relation::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
-use cce_relation::{BuildConfigParser, CallChainQuery, UntypedDependency};
+use cce_codegraph::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
+use cce_codegraph::{BuildConfigParser, CallChainQuery, UntypedDependency};
 use cce_types::EntityId;
 
 use crate::helper::{TestFixture, init_minimal_logging};
 
-fn find_entity_id(index: &cce_relation::RelationIndex, name: &str, file_suffix: &str) -> EntityId {
+fn find_entity_id(index: &cce_codegraph::RelationIndex, name: &str, file_suffix: &str) -> EntityId {
     let mut candidates = index.get_function_ids_by_name(name);
     candidates.sort_by_key(|entity_id| {
         index

@@ -1,6 +1,6 @@
 //! C# type inference tests.
 
-use cce_relation::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
+use cce_codegraph::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
 
 use crate::helper::{TestFixture, init_minimal_logging};
 

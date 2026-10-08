@@ -1,6 +1,6 @@
 //! Kotlin type inference tests.
 
-use cce_relation::index::{FileIndexOps, RelationQueryOps};
+use cce_codegraph::index::{FileIndexOps, RelationQueryOps};
 
 use crate::helper::{TestFixture, init_minimal_logging};
 

@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 
-use cce_relation::RelationIndex;
-use cce_relation::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
+use cce_codegraph::RelationIndex;
+use cce_codegraph::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
 use cce_types::{ParsedFile, RelationType};
 
 use crate::review_filter::ReviewFilterOptions;

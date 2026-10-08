@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 
-use cce_relation::RelationIndex;
-use cce_relation::index::{EntityIndexOps, FileIndexOps};
+use cce_codegraph::RelationIndex;
+use cce_codegraph::index::{EntityIndexOps, FileIndexOps};
 use cce_types::{Entity, EntityId, EntityKind};
 
 use super::types::{

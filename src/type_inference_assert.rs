@@ -1,6 +1,6 @@
 //! Deterministic type-inference assertions for E2E tests.
 //!
-//! The per-file [`TypeInferenceEngine`](cce_relation::type_inference::TypeInferenceEngine)
+//! The per-file [`TypeInferenceEngine`](cce_codegraph::type_inference::TypeInferenceEngine)
 //! output is converted into a sorted, `EntityId`-free snapshot
 //! ([`CanonicalTypeBinding`]) so tests can assert on inferred types without
 //! depending on process-local ID assignment or scope insertion order.
@@ -15,12 +15,12 @@
 
 use std::collections::BTreeMap;
 
-use cce_relation::type_inference::CrossFilePropagator;
-use cce_relation::type_inference::TypeInferenceEngine;
-use cce_relation::type_inference::propagate_variable_types;
-use cce_relation::type_inference::traits::InferenceContext;
-use cce_relation::type_inference::types::ScopedTypeContext;
-use cce_relation::type_inference::types::origin_priority;
+use cce_codegraph::type_inference::CrossFilePropagator;
+use cce_codegraph::type_inference::TypeInferenceEngine;
+use cce_codegraph::type_inference::propagate_variable_types;
+use cce_codegraph::type_inference::traits::InferenceContext;
+use cce_codegraph::type_inference::types::ScopedTypeContext;
+use cce_codegraph::type_inference::types::origin_priority;
 use cce_types::ParsedFile;
 
 /// Binding kind inside a canonical snapshot.
@@ -74,11 +74,11 @@ pub fn infer_project_contexts(files: &[ParsedFile]) -> Vec<ScopedTypeContext> {
     // path, which passes its module type index via `InferenceContext`.
     // Without this the export used `InferenceContext::default()` (no
     // index) and every field-discriminated narrowing rendered empty.
-    let indexes: Vec<cce_relation::symbol_table::TypeMemberIndex> = files
+    let indexes: Vec<cce_codegraph::symbol_table::TypeMemberIndex> = files
         .iter()
         .map(|file| {
-            let mut index = cce_relation::symbol_table::TypeMemberIndex::new();
-            cce_relation::policy::type_member::build_type_index_for_file(
+            let mut index = cce_codegraph::symbol_table::TypeMemberIndex::new();
+            cce_codegraph::policy::type_member::build_type_index_for_file(
                 &file.entities,
                 "",
                 &file.path,
@@ -290,14 +290,14 @@ pub fn assert_no_binding(bindings: &[CanonicalTypeBinding], name: &str) {
 pub fn assert_origin_priority_higher(higher: &str, lower: &str) {
     let parse = |s: &str| match s {
         "TypeAnnotation" => {
-            Some(cce_relation::type_inference::types::InferenceOrigin::TypeAnnotation)
+            Some(cce_codegraph::type_inference::types::InferenceOrigin::TypeAnnotation)
         }
-        "LiteralType" => Some(cce_relation::type_inference::types::InferenceOrigin::LiteralType),
+        "LiteralType" => Some(cce_codegraph::type_inference::types::InferenceOrigin::LiteralType),
         "ControlFlowNarrowing" => {
-            Some(cce_relation::type_inference::types::InferenceOrigin::ControlFlowNarrowing)
+            Some(cce_codegraph::type_inference::types::InferenceOrigin::ControlFlowNarrowing)
         }
         "ConstructorCall" => {
-            Some(cce_relation::type_inference::types::InferenceOrigin::ConstructorCall)
+            Some(cce_codegraph::type_inference::types::InferenceOrigin::ConstructorCall)
         }
         _ => None,
     };

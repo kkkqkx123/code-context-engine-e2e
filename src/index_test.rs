@@ -11,8 +11,8 @@ use cce_orchestrator::index::{
 };
 use cce_plugin::PluginRegistry;
 use cce_storage_bm25::Bm25Client;
-use cce_storage_relation_sqlite::RelationSnapshotRepository;
-use cce_storage_relation_sqlite::SqliteClient;
+use cce_storage_metadb_sqlite::RelationSnapshotRepository;
+use cce_storage_metadb_sqlite::SqliteClient;
 use cce_types::{CanonicalRelationSnapshot, SnapshotDelta, StorageError};
 
 /// Minimal relation-snapshot publisher for workflow tests.
@@ -69,7 +69,7 @@ impl RelationSnapshotPublisher for TestRelationPublisher {
         project_id: i64,
         operation_id: &str,
         snapshot: CanonicalRelationSnapshot,
-        _index: &cce_relation::index::RelationIndex,
+        _index: &cce_codegraph::index::RelationIndex,
     ) -> Result<RelationPublication, StorageError> {
         self.ensure_project(project_id)?;
         let relation_epoch =
@@ -87,7 +87,7 @@ impl RelationSnapshotPublisher for TestRelationPublisher {
         project_id: i64,
         operation_id: &str,
         delta: SnapshotDelta,
-        _base: Option<cce_relation::index::LayeredSnapshotIndex>,
+        _base: Option<cce_codegraph::index::LayeredSnapshotIndex>,
     ) -> Result<RelationPublication, StorageError> {
         self.ensure_project(project_id)?;
 

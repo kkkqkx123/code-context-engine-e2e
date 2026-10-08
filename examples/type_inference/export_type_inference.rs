@@ -32,8 +32,8 @@ use std::sync::Arc;
 use cce_orchestrator::export::{DirectExporter, ExportConfig};
 use cce_orchestrator::index::FileProcessor;
 use cce_parser::ast_to_nl::ConversionRequest;
-use cce_relation::IndexBuilder;
-use cce_relation::index::{EntityIndexOps, RelationQueryOps};
+use cce_codegraph::IndexBuilder;
+use cce_codegraph::index::{EntityIndexOps, RelationQueryOps};
 use cce_scanner::{FSScanner, ScanOptions};
 use cce_types::{OutputMode, ParsedFile};
 

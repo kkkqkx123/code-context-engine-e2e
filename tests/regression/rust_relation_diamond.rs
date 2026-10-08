@@ -5,14 +5,14 @@
 //! is correctly indexed and can be traversed in both directions.
 
 use cce_orchestrator::{IndexOptions, IndexOrchestrator};
-use cce_relation::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
-use cce_relation::{BuildConfigParser, CallChainQuery, UntypedDependency};
+use cce_codegraph::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
+use cce_codegraph::{BuildConfigParser, CallChainQuery, UntypedDependency};
 use cce_types::language::Language;
 
 use crate::helper::{TestFixture, init_minimal_logging};
 
 fn find_entity_id(
-    index: &cce_relation::RelationIndex,
+    index: &cce_codegraph::RelationIndex,
     name: &str,
     file_suffix: &str,
 ) -> cce_types::EntityId {

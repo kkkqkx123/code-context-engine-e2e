@@ -49,7 +49,7 @@ pub struct QueryWorkflowTest<F: FixtureAccess> {
     /// Shared Qdrant client (index + query use same instance)
     qdrant_client: Option<Arc<cce_storage_vector_qdrant::QdrantClient>>,
     /// Shared SQLite database (index + query use same instance)
-    sqlite_db: Option<Arc<cce_storage_relation_sqlite::SqliteClient>>,
+    sqlite_db: Option<Arc<cce_storage_metadb_sqlite::SqliteClient>>,
     /// Shared embedder for vector index and query (optional; without it,
     /// vector storage is skipped during indexing)
     embedder: Option<Arc<OpenAICompatibleProvider>>,
@@ -195,7 +195,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
     /// Uses a unique per-instance BM25 index path to prevent cross-test data pollution.
     pub async fn index(&mut self) -> Result<&IndexResult> {
         use cce_orchestrator::CheckpointManager;
-        use cce_storage_relation_sqlite::SqliteClient;
+        use cce_storage_metadb_sqlite::SqliteClient;
 
         let mut orchestrator =
             IndexOrchestrator::new(self.project_id).expect("failed to create IndexOrchestrator");
@@ -463,7 +463,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         use cce_config::modules::{EmbeddingModelConfig, ProviderConfig};
         use cce_llm_client::OpenAICompatibleProvider;
         use cce_orchestrator::query::{IndexCapabilities, QueryCoordinator};
-        use cce_relation::{CallChainQuery, RelationIndex};
+        use cce_codegraph::{CallChainQuery, RelationIndex};
         use cce_storage_vector_qdrant::QdrantClient;
         use std::sync::Arc;
 

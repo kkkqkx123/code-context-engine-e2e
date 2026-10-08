@@ -4,8 +4,8 @@
 //! project's relationship graph that can be compared across full-index,
 //! hot-update, and cold-start paths.
 
-use cce_relation::RelationIndex;
-use cce_relation::index::{EntityIndexOps, RelationQueryOps, core::SymbolKey};
+use cce_codegraph::RelationIndex;
+use cce_codegraph::index::{EntityIndexOps, RelationQueryOps, core::SymbolKey};
 use cce_types::RelationType;
 
 /// A single canonical entry for an entity in a relation snapshot.
@@ -228,7 +228,7 @@ macro_rules! assert_relation_snapshot_eq {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cce_relation::RelationIndex;
+    use cce_codegraph::RelationIndex;
 
     #[test]
     fn test_empty_snapshot() {

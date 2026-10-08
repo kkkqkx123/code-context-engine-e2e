@@ -990,7 +990,7 @@ async fn test_plugin_symbol_extract_relation_index() {
     use cce_config::RelationConfig;
     use cce_orchestrator::{IndexOptions, IndexOrchestrator};
     use cce_plugin::PluginCapability;
-    use cce_relation::index::ImportIndexOps;
+    use cce_codegraph::index::ImportIndexOps;
     use std::sync::Arc;
 
     init_minimal_logging();
@@ -1123,7 +1123,7 @@ async fn test_plugin_symbol_extract_relation_index() {
 #[tokio::test]
 async fn test_plugin_symbol_extract_gated_off() {
     use cce_orchestrator::{IndexOptions, IndexOrchestrator};
-    use cce_relation::index::ImportIndexOps;
+    use cce_codegraph::index::ImportIndexOps;
     use std::sync::Arc;
 
     init_minimal_logging();

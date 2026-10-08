@@ -1,6 +1,6 @@
 //! Go type inference tests.
 
-use cce_relation::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
+use cce_codegraph::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
 
 use crate::helper::{TestFixture, init_minimal_logging};
 
@@ -95,7 +95,7 @@ fn test_go_interfaces_snapshot() {
 
 #[tokio::test]
 async fn test_go_interfaces_method_set_satisfaction() {
-    use cce_relation::index::HierarchyQueryOps;
+    use cce_codegraph::index::HierarchyQueryOps;
     use cce_types::entity::EntityKind;
 
     init_minimal_logging();

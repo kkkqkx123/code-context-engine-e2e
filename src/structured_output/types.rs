@@ -6,10 +6,10 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use cce_relation::RelationIndex;
-use cce_relation::index::EntityIndexOps;
-use cce_relation::policy::{cpp, csharp, dart, go, java, javascript, python, rust};
-use cce_relation::symbol::Visibility;
+use cce_codegraph::RelationIndex;
+use cce_codegraph::index::EntityIndexOps;
+use cce_codegraph::policy::{cpp, csharp, dart, go, java, javascript, python, rust};
+use cce_codegraph::symbol::Visibility;
 use cce_types::{Entity, EntityId, EntityKind, ParsedFile};
 
 // ---------------------------------------------------------------------------
