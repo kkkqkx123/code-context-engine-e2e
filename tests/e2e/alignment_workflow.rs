@@ -620,7 +620,7 @@ async fn test_hybrid_smoke_rust_basic() {
 /// storage: used for the empty-data-point smoke.
 async fn build_bare_coordinator(
     qdrant: Arc<QdrantClient>,
-    bm25: Arc<tokio::sync::Mutex<Bm25Client>>,
+    bm25: Arc<Bm25Client>,
     embedder: Arc<OpenAICompatibleProvider>,
     project_id: i64,
     group_id: &str,
@@ -633,7 +633,7 @@ async fn build_bare_coordinator(
     QueryCoordinator::builder(
         cce_orchestrator::index::VectorStore::Qdrant(qdrant),
         embedder,
-        bm25,
+        cce_orchestrator::index::FulltextStore::local(bm25),
         call_chain,
         scope,
     )
@@ -731,7 +731,7 @@ async fn test_empty_data_point_pipeline_smoke() {
         .with_index_path(bm25_dir.path().to_string_lossy().as_ref());
     let mut bm25 = Bm25Client::new(bm25_config);
     bm25.connect().await.expect("bm25 connect");
-    let bm25 = Arc::new(tokio::sync::Mutex::new(bm25));
+    let bm25 = Arc::new(bm25);
 
     let mut docs: Vec<Bm25Document> = Vec::new();
     for (id, title, entity, segment) in [
@@ -755,7 +755,6 @@ async fn test_empty_data_point_pipeline_smoke() {
         docs.push(doc);
     }
     {
-        let mut bm25 = bm25.lock().await;
         bm25.batch_index("default", &docs)
             .await
             .expect("bm25 index");

@@ -279,7 +279,7 @@ def get_user(user_id):
         .with_index_path(&bm25_path);
     let mut bm25 = cce_storage_bm25::Bm25Client::new(bm25_config);
     bm25.connect().await.expect("Failed to connect BM25 client");
-    let bm25 = std::sync::Arc::new(tokio::sync::Mutex::new(bm25));
+    let bm25 = std::sync::Arc::new(bm25);
 
     let mut index_test = IndexWorkflowTest::new(fixture.into_test_fixture())
         .with_extensions(vec!["py".to_string()])
@@ -303,14 +303,13 @@ def get_user(user_id):
     // The plugin-generated BM25 text must be present in the stored index.
     // Content is an index-only field (read back from SQLite at query time),
     // so we assert via a keyword search over the plugin marker phrase.
-    let guard = bm25.lock().await;
-    let count = guard
+    let count = bm25
         .document_count_by_project(1)
         .await
         .expect("Failed to count BM25 documents");
     assert!(count > 0, "BM25 index must contain documents");
 
-    let manager = guard
+    let manager = bm25
         .index_manager()
         .cloned()
         .expect("BM25 index manager must be available");
@@ -318,7 +317,7 @@ def get_user(user_id):
     let search_results = cce_storage_bm25::Bm25Retrieval::new()
         .search(
             &manager_guard,
-            guard.schema(),
+            bm25.schema(),
             "route handler function",
             &cce_storage_bm25::Bm25SearchOptions {
                 limit: 10,

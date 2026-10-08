@@ -136,7 +136,7 @@ pub struct IndexWorkflowTest<F: FixtureAccess> {
     pub with_relations: bool,
     pub relation_publisher: Option<Arc<dyn RelationSnapshotPublisher>>,
     pub plugin_registry: Option<Arc<PluginRegistry>>,
-    pub bm25_client: Option<Arc<tokio::sync::Mutex<Bm25Client>>>,
+    pub bm25_client: Option<Arc<Bm25Client>>,
     pub(crate) orchestrator: Option<cce_orchestrator::IndexOrchestrator>,
     pub(crate) last_result: Option<cce_orchestrator::IndexResult>,
 }
@@ -206,7 +206,7 @@ impl<F: FixtureAccess> IndexWorkflowTest<F> {
 
     /// Use an externally-owned BM25 client so tests can inspect the stored
     /// documents after indexing (e.g. to assert plugin-generated text).
-    pub fn with_bm25_client(mut self, client: Arc<tokio::sync::Mutex<Bm25Client>>) -> Self {
+    pub fn with_bm25_client(mut self, client: Arc<Bm25Client>) -> Self {
         self.bm25_client = Some(client);
         self
     }

@@ -45,7 +45,7 @@ pub struct QueryWorkflowTest<F: FixtureAccess> {
     /// Search configuration
     search_config: SearchConfig,
     /// Shared BM25 client (index + query use same instance)
-    bm25_client: Option<Arc<tokio::sync::Mutex<cce_storage_bm25::Bm25Client>>>,
+    bm25_client: Option<Arc<cce_storage_bm25::Bm25Client>>,
     /// Shared Qdrant client (index + query use same instance)
     qdrant_client: Option<Arc<cce_storage_vector_qdrant::QdrantClient>>,
     /// Shared SQLite database (index + query use same instance)
@@ -237,7 +237,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             .with_index_path(&bm25_path);
         let mut bm25 = cce_storage_bm25::Bm25Client::new(bm25_config);
         bm25.connect().await?;
-        let bm25 = Arc::new(tokio::sync::Mutex::new(bm25));
+        let bm25 = Arc::new(bm25);
         self.bm25_client = Some(bm25.clone());
         self._bm25_temp_dir = Some(bm25_temp_dir);
         orchestrator = orchestrator.with_bm25_client(bm25);
@@ -483,7 +483,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             let bm25_config = Bm25Config::default().enabled().with_index_name("default");
             let mut bm25 = cce_storage_bm25::Bm25Client::new(bm25_config);
             bm25.connect().await.expect("Failed to connect BM25 client");
-            Arc::new(tokio::sync::Mutex::new(bm25))
+            Arc::new(bm25)
         };
 
         // Create OpenAICompatibleProvider for testing
@@ -591,7 +591,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         let mut coordinator_builder = QueryCoordinator::builder(
             cce_orchestrator::index::VectorStore::Qdrant(qdrant.clone()),
             embedder,
-            bm25.clone(),
+            cce_orchestrator::index::FulltextStore::local(bm25.clone()),
             call_chain_query,
             scope,
         )

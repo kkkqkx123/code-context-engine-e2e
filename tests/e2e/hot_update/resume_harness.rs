@@ -221,7 +221,7 @@ pub struct HotUpdateHarness {
     pub sqlite: Arc<SqliteClient>,
     /// Keeps the BM25 index directory alive for the test duration.
     _bm25_dir: TempDir,
-    pub bm25: Arc<Mutex<Bm25Client>>,
+    pub bm25: Arc<Bm25Client>,
     pub checkpoint_manager: Arc<CheckpointManager>,
     pub parse_counter: Arc<AtomicUsize>,
     pub summary_counter: Arc<AtomicUsize>,
@@ -296,7 +296,7 @@ impl HotUpdateHarness {
             .with_index_path(bm25_dir.path().join("index").to_string_lossy());
         let mut bm25 = Bm25Client::new(bm25_config);
         bm25.connect().await.context("failed to connect BM25")?;
-        let bm25 = Arc::new(Mutex::new(bm25));
+        let bm25 = Arc::new(bm25);
 
         Ok(Self {
             fixture,
@@ -891,8 +891,6 @@ impl HotUpdateHarness {
 
     pub async fn bm25_document_count(&self) -> usize {
         self.bm25
-            .lock()
-            .await
             .document_count()
             .await
             .expect("count bm25 documents")
@@ -900,8 +898,6 @@ impl HotUpdateHarness {
 
     pub async fn bm25_documents_for_project(&self) -> usize {
         self.bm25
-            .lock()
-            .await
             .document_count_by_project(self.project_id)
             .await
             .expect("count bm25 documents by project")
@@ -925,7 +921,7 @@ impl HotUpdateHarness {
             Self::generation_view(&conn, self.project_id, epoch)
         };
 
-        let client = self.bm25.lock().await;
+        let client = &self.bm25;
         let mut documents = client
             .snapshot_documents(self.project_id, epoch)
             .await
@@ -959,10 +955,9 @@ impl HotUpdateHarness {
     /// pairs of the top hits.
     pub async fn query_bm25(&self, query_text: &str) -> Vec<(String, String)> {
         use cce_storage_bm25::{Bm25Retrieval, Bm25SearchOptions};
-        let client = self.bm25.lock().await;
+        let client = &self.bm25;
         let manager = client.index_manager().expect("bm25 index manager").clone();
         let schema = client.schema().clone();
-        drop(client);
         let manager = manager.read().await;
         let options = Bm25SearchOptions {
             limit: 10,

@@ -62,7 +62,7 @@ pub fn helper_b() -> String { bar() }
         .with_index_path(&bm25_path);
     let mut bm25 = cce_storage_bm25::Bm25Client::new(bm25_config);
     bm25.connect().await.expect("Failed to connect BM25 client");
-    let bm25 = Arc::new(tokio::sync::Mutex::new(bm25));
+    let bm25 = Arc::new(bm25);
 
     // --- Index project A (project_id = 1) ---
     let mut orch_a = cce_orchestrator::IndexOrchestrator::new(1)
@@ -109,15 +109,13 @@ pub fn helper_b() -> String { bar() }
     // --- Verify BM25 search isolation ---
     let retrieval = cce_storage_bm25::Bm25Retrieval::new();
 
-    // Clone IndexManager and Schema out of the Mutex lock
+    // Clone IndexManager and Schema out of the shared client
     let (index_mgr, schema) = {
-        let guard = bm25.lock().await;
         (
-            guard
-                .index_manager()
+            bm25.index_manager()
                 .expect("BM25 index manager not available")
                 .clone(),
-            guard.schema().clone(),
+            bm25.schema().clone(),
         )
     };
 
@@ -224,7 +222,7 @@ pub fn process(y: i32) -> i32 { compute(y) }
         .with_index_path(&bm25_path);
     let mut bm25 = cce_storage_bm25::Bm25Client::new(bm25_config);
     bm25.connect().await.expect("Failed to connect BM25 client");
-    let bm25 = Arc::new(tokio::sync::Mutex::new(bm25));
+    let bm25 = Arc::new(bm25);
 
     // --- First index ---
     let mut orch = cce_orchestrator::IndexOrchestrator::new(1)
@@ -246,9 +244,7 @@ pub fn process(y: i32) -> i32 { compute(y) }
 
     // Count BM25 documents
     let first_count = {
-        let guard = bm25.lock().await;
-        guard
-            .document_count()
+        bm25.document_count()
             .await
             .expect("Failed to get BM25 document count")
     };
@@ -256,9 +252,7 @@ pub fn process(y: i32) -> i32 { compute(y) }
 
     // --- Delete all project docs ---
     let deleted = {
-        let mut guard = bm25.lock().await;
-        guard
-            .delete_all_project_docs("default", 1)
+        bm25.delete_all_project_docs("default", 1)
             .await
             .expect("Failed to delete BM25 documents for project")
     };
@@ -266,9 +260,7 @@ pub fn process(y: i32) -> i32 { compute(y) }
 
     // Verify BM25 is empty after deletion
     let after_delete = {
-        let guard = bm25.lock().await;
-        guard
-            .document_count()
+        bm25.document_count()
             .await
             .expect("Failed to get BM25 document count after deletion")
     };
@@ -289,9 +281,7 @@ pub fn process(y: i32) -> i32 { compute(y) }
 
     // Verify re-index count matches original
     let second_count = {
-        let guard = bm25.lock().await;
-        guard
-            .document_count()
+        bm25.document_count()
             .await
             .expect("Failed to get BM25 document count after re-index")
     };

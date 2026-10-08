@@ -13,7 +13,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context;
 use tempfile::TempDir;
-use tokio::sync::Mutex;
 
 use cce_config::modules::{DistanceMetric, QdrantConfig};
 use cce_config::{AstToNlConfig, NestProcessorConfig};
@@ -41,7 +40,7 @@ pub struct DriftScaffold {
     pub fixture: crate::helper::EmptyFixture,
     pub sqlite: Arc<SqliteClient>,
     pub checkpoint_manager: Arc<CheckpointManager>,
-    pub bm25: Arc<Mutex<Bm25Client>>,
+    pub bm25: Arc<Bm25Client>,
     pub qdrant: CapturingMockQdrant,
     entity_id_seed: Arc<AtomicU64>,
     _db_dir: TempDir,
@@ -85,7 +84,7 @@ impl DriftScaffold {
             fixture,
             sqlite: scoped.clone(),
             checkpoint_manager: Arc::new(CheckpointManager::new_for_project(PROJECT_ID, scoped)),
-            bm25: Arc::new(Mutex::new(bm25)),
+            bm25: Arc::new(bm25),
             qdrant: CapturingMockQdrant::spawn().await,
             entity_id_seed: Arc::new(AtomicU64::new(0)),
             _db_dir: db_dir,
@@ -414,8 +413,6 @@ impl DriftScaffold {
     /// BM25 documents visible at one epoch.
     pub async fn bm25_docs_at_epoch(&self, epoch: i64) -> usize {
         self.bm25
-            .lock()
-            .await
             .snapshot_documents(PROJECT_ID, epoch)
             .await
             .expect("snapshot bm25 documents")
