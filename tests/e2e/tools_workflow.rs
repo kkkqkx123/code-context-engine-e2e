@@ -196,8 +196,8 @@ async fn test_batch_compression() {
 /// Goto definition tool construction
 #[test]
 fn test_goto_definition_tool_construction() {
-    use cce_orchestrator::tools::GotoDefinitionTool;
     use cce_codegraph::LayeredSnapshotIndex;
+    use cce_orchestrator::tools::GotoDefinitionTool;
     use std::sync::Arc;
 
     let index = Arc::new(LayeredSnapshotIndex::empty());
@@ -209,8 +209,8 @@ fn test_goto_definition_tool_construction() {
 /// Find references tool construction
 #[test]
 fn test_find_references_tool_construction() {
-    use cce_orchestrator::tools::FindReferencesTool;
     use cce_codegraph::LayeredSnapshotIndex;
+    use cce_orchestrator::tools::FindReferencesTool;
     use std::sync::Arc;
 
     let index = Arc::new(LayeredSnapshotIndex::empty());
@@ -221,8 +221,8 @@ fn test_find_references_tool_construction() {
 /// Get symbols tool construction
 #[test]
 fn test_get_symbols_tool_construction() {
-    use cce_orchestrator::tools::GetSymbolsTool;
     use cce_codegraph::LayeredSnapshotIndex;
+    use cce_orchestrator::tools::GetSymbolsTool;
     use std::sync::Arc;
 
     let index = Arc::new(LayeredSnapshotIndex::empty());

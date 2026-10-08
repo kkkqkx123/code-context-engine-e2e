@@ -9,6 +9,7 @@ use crate::helper::{
 };
 use cce_plugin::PluginRegistry;
 use cce_plugin_runtime::{FilePluginSource, LuaPlugin};
+use cce_storage_common::{FulltextDocument, FulltextHit, FulltextSearchOptions};
 use cce_types::grouper::EntityGroup;
 use cce_types::{EntityKind, Language, ParsedFile};
 use compact_str::CompactString;
@@ -319,7 +320,7 @@ def get_user(user_id):
             &manager_guard,
             bm25.schema(),
             "route handler function",
-            &cce_storage_bm25::Bm25SearchOptions {
+            &cce_storage_common::FulltextSearchOptions {
                 limit: 10,
                 offset: 0,
                 field_weights: HashMap::new(),
@@ -987,10 +988,10 @@ async fn test_plugin_language_remap_lua() {
 /// dependency graph (main → math → io).
 #[tokio::test]
 async fn test_plugin_symbol_extract_relation_index() {
+    use cce_codegraph::index::ImportIndexOps;
     use cce_config::RelationConfig;
     use cce_orchestrator::{IndexOptions, IndexOrchestrator};
     use cce_plugin::PluginCapability;
-    use cce_codegraph::index::ImportIndexOps;
     use std::sync::Arc;
 
     init_minimal_logging();
@@ -1122,8 +1123,8 @@ async fn test_plugin_symbol_extract_relation_index() {
 /// custom-language files get no plugin imports in the relation index.
 #[tokio::test]
 async fn test_plugin_symbol_extract_gated_off() {
-    use cce_orchestrator::{IndexOptions, IndexOrchestrator};
     use cce_codegraph::index::ImportIndexOps;
+    use cce_orchestrator::{IndexOptions, IndexOrchestrator};
     use std::sync::Arc;
 
     init_minimal_logging();

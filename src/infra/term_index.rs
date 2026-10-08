@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use cce_storage_bm25::{Bm25Document, expand_query_tokens};
+use cce_storage_bm25::expand_query_tokens;
+use cce_storage_common::FulltextDocument;
 use cce_text::MixedTokenizer;
 
 const FIELD_NAMES: [&str; 3] = ["title", "keywords", "content"];
@@ -75,7 +76,7 @@ impl InMemoryTermIndex {
 /// Tokenises each field (title, keywords, content) independently,
 /// counts term frequencies per (doc, field), and records per-field
 /// document frequencies.
-pub fn build_term_index(documents: &[Bm25Document]) -> InMemoryTermIndex {
+pub fn build_term_index(documents: &[FulltextDocument]) -> InMemoryTermIndex {
     let n_docs = documents.len();
     let mut postings: HashMap<String, Vec<(u32, u8, u32)>> = HashMap::new();
     let mut term_field_df: HashMap<String, [u32; 3]> = HashMap::new();
@@ -200,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_build_term_index_single_doc() {
-        let doc = Bm25Document::new("test:1")
+        let doc = FulltextDocument::new("test:1")
             .with_field("title", "Test Function")
             .with_field("content", "This is a test function for testing")
             .with_field("keywords", "test func");
@@ -214,7 +215,7 @@ mod tests {
     }
 
     fn index_with_text(text: &str) -> InMemoryTermIndex {
-        let doc = Bm25Document::new("test:0")
+        let doc = FulltextDocument::new("test:0")
             .with_field("title", text)
             .with_field("keywords", "")
             .with_field("content", "");

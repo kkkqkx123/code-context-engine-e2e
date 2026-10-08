@@ -1,3 +1,4 @@
+use cce_storage_common::FulltextDocument;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::path::Path;
@@ -8,7 +9,6 @@ use cce_orchestrator::index::{FileProcessor, build_bm25_documents};
 use cce_parser::ast_to_nl::chunker::ChunkedResult;
 use cce_parser::grouper::GroupType;
 use cce_scanner::FileEntry;
-use cce_storage_bm25::Bm25Document;
 use cce_types::OutputMode;
 
 use crate::FixtureSpec;
@@ -524,7 +524,7 @@ pub fn aggregate_by_query_type(observations: &[QueryObservation]) -> Vec<QueryTy
 async fn build_full_pipeline_documents(
     target_spec: FixtureSpec,
     distractor_spec: FixtureSpec,
-) -> Result<(Vec<ChunkData>, Vec<Bm25Document>)> {
+) -> Result<(Vec<ChunkData>, Vec<FulltextDocument>)> {
     let target_entries = scan_fixture(target_spec)?;
     let distractor_entries = scan_fixture(distractor_spec)?;
     let chunks =

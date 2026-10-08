@@ -459,11 +459,11 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
 
     /// Initialize query coordinator from index orchestrator
     async fn init_query_coordinator(&mut self) -> Result<()> {
+        use cce_codegraph::{CallChainQuery, RelationIndex};
         use cce_config::AppConfig;
         use cce_config::modules::{EmbeddingModelConfig, ProviderConfig};
         use cce_llm_client::OpenAICompatibleProvider;
         use cce_orchestrator::query::{IndexCapabilities, QueryCoordinator};
-        use cce_codegraph::{CallChainQuery, RelationIndex};
         use cce_storage_vector_qdrant::QdrantClient;
         use std::sync::Arc;
 

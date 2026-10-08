@@ -2,6 +2,7 @@
 //!
 //! Verifies project isolation for indexing, BM25 storage, and cleanup.
 
+use cce_storage_common::{FulltextDocument, FulltextHit, FulltextSearchOptions};
 use std::sync::Arc;
 
 /// Dual-project BM25 isolation
@@ -120,7 +121,7 @@ pub fn helper_b() -> String { bar() }
     };
 
     // Search "foo" in project A → should find results
-    let opts_a = cce_storage_bm25::Bm25SearchOptions {
+    let opts_a = cce_storage_common::FulltextSearchOptions {
         project_id: 1,
         limit: 10,
         offset: 0,
@@ -144,7 +145,7 @@ pub fn helper_b() -> String { bar() }
     );
 
     // Search "foo" in project B → should NOT find results
-    let opts_b = cce_storage_bm25::Bm25SearchOptions {
+    let opts_b = cce_storage_common::FulltextSearchOptions {
         project_id: 2,
         limit: 10,
         offset: 0,

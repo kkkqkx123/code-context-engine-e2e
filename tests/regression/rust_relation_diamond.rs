@@ -4,9 +4,9 @@
 //! (main -> service_a -> repository, main -> service_b -> repository)
 //! is correctly indexed and can be traversed in both directions.
 
-use cce_orchestrator::{IndexOptions, IndexOrchestrator};
 use cce_codegraph::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
 use cce_codegraph::{BuildConfigParser, CallChainQuery, UntypedDependency};
+use cce_orchestrator::{IndexOptions, IndexOrchestrator};
 use cce_types::language::Language;
 
 use crate::helper::{TestFixture, init_minimal_logging};

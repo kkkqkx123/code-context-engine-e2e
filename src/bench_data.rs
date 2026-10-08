@@ -469,7 +469,7 @@ pub struct CallEdgeData {
 }
 
 /// BM25 document fields consumed by the offline scorer, mirroring the
-/// production `Bm25Document` shape (title/content/keywords).
+/// production `FulltextDocument` shape (title/content/keywords).
 #[derive(Archive, Serialize, Deserialize, Debug, Clone, SerdeSerialize, SerdeDeserialize)]
 pub struct Bm25DocRecord {
     pub title: String,
@@ -522,11 +522,11 @@ pub fn compute_bm25_scores(
     query_texts: &[String],
     operator: cce_storage_bm25::TermOperator,
 ) -> Vec<Vec<f64>> {
-    let bm25_docs: Vec<cce_storage_bm25::Bm25Document> = documents
+    let bm25_docs: Vec<cce_storage_common::FulltextDocument> = documents
         .iter()
         .enumerate()
         .map(|(i, record)| {
-            cce_storage_bm25::Bm25Document::new(format!("doc:{i}"))
+            cce_storage_common::FulltextDocument::new(format!("doc:{i}"))
                 .with_field("title", &record.title)
                 .with_field("keywords", &record.keywords)
                 .with_field("content", &record.content)
@@ -643,7 +643,7 @@ mod tests {
     #[test]
     fn qualified_identifier_and_plain_words_produce_different_expansions() {
         let docs = vec![
-            cce_storage_bm25::Bm25Document::new("d:0")
+            cce_storage_common::FulltextDocument::new("d:0")
                 .with_field("title", "RegexMatcher::find_at")
                 .with_field("keywords", "regex matcher find at")
                 .with_field("content", "RegexMatcher::find_at"),

@@ -9,6 +9,7 @@
 //! Counters (parse / summary / bm25-index) are shared across instances so a
 //! resumed run's probes can prove that work was NOT duplicated.
 
+use cce_storage_common::{FulltextDocument, FulltextHit, FulltextSearchOptions};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -954,12 +955,13 @@ impl HotUpdateHarness {
     /// Run a BM25 query over the shared index and return (title, file_path)
     /// pairs of the top hits.
     pub async fn query_bm25(&self, query_text: &str) -> Vec<(String, String)> {
-        use cce_storage_bm25::{Bm25Retrieval, Bm25SearchOptions};
+        use cce_storage_bm25::Bm25Retrieval;
+        use cce_storage_common::FulltextSearchOptions;
         let client = &self.bm25;
         let manager = client.index_manager().expect("bm25 index manager").clone();
         let schema = client.schema().clone();
         let manager = manager.read().await;
-        let options = Bm25SearchOptions {
+        let options = FulltextSearchOptions {
             limit: 10,
             offset: 0,
             field_weights: Default::default(),

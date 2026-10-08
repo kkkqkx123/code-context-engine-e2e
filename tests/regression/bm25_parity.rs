@@ -18,13 +18,14 @@
 //! Offline: no embedding API, no network, no Qdrant — only a temp-dir tantivy
 //! index.
 
+use cce_storage_common::{FulltextDocument, FulltextHit, FulltextSearchOptions};
 use std::collections::HashMap;
 
 use cce_e2e_tests::bench_data::production_bm25_config;
 use cce_e2e_tests::infra::{build_term_index, expand_query, score_all};
 use cce_storage_bm25::{
-    Bm25AlgorithmConfig, Bm25Retrieval, Bm25SearchOptions, IndexManager, IndexManagerConfig,
-    TermOperator, batch_add_documents,
+    Bm25AlgorithmConfig, Bm25Retrieval, IndexManager, IndexManagerConfig, TermOperator,
+    batch_add_documents,
 };
 use tempfile::tempdir;
 
@@ -97,12 +98,12 @@ fn queries() -> Vec<(&'static str, TermOperator)> {
     ]
 }
 
-fn search_options(operator: TermOperator, limit: usize) -> Bm25SearchOptions {
+fn search_options(operator: TermOperator, limit: usize) -> FulltextSearchOptions {
     let mut field_weights = HashMap::new();
     field_weights.insert("title".to_string(), 2.0);
     field_weights.insert("content".to_string(), 1.0);
     field_weights.insert("keywords".to_string(), 2.0);
-    Bm25SearchOptions {
+    FulltextSearchOptions {
         limit,
         offset: 0,
         field_weights,
@@ -147,10 +148,10 @@ fn offline_scorer_matches_production_tantivy_bm25() {
     manager.reload_reader().expect("reader reload after commit");
 
     // Offline side: in-memory scorer over the same documents.
-    let bm25_docs: Vec<cce_storage_bm25::Bm25Document> = corpus
+    let bm25_docs: Vec<cce_storage_common::FulltextDocument> = corpus
         .iter()
         .map(|(id, title, keywords, content)| {
-            cce_storage_bm25::Bm25Document::new(*id)
+            cce_storage_common::FulltextDocument::new(*id)
                 .with_field("title", *title)
                 .with_field("keywords", *keywords)
                 .with_field("content", *content)

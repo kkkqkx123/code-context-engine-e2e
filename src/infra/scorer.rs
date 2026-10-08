@@ -195,19 +195,19 @@ mod tests {
     use super::*;
     use crate::infra::term_index::build_term_index;
     use crate::infra::term_index::expand_query;
-    use cce_storage_bm25::Bm25Document;
+    use cce_storage_common::FulltextDocument;
 
-    fn make_docs() -> Vec<Bm25Document> {
+    fn make_docs() -> Vec<FulltextDocument> {
         vec![
-            Bm25Document::new("d:1")
+            FulltextDocument::new("d:1")
                 .with_field("title", "Alpha")
                 .with_field("content", "alpha beta gamma delta")
                 .with_field("keywords", "alpha"),
-            Bm25Document::new("d:2")
+            FulltextDocument::new("d:2")
                 .with_field("title", "Beta")
                 .with_field("content", "beta gamma epsilon")
                 .with_field("keywords", "beta"),
-            Bm25Document::new("d:3")
+            FulltextDocument::new("d:3")
                 .with_field("title", "Gamma")
                 .with_field("content", "gamma delta zeta")
                 .with_field("keywords", "gamma"),
@@ -291,15 +291,15 @@ mod tests {
         // "alpha" in doc 0, "gamma" in doc 2; doc 1 contains neither.
         // "or" must match docs 0 and 2.
         let docs = vec![
-            Bm25Document::new("d:1")
+            FulltextDocument::new("d:1")
                 .with_field("title", "Alpha")
                 .with_field("content", "alpha beta gamma delta")
                 .with_field("keywords", "alpha"),
-            Bm25Document::new("d:2")
+            FulltextDocument::new("d:2")
                 .with_field("title", "Beta")
                 .with_field("content", "beta epsilon")
                 .with_field("keywords", "beta"),
-            Bm25Document::new("d:3")
+            FulltextDocument::new("d:3")
                 .with_field("title", "Gamma")
                 .with_field("content", "gamma delta zeta")
                 .with_field("keywords", "gamma"),
@@ -327,15 +327,15 @@ mod tests {
         // doc 0 has "beta" but not "gamma"; doc 2 has "gamma" but not "beta";
         // only doc 1 contains both.
         let docs = vec![
-            Bm25Document::new("d:1")
+            FulltextDocument::new("d:1")
                 .with_field("title", "Alpha")
                 .with_field("content", "alpha beta delta")
                 .with_field("keywords", "alpha"),
-            Bm25Document::new("d:2")
+            FulltextDocument::new("d:2")
                 .with_field("title", "Beta")
                 .with_field("content", "beta gamma epsilon")
                 .with_field("keywords", "beta"),
-            Bm25Document::new("d:3")
+            FulltextDocument::new("d:3")
                 .with_field("title", "Gamma")
                 .with_field("content", "gamma delta zeta")
                 .with_field("keywords", "gamma"),
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn test_repeated_query_term_scores_add() {
         let docs = vec![
-            Bm25Document::new("d:0")
+            FulltextDocument::new("d:0")
                 .with_field("title", "Alpha")
                 .with_field("content", "alpha that returns beta")
                 .with_field("keywords", "alpha"),
@@ -395,11 +395,11 @@ mod tests {
         // Query "get_or_init" matches doc 0 via the original term (weight 1.0)
         // and doc 1 via split tokens only (weight 0.5 each).
         let docs = vec![
-            Bm25Document::new("d:0")
+            FulltextDocument::new("d:0")
                 .with_field("title", "get_or_init")
                 .with_field("content", "function get_or_init")
                 .with_field("keywords", "get_or_init"),
-            Bm25Document::new("d:1")
+            FulltextDocument::new("d:1")
                 .with_field("title", "Other")
                 .with_field("content", "the init get or run")
                 .with_field("keywords", "other"),
@@ -426,11 +426,11 @@ mod tests {
         // yields tf=2 for the split terms in keywords while the new form
         // yields tf=1. The query "get" must therefore score the old doc
         // strictly higher, ceteris paribus.
-        let old_style = Bm25Document::new("d:0")
+        let old_style = FulltextDocument::new("d:0")
             .with_field("title", "same")
             .with_field("content", "identical content")
             .with_field("keywords", "get_or_init get or init");
-        let new_style = Bm25Document::new("d:1")
+        let new_style = FulltextDocument::new("d:1")
             .with_field("title", "same")
             .with_field("content", "identical content")
             .with_field("keywords", "get_or_init");

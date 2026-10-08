@@ -3,9 +3,9 @@
 //! These tests verify that the relation index correctly resolves cross-file
 //! function calls, call chains, and file dependencies for the relation_demo fixture.
 
-use cce_orchestrator::{IndexOptions, IndexOrchestrator};
 use cce_codegraph::index::{EntityIndexOps, FileIndexOps, RelationQueryOps};
 use cce_codegraph::{BuildConfigParser, CallChainQuery, UntypedDependency};
+use cce_orchestrator::{IndexOptions, IndexOrchestrator};
 use cce_types::EntityId;
 
 use crate::helper::{TestFixture, init_minimal_logging};

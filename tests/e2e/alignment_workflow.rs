@@ -24,10 +24,12 @@
 //! the vector score threshold off (`min_score = 0`) because the mock embedder
 //! produces only weak lexical similarity (0.1~0.45).
 
+use cce_storage_common::{FulltextDocument, FulltextHit, FulltextSearchOptions};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use cce_codegraph::{CallChainQuery, RelationIndex};
 use cce_config::project_registry::ProjectScope;
 use cce_e2e_tests::mock_embedding_server::{MOCK_EMBEDDING_DIMENSION, MockEmbeddingServer};
 use cce_llm_client::OpenAICompatibleProvider;
@@ -37,9 +39,7 @@ use cce_orchestrator::query::IndexCapabilities;
 use cce_orchestrator::query::types::{QueryOptions, SearchConfig};
 use cce_orchestrator::{QueryCoordinator, SearchResult, SearchSources};
 use cce_parser::ast_to_nl::chunker::result::ChunkedResult;
-use cce_codegraph::{CallChainQuery, RelationIndex};
 use cce_scanner::FileEntry;
-use cce_storage_bm25::Bm25Document;
 use cce_storage_bm25::{Bm25Client, Bm25Config};
 use cce_storage_metadb_sqlite::SqliteClient;
 use cce_storage_vector_qdrant::QdrantConfig;
@@ -733,13 +733,13 @@ async fn test_empty_data_point_pipeline_smoke() {
     bm25.connect().await.expect("bm25 connect");
     let bm25 = Arc::new(bm25);
 
-    let mut docs: Vec<Bm25Document> = Vec::new();
+    let mut docs: Vec<FulltextDocument> = Vec::new();
     for (id, title, entity, segment) in [
         ("chunk_a", "alpha function", Some("101"), Some("seg_alpha")),
         ("chunk_b", "beta function", Some("102"), Some("seg_beta")),
         ("chunk_s", "queue guide", None, Some("seg_guide")),
     ] {
-        let mut doc = Bm25Document::new(id)
+        let mut doc = FulltextDocument::new(id)
             .with_field("chunk_id", id)
             .with_field("title", title)
             .with_field("content", format!("{title} zephyrwind queue retry policy"))

@@ -36,7 +36,7 @@ impl TestRelationPublisher {
     /// relation publications share the durable state of the test harness.
     pub fn with_sqlite(sqlite: SqliteClient) -> Self {
         Self {
-            pipeline: ResolutionPipelineService::new(sqlite.clone()),
+            pipeline: ResolutionPipelineService::new_local(sqlite.clone()),
             sqlite,
         }
     }
