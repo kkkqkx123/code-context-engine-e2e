@@ -6,7 +6,7 @@
 //! operation would. No server, no network, no real LLM: vectors come from
 //! [`HashEmbedder`], points land in the [`CapturingMockQdrant`].
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,7 +18,6 @@ use cce_config::modules::{DistanceMetric, QdrantConfig};
 use cce_config::{AstToNlConfig, NestProcessorConfig};
 use cce_e2e_tests::mock_qdrant::CapturingMockQdrant;
 use cce_llm_client::OpenAICompatibleProvider;
-use cce_llm_client::services::embedding::mock_server::MockEmbeddingServer;
 use cce_orchestrator::hot_update::processors::ProcessorContext;
 use cce_orchestrator::hot_update::{BatchChangeResult, FileChangeType, ParseResultWithChanges};
 use cce_orchestrator::index::StorageCoordinator;
@@ -424,15 +423,215 @@ impl DriftScaffold {
         qdrant_types::to_qdrant_point_id(logical_point_id).to_string()
     }
 
-    /// Deterministic embedder bound to `model_name`, backed by a mock server.
-    pub fn embedder(model_name: &str) -> Arc<OpenAICompatibleProvider> {
-        let server = MockEmbeddingServer::start();
-        let config = server.app_config(model_name, EMBEDDER_DIMENSION);
-        Arc::new(
+    /// Deterministic embedder bound to `model_name`, backed by a
+    /// model-seeded mock server.
+    ///
+    /// Vectors are pure functions of `(model_name, text)`, so switching the
+    /// model name changes every vector byte-exactly while repeated calls
+    /// under one model are stable. The server guard must stay alive for the
+    /// whole test; dropping it shuts the endpoint down.
+    pub async fn embedder(model_name: &str) -> (Arc<OpenAICompatibleProvider>, MockModelServer) {
+        let server = MockModelServer::start().await;
+        let mut config = cce_config::AppConfig::default();
+        let mut providers = HashMap::new();
+        providers.insert(
+            "mock".to_string(),
+            cce_config::modules::ProviderConfig {
+                id: "mock".to_string(),
+                name: "Mock".to_string(),
+                base_url: server.base_url.clone(),
+                api_keys: vec!["sk-mock".to_string()],
+                max_retries: 0,
+                rate_limit_max_retries: 0,
+                retry_delay_ms: 0,
+                retry_jitter: 0.0,
+                rate_limit: 0,
+                ..Default::default()
+            },
+        );
+        config.llm.providers = providers;
+        let mut models = HashMap::new();
+        models.insert(
+            model_name.to_string(),
+            cce_config::modules::EmbeddingModelConfig {
+                provider_id: "mock".to_string(),
+                model: model_name.to_string(),
+                vector_dimension: EMBEDDER_DIMENSION,
+                ..Default::default()
+            },
+        );
+        config.llm.embedding_models = models;
+        config.embedder.default_model = model_name.to_string();
+        let provider = Arc::new(
             OpenAICompatibleProvider::from_model(&config, model_name)
                 .expect("mock embedder must build"),
-        )
+        );
+        (provider, server)
     }
+}
+
+/// Mock embeddings endpoint whose vectors are seeded by the request's model
+/// name, so an embedder-model change is observable as byte-exact vector
+/// drift. Serves the OpenAI-compatible `/embeddings` shape over plain TCP
+/// for the real `OpenAICompatibleProvider`.
+pub struct MockModelServer {
+    /// Base URL to configure the embedder with.
+    pub base_url: String,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl MockModelServer {
+    async fn start() -> Self {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock embedding server");
+        let port = listener.local_addr().expect("local addr").port();
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let task = tokio::spawn(async move {
+            loop {
+                let conn = tokio::select! {
+                    conn = listener.accept() => conn,
+                    _ = &mut shutdown_rx => break,
+                };
+                let (mut stream, _) = match conn {
+                    Ok(conn) => conn,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    let mut buf = Vec::with_capacity(4096);
+                    let mut tmp = [0u8; 4096];
+                    let body = loop {
+                        match stream.read(&mut tmp).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => {
+                                buf.extend_from_slice(&tmp[..n]);
+                                if let Some((header_end, content_length)) =
+                                    parse_http_headers(&buf)
+                                {
+                                    let body_start = header_end + 4;
+                                    if buf.len() >= body_start + content_length {
+                                        break buf[body_start..body_start + content_length]
+                                            .to_vec();
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    let reply = embedding_reply(&body);
+                    let _ = stream.write_all(&reply).await;
+                });
+            }
+        });
+        Self {
+            base_url: format!("http://127.0.0.1:{port}"),
+            shutdown: Some(shutdown_tx),
+            task: Some(task),
+        }
+    }
+
+    /// Shut the server down explicitly (also happens on drop).
+    #[allow(dead_code)]
+    pub async fn stop(mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
+    }
+}
+
+impl Drop for MockModelServer {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+    }
+}
+
+fn parse_http_headers(buf: &[u8]) -> Option<(usize, usize)> {
+    let haystack = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let header = String::from_utf8_lossy(&buf[..haystack]);
+    let content_length = header
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.trim()
+                .eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
+    Some((haystack, content_length))
+}
+
+fn embedding_reply(body: &[u8]) -> Vec<u8> {
+    let json_body = |status: &str, payload: String| {
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+            payload.len(),
+        )
+        .into_bytes()
+    };
+    let request: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(request) => request,
+        Err(_) => return b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+    };
+    let model = request
+        .get("model")
+        .and_then(|model| model.as_str())
+        .unwrap_or("mock");
+    let inputs: Vec<String> = match request.get("input") {
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::to_string))
+            .collect(),
+        Some(serde_json::Value::String(text)) => vec![text.clone()],
+        _ => return b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+    };
+    let data: Vec<serde_json::Value> = inputs
+        .iter()
+        .enumerate()
+        .map(|(index, text)| {
+            serde_json::json!({
+                "index": index,
+                "embedding": model_seeded_vector(model, text, EMBEDDER_DIMENSION),
+            })
+        })
+        .collect();
+    let payload = serde_json::json!({
+        "model": model,
+        "data": data,
+        "usage": {"prompt_tokens": 0, "total_tokens": 0},
+    })
+    .to_string();
+    json_body("200 OK", payload)
+}
+
+fn model_seeded_vector(model: &str, text: &str, dimension: usize) -> Vec<f32> {
+    let mut vector = Vec::with_capacity(dimension);
+    for index in 0..dimension {
+        let hash = fnv1a(format!("{model}:{text}:{index}").as_bytes());
+        vector.push((hash % 20_001) as f32 / 10_000.0 - 1.0);
+    }
+    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        vector.iter().map(|value| value / norm).collect()
+    } else {
+        vector
+    }
+}
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 /// Convenience: paths changed by an operation (for skip-set assertions).

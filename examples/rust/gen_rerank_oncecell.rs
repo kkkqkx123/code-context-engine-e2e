@@ -47,9 +47,8 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let client = cce_llm_client::build_rerank_client(&config, &model_key, model_config.mode, None)
+    let provider = cce_llm_client::build_cohere_rerank_provider(&config, &model_key)
         .map_err(|e| anyhow::anyhow!("failed to build rerank client: {e:?}"))?;
-    let provider = cce_llm_client::CohereRerankProvider::new(client, model_config.model.clone());
     println!(
         "Rerank model: {model_key} -> {} (cross-encoder)",
         model_config.model

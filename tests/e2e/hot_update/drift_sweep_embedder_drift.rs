@@ -71,7 +71,7 @@ async fn embedder_drift_reembeds_active_generation_in_place() {
     scaffold.add_file(FILE_B, SOURCE_B).expect("add file b");
 
     // Phase 1: normal processing under "model-a" publishes the baseline.
-    let embedder_a = DriftScaffold::embedder("model-a");
+    let (embedder_a, _server_a) = DriftScaffold::embedder("model-a").await;
     let storage_a = scaffold.storage_with_embedder(embedder_a);
     let context_a = scaffold.context(storage_a.clone(), None);
     let processors_a = DriftScaffold::processor_pair(context_a);
@@ -109,7 +109,7 @@ async fn embedder_drift_reembeds_active_generation_in_place() {
     scaffold.qdrant.clear();
 
     // Phase 2: switch to "model-b" and run an operation with no file changes.
-    let embedder_b = DriftScaffold::embedder("model-b");
+    let (embedder_b, _server_b) = DriftScaffold::embedder("model-b").await;
     let storage_b = scaffold.storage_with_embedder(embedder_b);
     let context_b = scaffold.context(storage_b.clone(), None);
     let processors_b = DriftScaffold::processor_pair(context_b);

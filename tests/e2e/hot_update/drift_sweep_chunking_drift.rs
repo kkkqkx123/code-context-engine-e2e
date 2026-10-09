@@ -99,7 +99,7 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
     scaffold.add_file(FILE_C, SOURCE_C_OLD).expect("add file c");
 
     // Phase 1: baseline under default chunking.
-    let embedder_a = DriftScaffold::embedder("model-a");
+    let (embedder_a, _server_a) = DriftScaffold::embedder("model-a").await;
     let storage_a = scaffold.storage_with_embedder(embedder_a);
     let context_a = scaffold.context(storage_a.clone(), None);
     let processors_a = DriftScaffold::processor_pair(context_a.clone());
@@ -145,7 +145,7 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
     // Same model name as phase 1: only the chunking fingerprint may drift,
     // never the embedder fingerprint. The typed handle stays available so
     // embedded texts can be asserted on.
-    let embedder_b = DriftScaffold::embedder("model-a");
+    let (embedder_b, _server_b) = DriftScaffold::embedder("model-a").await;
     let storage_b = scaffold.storage_with_embedder(embedder_b.clone());
     let context_b = scaffold.context(storage_b.clone(), Some(&drifted_config));
     let processors_b = DriftScaffold::processor_pair(context_b.clone());

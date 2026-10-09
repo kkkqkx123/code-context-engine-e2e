@@ -4,40 +4,48 @@
 //! (handler available) and that the merged results carry `rerank_score`
 //! metadata; also verifies the per-request override can force reranking off.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use cce_e2e_tests::mock_chat_server::MockChatServer;
 use cce_llm_client::{
-    GenerativeRerankProvider, GenerativeRerankRequestHandler, HttpLlmClient, LlmConfig,
-    ProductionRerankHandler,
+    GenerativeRerankRequestHandler, ProductionRerankHandler, build_generative_rerank_provider,
 };
 use cce_orchestrator::{SearchConfig, SearchSources};
 
 use crate::helper::{EmptyFixture, QueryWorkflowTest, init_minimal_logging, mock_embedding};
 
-/// Build a rerank handler backed by the mock chat server.
+/// Build a generative rerank handler backed by the mock chat server.
+///
+/// The provider is assembled through the current factory from an `AppConfig`
+/// pointing at the mock endpoint, so the test exercises the production
+/// wiring (config resolution → llm-suite provider → request handler) with
+/// no external LLM service.
 fn rerank_handler(base_url: &str) -> Arc<ProductionRerankHandler> {
-    let llm_config = LlmConfig {
-        api_keys: vec!["test-key".to_string()],
-        base_url: base_url.to_string(),
-        timeout_secs: 30,
-        max_retries: 0,
-        retry_delay_ms: 0,
-        retry_jitter: 0.2,
-        rate_limit_max_retries: 5,
-        rate_limit_max_delay_ms: 60000,
-        circuit_breaker: cce_config::modules::CircuitBreakerConfig::default(),
-        proxy_url: None,
-        extra_headers: HashMap::new(),
-        extra_params: HashMap::new(),
-        endpoints: HashMap::new(),
-    };
-    let client = Arc::new(HttpLlmClient::new(llm_config).expect("LLM client must build"));
-    let provider = Arc::new(GenerativeRerankProvider::new(
-        client,
-        "mock-rerank-model".to_string(),
-    ));
+    use cce_config::modules::{ProviderConfig, RerankModelConfig};
+
+    let mut config = cce_config::AppConfig::default();
+    config.llm.providers.insert(
+        "mock-provider".to_string(),
+        ProviderConfig {
+            id: "mock-provider".to_string(),
+            name: "Mock".to_string(),
+            base_url: base_url.to_string(),
+            api_keys: vec!["test-key".to_string()],
+            ..ProviderConfig::default()
+        },
+    );
+    config.llm.rerank_models.insert(
+        "mock-rerank".to_string(),
+        RerankModelConfig {
+            provider_id: "mock-provider".to_string(),
+            model: "mock-rerank-model".to_string(),
+            ..Default::default()
+        },
+    );
+    let provider = Arc::new(
+        build_generative_rerank_provider(&config, "mock-rerank")
+            .expect("rerank provider must build"),
+    );
     Arc::new(ProductionRerankHandler::Generative(Arc::new(
         GenerativeRerankRequestHandler::new(provider),
     )))
