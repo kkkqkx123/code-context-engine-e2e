@@ -269,7 +269,7 @@ pub fn build_embedder() -> (EmbeddingConfig, AppConfig) {
             EmbeddingModelConfig {
                 provider_id: "test-provider".into(),
                 model: emb_config.model.clone(),
-                vector_dimension: 0,
+                vector_dimension: emb_config.dimension,
                 max_item_tokens: 8192,
                 max_batch_tokens: 16384,
                 ..Default::default()
