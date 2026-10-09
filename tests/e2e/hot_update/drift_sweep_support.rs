@@ -508,8 +508,7 @@ impl MockModelServer {
                             Ok(0) | Err(_) => return,
                             Ok(n) => {
                                 buf.extend_from_slice(&tmp[..n]);
-                                if let Some((header_end, content_length)) =
-                                    parse_http_headers(&buf)
+                                if let Some((header_end, content_length)) = parse_http_headers(&buf)
                                 {
                                     let body_start = header_end + 4;
                                     if buf.len() >= body_start + content_length {
@@ -578,7 +577,10 @@ fn embedding_reply(body: &[u8]) -> Vec<u8> {
     };
     let request: serde_json::Value = match serde_json::from_slice(body) {
         Ok(request) => request,
-        Err(_) => return b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+        Err(_) => {
+            return b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_vec();
+        }
     };
     let model = request
         .get("model")
@@ -590,7 +592,10 @@ fn embedding_reply(body: &[u8]) -> Vec<u8> {
             .filter_map(|item| item.as_str().map(str::to_string))
             .collect(),
         Some(serde_json::Value::String(text)) => vec![text.clone()],
-        _ => return b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+        _ => {
+            return b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_vec();
+        }
     };
     let data: Vec<serde_json::Value> = inputs
         .iter()
