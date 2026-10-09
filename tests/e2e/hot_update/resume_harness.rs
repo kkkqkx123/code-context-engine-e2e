@@ -9,7 +9,6 @@
 //! Counters (parse / summary / bm25-index) are shared across instances so a
 //! resumed run's probes can prove that work was NOT duplicated.
 
-use cce_storage_common::{FulltextDocument, FulltextHit, FulltextSearchOptions};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

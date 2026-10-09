@@ -2,7 +2,6 @@
 //!
 //! Verifies project isolation for indexing, BM25 storage, and cleanup.
 
-use cce_storage_common::{FulltextDocument, FulltextHit, FulltextSearchOptions};
 use std::sync::Arc;
 
 /// Dual-project BM25 isolation

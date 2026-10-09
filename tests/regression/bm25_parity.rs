@@ -18,7 +18,7 @@
 //! Offline: no embedding API, no network, no Qdrant — only a temp-dir tantivy
 //! index.
 
-use cce_storage_common::{FulltextDocument, FulltextHit, FulltextSearchOptions};
+use cce_storage_common::FulltextSearchOptions;
 use std::collections::HashMap;
 
 use cce_e2e_tests::bench_data::production_bm25_config;

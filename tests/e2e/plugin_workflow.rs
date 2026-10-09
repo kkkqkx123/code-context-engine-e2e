@@ -9,7 +9,6 @@ use crate::helper::{
 };
 use cce_plugin::PluginRegistry;
 use cce_plugin_runtime::{FilePluginSource, LuaPlugin};
-use cce_storage_common::{FulltextDocument, FulltextHit, FulltextSearchOptions};
 use cce_types::grouper::EntityGroup;
 use cce_types::{EntityKind, Language, ParsedFile};
 use compact_str::CompactString;

@@ -24,7 +24,7 @@
 //! the vector score threshold off (`min_score = 0`) because the mock embedder
 //! produces only weak lexical similarity (0.1~0.45).
 
-use cce_storage_common::{FulltextDocument, FulltextHit, FulltextSearchOptions};
+use cce_storage_common::FulltextDocument;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
