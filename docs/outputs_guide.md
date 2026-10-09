@@ -1,88 +1,63 @@
 # outputs目录输出文件分析
 
-本文档分析 `outputs` 目录中各类输出文件的生成来源和用途。
+本文档分析 `outputs` 目录中各类输出文件的生成来源和用途。所有示例均为**人工审查用途**，
+不参与自动断言（断言在 `tests/` 下）；示例列表以 `Cargo.toml` 的 `[[example]]` 条目为准。
 
 ## 目录结构概览
 
 ```
 outputs/
-├── README.md                                # 输出目录说明文档
-├── scenarios/                               # 场景测试输出
-│   ├── documents/                           # 结构化文档格式测试
-│   │   ├── chunks/                          # 分块文本输出
-│   │   │   ├── json/
-│   │   │   ├── md/
-│   │   │   ├── toml/
-│   │   │   ├── xml/
-│   │   │   └── yaml/
-│   │   └── summary/                         # 文件级摘要输出
-│   │       ├── json/
-│   │       ├── toml/
-│   │       ├── xml/
-│   │       └── yaml/
-│   ├── java/
-│   │   └── summary/
-│   │       └── springboot-minimal-demo/     # Java NL文档导出
-│   ├── python/
-│   │   ├── chunks/                          # Python分块验证输出
-│   │   │   ├── basic/emb/
-│   │   │   ├── flask/emb/
-│   │   │   ├── flask/bm25/
-│   │   │   └── index_sidecar/
-│   │   │       ├── emb/
-│   │   │       └── bm25/
-│   │   └── summary/                         # Python NL文档导出
-│   │       ├── basic/
-│   │       ├── flask/
-│   │       └── index_sidecar/
-│   └── rust/
-│       ├── alignment/                       # Hybrid对齐审查报告
-│       │   ├── run_manifest.txt
-│       │   ├── alignment_summary.md
-│       │   └── per_query_alignment.md
-│       ├── chunks/                          # Rust分块验证输出
-│   │   │   ├── index_sidecar/
-│   │   │   │   ├── emb/
-│   │   │   │   └── bm25/
-│   │   │   ├── once_cell/
-│   │   │   │   ├── emb/
-│   │   │   │   └── bm25/
-│   │   │   └── ripgrep/
-│   │   │       ├── emb/
-│   │   │       └── bm25/
-│   │   └── summary/                         # Rust NL文档导出
-│   │       ├── index_sidecar/
-│   │       ├── once_cell/
-│   │       └── ripgrep/
-│   └── test_reporter/                       # 测试报告器输出
-├── relation/                                # 关系查询输出
-│   └── rust/
-│       └── presentation/
-│           ├── relation_demo/               # relation_demo关系展示
-│           └── relation_diamond/            # relation_diamond关系展示
-├── index/                                   # 索引工作流输出
-│   └── test_basic/
-├── benchmark/                               # 基准测试输出
-│   ├── once_cell/                           # once_cell基准评估
-│   │   ├── aggregate_metrics_*.md
-│   │   ├── aggregate_metrics_by_query_type_*.md
-│   │   ├── per_query_results_*.md
+├── scenarios/                               # 场景/审查类输出（按语言分子目录）
+│   ├── {lang}/                              # bash/c/cpp/csharp/dart/go/java/javascript/
+│   │   │                                    # lua/php/python/rust/scala/typescript
+│   │   ├── summary/{fixture}/               # NL 文档导出（Markdown）
+│   │   │   ├── SUMMARY.md
+│   │   │   └── <按源目录组织的 *.md>
+│   │   ├── chunks/{fixture}/{emb,bm25}/     # 分块验证输出（emb / bm25 双路径）
+│   │   │   ├── SUMMARY.txt
+│   │   │   └── <按源目录组织的 *.txt>
+│   │   ├── structured/{fixture}/            # 符号表 + 关系 + 类型推断结构化报告
+│   │   │   ├── SUMMARY.md
+│   │   │   ├── <按源目录组织的 *.txt>       # 每文件报告
+│   │   │   └── <dir>.dir.txt                # 每目录概览
+│   │   └── annotation/{project}/            # 关系标注审查（assembly 改名而来）
+│   │       ├── index.md
+│   │       └── {query_id}.md                # 原始召回 vs 标注后对照
+│   ├── rust/alignment/                      # Hybrid 跨路径对齐审查报告
+│   │   ├── run_manifest.txt
+│   │   ├── alignment_summary.md
+│   │   └── per_query_alignment.md
+│   ├── java/summary/springboot-minimal-demo/  # 旧版导出（仅 summary，无 chunks/structured）
+│   └── multi_language/                      # 多语言索引结果 JSON 报告
+├── index/                                   # 索引工作流输出（回归测试产生）
+├── benchmark/                               # 基准测试输出（按项目分子目录）
+│   ├── {project}/                           # once_cell/ripgrep/flask/express/gin/
+│   │   │                                    # jackson_core/mediatr
+│   │   ├── aggregate_metrics_top{k}.md
+│   │   ├── aggregate_metrics_by_query_type_top{k}.md
+│   │   ├── per_query_results_top{k}.md
 │   │   ├── relevance_top5.md
 │   │   ├── test_diagnostics.md
 │   │   ├── run_manifest.txt
 │   │   ├── evaluation_scope.md
-│   │   ├── bm25_parameter_sweep/
-│   │   └── retrieval_method/                # 召回方式基准测试（emb/bm25/hybrid 融合）
-│   │       ├── run_manifest.txt
-│   │       ├── alignment_coverage.md
-│   │       ├── aggregate_top{k}.md
-│   │       ├── aggregate_by_query_type_top{k}.md
-│   │       ├── per_query_top{k}.md
-│   │       ├── fusion_gain_by_query_type_top{k}.md
-│   │       ├── weight_sensitivity.md
-│   │       ├── rrf_k_sensitivity.md
-│   │       └── relevance_top5.md
-│   │   └── rerank_{variant}/                     # 重排基准测试（对照/重排后对比，每个融合变体独立目录）
+│   │   ├── retrieval_method/                # 召回方式基准（emb/bm25/hybrid 融合）
+│   │   │   ├── run_manifest.txt
+│   │   │   ├── alignment_coverage.md
+│   │   │   ├── aggregate_top{k}.md
+│   │   │   ├── aggregate_by_query_type_top{k}.md
+│   │   │   ├── per_query_top{k}.md
+│   │   │   ├── fusion_gain_by_query_type_top{k}.md
+│   │   │   ├── weight_sensitivity.md
+│   │   │   ├── rrf_k_sensitivity.md
+│   │   │   └── relevance_top5.md
+│   │   ├── aggregation_enhance/             # 聚合增强（summary/relation boost）离线基准
+│   │   │   ├── run_manifest.txt
+│   │   │   ├── aggregate_top{k}.md
+│   │   │   ├── aggregate_by_query_type_top{k}.md
+│   │   │   ├── enhance_gain_by_query_type_top{k}.md
+│   │   │   ├── per_query_top{k}.md
+│   │   │   └── relevance_top5.md
+│   │   └── rerank_{variant}/                # 重排基准（仅 once_cell；每个融合变体独立目录）
 │   │       ├── run_manifest.txt
 │   │       ├── aggregate_top{k}.md
 │   │       ├── aggregate_by_query_type_top{k}.md
@@ -90,114 +65,54 @@ outputs/
 │   │       ├── rerank_gain_by_query_type_top{k}.md
 │   │       ├── latency_cost.md
 │   │       └── relevance_top5.md
-│   ├── ripgrep/                             # ripgrep基准评估
-│   │   ├── (same structure as once_cell)
-│   │   └── bm25_parameter_sweep/
-│   └── flask/                               # Flask基准评估
-│       ├── (same structure as once_cell)
-│       └── bm25_parameter_sweep/
-├── debug/                                   # 调试输出
-│   ├── direct_chunking/
-│   │   └── comparison.txt
-│   ├── full_pipeline/
-│   │   └── comparison.txt
-│   └── full_pipeline_raw_source/
-│       └── comparison.txt
-└── tools/                                   # 工具导出展示
-    └── file-fold/
-        ├── SUMMARY.md
-        └── folded/
+└── demo/                                    # 文档分块演示
+    └── documents/{file_name}_{type}/        # chunk_XXXX.txt + metadata.csv
 ```
+
+说明：
+
+- `{k}` 取 5/10/20/30/50。
+- 旧版目录 `relation/`、`tools/`、`debug/`、`benchmark/{project}/bm25_parameter_sweep/`、
+  `benchmark/{project}/rerank_*/`（once_cell 之外）为历史遗留或未运行时不存在；
+  `dump_document_chunks` 的输出为 `demo/documents/`（非旧文档所述 `demo/documents/` 下的
+  `SUMMARY.md` 结构）。
+- `scenarios/{lang}/` 下的三个标准子目录（summary / chunks / structured）由统一的
+  review 导出框架（`src/review_export.rs`）生成，任何语言的 `export_{lang}` 示例输出结构一致。
 
 ## 输出文件生成来源分析
 
 ### 1. scenarios/ 目录
 
-#### 1.1 Rust索引结果 (`scenarios/rust/summary/`)
+#### 1.1 各语言审查导出（summary / chunks / structured 三件套）
 
-**生成命令:**
+**生成命令（按语言）：**
+
 ```bash
-cargo run --example basic -p cce-e2e-tests
+cargo run --example export_rs -p cce-e2e-tests    # rust: once_cell/ripgrep/index_sidecar/re_export/relation_demo/relation_diamond
+cargo run --example export_py -p cce-e2e-tests    # python: flask/index_sidecar/re_export/wildcard
+cargo run --example export_java -p cce-e2e-tests  # java: index_sidecar/springboot-minimal-demo/jackson-core
+cargo run --example export_go -p cce-e2e-tests    # go: gin
+cargo run --example export_ts / export_js / export_cs / export_kt / export_php \
+  / export_rb / export_lua / export_dart / export_scala / export_c / export_cpp \
+  / export_sh -p cce-e2e-tests                    # 其余语言，各自 review fixture
 ```
 
-**来源文件:** `examples/rust/basic.rs`
+**来源文件：** `examples/{lang}/export_{lang}.rs`（统一走 `src/review_export.rs` 的
+`ReviewExportJob` / `export_jobs` 框架）
 
-**生成逻辑:**
-- 使用 `TestFixture::rust_basic()` 加载基本Rust项目fixture
-- 通过 `IndexOrchestrator` 执行完整索引工作流
-- 使用 `OutputReporter` 和 `OutputSerializer` 生成JSON格式的索引结果报告
-- 输出包含：文件数、索引文件数、实体数、关系数、向量数、令牌数等统计信息
+**生成逻辑（每个 fixture 一次解析，三种输出共享同一 `ParsedFile` 快照）：**
+1. 使用 `FixtureSpec::{lang}_{fixture}()` 加载 review fixture
+2. 扫描、解析、分组后导出 Markdown NL 文档（summary）
+3. 按 Embedding / BM25 双路径生成分块验证文档（chunks）
+4. 通过 `StructuredOutputWriter`（`src/structured_output/`）生成符号表 + 关系 +
+   类型推断报告（structured），按源目录层级组织，含 `SUMMARY.md` 与 `<dir>.dir.txt`
 
-**输出内容:**
-- `outputs/scenarios/rust/presentation/basic/result.json` - 索引结果统计（由 `OutputSerializer::json()` 序列化）
+**输出内容（每个 fixture）：**
+- `summary/{fixture}/SUMMARY.md` + `src/**/*.md` — NL 文档
+- `chunks/{fixture}/{emb,bm25}/SUMMARY.txt` + `src/**/*.txt` — 分块验证
+- `structured/{fixture}/SUMMARY.md` + `src/**/*.txt` + `src.dir.txt` — 结构化报告
 
-#### 1.2 Rust BM25索引结果 (`scenarios/rust/presentation/basic_bm25/`)
-
-**生成命令:**
-```bash
-cargo run --example basic -p cce-e2e-tests
-```
-
-**来源文件:** `examples/rust/basic.rs` (第42-66行)
-
-**生成逻辑:**
-- 与basic相同，但配置为使用BM25索引
-- 生成BM25特定的索引结果报告
-
-**输出内容:**
-- `outputs/scenarios/rust/presentation/basic_bm25/result.json` - BM25索引结果统计
-
-#### 1.3 Rust NL文档导出 (`scenarios/rust/summary/{once_cell,ripgrep,index_sidecar}/`)
-
-**生成命令:**
-```bash
-cargo run --example export_rs -p cce-e2e-tests
-```
-
-**来源文件:** `examples/rust/export_rs.rs` (第67-160行 once_cell, 第162-255行 ripgrep, 第257-349行 index_sidecar)
-
-**生成逻辑:**
-1. 使用 `TestFixture::rust_once_cell()` / `rust_ripgrep()` / `rust_index_sidecar()` 加载fixture
-2. 使用 `FSScanner` 扫描项目目录
-3. 使用 `FileProcessor::process_file_complete()` 处理每个文件
-4. 使用 `DirectExporter` 导出NL文档到 `.cce/nl_docs/`
-5. 将生成的 `.md` 文件从 `.cce/nl_docs/` 复制到outputs目录
-6. 生成 `SUMMARY.md`
-
-**输出内容:**
-- `SUMMARY.md` - 导出摘要信息
-- `src/*.md` - 各源文件的Markdown格式NL文档
-
-#### 1.4 Rust分块验证 (`scenarios/rust/chunks/{once_cell,ripgrep,index_sidecar}/{emb,bm25}/`)
-
-**生成命令:**
-```bash
-cargo run --example export_rs -p cce-e2e-tests
-```
-
-**来源文件:** `examples/rust/export_rs.rs` (第351-484行 once_cell, 第486-619行 ripgrep, 第621-723行 index_sidecar)
-
-**生成逻辑:**
-1. 使用 `TestFixture::rust_once_cell()` 加载 once_cell fixture
-2. 使用 `FileProcessor::process_file_complete()` 分别处理 Embedding 和 BM25 路径
-3. 按源文件路径对 chunk 分组并排序
-4. 对每个源文件生成分段验证文档
-
-**输出目录结构:**
-```
-once_cell/emb/
-├── SUMMARY.txt
-└── src/
-    ├── lib.rs.txt
-    ├── imp_cs.rs.txt
-    └── ...
-once_cell/bm25/
-├── SUMMARY.txt
-└── src/
-    └── ...
-```
-
-**分段验证格式 (每个文件):**
+**分块验证格式（每个文件 `.txt`）：**
 
 ```
 {文件名}
@@ -216,476 +131,352 @@ next_overlap: {n} tokens from {chunk_id}
 {chunk 的 NL 描述文本}
 ```
 
-**验证要点:**
+**验证要点：**
 - `split_reason`: 检查分割原因是否合理 (member_boundary / hard_limit / sentence_boundary 等)
 - `fragment`: 检查分片编号是否连续 (1/3, 2/3, 3/3)
 - `original_entity_id`: 同一实体的分片应共享相同 ID
 - `prev_overlap` / `next_overlap`: 检查相邻 chunk 的重叠区域是否一致
 - `related_groups`: 检查前驱/后继/调用关系是否正确
 
-#### 1.5 Java Spring Boot导出 (`scenarios/java/summary/springboot-minimal-demo/`)
+#### 1.2 类型推断可视化（`scenarios/{lang}/summary|structured/{case}/`）
 
-**生成命令:**
+**生成命令：**
 ```bash
-cargo run --example java_spring_boot_export -p cce-e2e-tests
+cargo run --example export_type_inference -p cce-e2e-tests
 ```
 
-**来源文件:** `examples/java/spring_boot_export.rs`
+**来源文件：** `examples/type_inference/export_type_inference.rs`
 
-**生成逻辑:**
-- 使用 `TestFixture::java_spring_boot()` 加载fixture
-- 使用 `NlDocumentExporter` 生成NL文档
-- 将 `.md` 文件从 `.cce/nl_docs/` 复制到outputs目录
+**生成逻辑：** 扫描所有语言的 `type_inference` fixture，经 `FileProcessor` 解析后，
+NL 文档走 `DirectExporter`，结构化报告走 `StructuredOutputWriter`（含独立
+`TYPE_INFERENCE.md`）。回归断言在 `tests/regression/type_inference/`，不读本输出。
 
-**输出内容:**
-- `SUMMARY.md` - 导出摘要
-- `*.md` - 各源文件的Markdown格式NL文档
+#### 1.3 关系标注审查（`scenarios/{lang}/annotation/{project}/`）
 
-#### 1.6 Python NL文档导出和分块验证 (`scenarios/python/summary/` 和 `scenarios/python/chunks/`)
-
-**生成命令:**
+**生成命令：**
 ```bash
-cargo run --example export_py -p cce-e2e-tests
+cargo run --example annotation_oncecell -p cce-e2e-tests
+cargo run --example annotation_ripgrep -p cce-e2e-tests
+cargo run --example annotation_flask -p cce-e2e-tests
+cargo run --example annotation_gin -p cce-e2e-tests
+cargo run --example annotation_express -p cce-e2e-tests
+cargo run --example annotation_spring_boot -p cce-e2e-tests
+cargo run --example annotation_mediatr -p cce-e2e-tests
 ```
 
-**来源文件:** `examples/python/export_py.rs`
+**来源文件：** `examples/{lang}/annotation_{project}.rs`（express 在 `examples/javascript/`、
+gin 在 `examples/go/`、spring_boot 在 `examples/java/`、mediatr 在 `examples/csharp/`）；
+核心逻辑 `src/annotation_review.rs`（旧名 `assembly_review`，已于近期改名）
 
-**生成逻辑:**
-- 依次处理 flask、basic、index_sidecar 三个fixture
-- 每个fixture同时生成 summary (Markdown NL文档) 和 chunks (分块验证)
-- chunks 按源文件路径分组并排序
+**生成逻辑：**
+- 只消费 `data/benchmark/full_pipeline/{project}/bge-m3/bench_data.rkyv`（其余 baseline
+  无实体结构无调用边，无标注意义）
+- 离线重放 embedding 召回（余弦，无 Qdrant 无网络），逐 query 生成自包含 Markdown
+- 每个命中展示"原始 top-K（对照组）"与"经 `RelationAnnotator::annotate_single` 标注后"
+  对照，附 `AnnotationMetadata`
+- 开启 expansion 时经调用边侧车做一跳扩展（先 callees 后 callers），受
+  `ReviewFilterOptions` 路径策略与扩展预算约束
 
-**输出内容:**
-- `summary/{fixture}/SUMMARY.md` - 导出摘要
-- `summary/{fixture}/*.md` - Markdown格式NL文档
-- `chunks/{fixture}/emb/*.txt` - Embedding路径分块
-- `chunks/{fixture}/bm25/*.txt` - BM25路径分块
+**输出内容：**
+- `index.md` - 逐 query 的 top-1 命中汇总表
+- `{query_id}.md` - 原始召回 vs 标注后内容对照（含 `FZ-` 变体查询）
 
-#### 1.7 多语言项目输出 (`scenarios/multi_language/`)
+#### 1.4 Hybrid 对齐审查报告（`scenarios/rust/alignment/`）
 
-**生成命令:**
+**生成命令：**
 ```bash
-cargo run --example multi_language/basic -p cce-e2e-tests
+cargo run --example alignment_report -p cce-e2e-tests
 ```
 
-**来源文件:** `examples/multi_language/basic.rs`
+**来源文件：** `examples/rust/alignment_report.rs`
 
-**生成逻辑:**
-- 依次处理多语言fixture、Python基本fixture和Java基本fixture
-- 使用 `OutputReporter` 生成JSON报告
+**生成逻辑：**
+- 加载 `fixtures/rust/basic` fixture，使用确定性 mock 嵌入服务（`src/mock_embedding_server.rs`），无需 LLM API
+- 探测 Qdrant 可用性：可用时执行 vector/BM25/hybrid 三路查询，不可用时降级为 BM25-only 并在 manifest 中记录
+- 对齐键为 `cce_types::alignment_key`；使用 `OutputManager`（Scenarios / rust / alignment）写入
 
-**输出内容:**
-- `multi_language_project.json` - 多语言项目索引结果
-- `python_basic.json` - Python项目索引结果
-- `java_basic.json` - Java项目索引结果
+**输出内容：**
+- `run_manifest.txt` - 运行清单（fixture、Qdrant 可用性、mock 嵌入、对齐键口径、查询列表）
+- `alignment_summary.md` - 逐 query 的 vector/bm25 键数、跨路径匹配键数与对齐率、hybrid 键包含关系
+- `per_query_alignment.md` - 逐 query 的 vector/bm25/hybrid 对齐键明细
 
-### 2. relation/ 目录
+#### 1.5 索引结果快照（`scenarios/{rust,multi_language}/`）
 
-#### 2.1 relation_demo关系展示 (`relation/rust/presentation/relation_demo/`)
-
-**生成命令:**
+**生成命令：**
 ```bash
-cargo run --example relation -p cce-e2e-tests
+cargo run --example rust_basic -p cce-e2e-tests          # 输出 scenarios/rust/presentation/basic/
+cargo run --example multi_language_basic -p cce-e2e-tests # 输出 scenarios/multi_language/
 ```
 
-**来源文件:** `examples/rust/relation.rs` (第689-833行)
+**来源文件：** `examples/rust/basic.rs`、`examples/multi_language/basic.rs`
 
-**生成逻辑:**
-1. 使用 `TestFixture::rust_relation_demo()` 加载fixture
-2. 使用 `BuildConfigParser` 扫描项目依赖
-3. 配置 `IndexOptions` 启用关系构建 (`build_relations: true`)
-4. 执行索引获取 `RelationIndex`
-5. 使用 `CallChainQuery` 执行各种关系查询
+**生成逻辑：** 通过 `IndexOrchestrator` 执行完整索引工作流，`OutputReporter` +
+`OutputSerializer::json()` 生成索引结果 JSON（文件数、实体数、关系数、向量数等统计）。
 
-**输出内容:**
-- `SUMMARY.txt` - 关系展示摘要
-- `config_scan.txt` - 构建配置扫描结果
-- `scope_entities.txt` - 作用域实体和关系
-- `relations.txt` - 直接关系列表
-- `call_chains.txt` - 调用链信息
-- `file_dependencies.txt` - 文件依赖关系
+**输出内容：**
+- `rust_basic_complete.json` - Rust basic 索引结果
+- `multi_language_project.json` / `python_basic.json` / `java_basic.json` - 多语言场景结果
 
-#### 2.2 relation_diamond关系展示 (`relation/rust/presentation/relation_diamond/`)
+#### 1.6 文档格式分块与摘要导出（`scenarios/documents/`）
 
-**生成逻辑:**
-- 与relation_demo类似，但使用 `TestFixture::rust_relation_diamond()` fixture
-- 该fixture展示菱形依赖模式
+**生成命令：**
+```bash
+cargo run --example export_doc -p cce-e2e-tests     # 分块
+cargo run --example summary_doc -p cce-e2e-tests    # 文件级摘要
+```
 
-**输出内容:**
-- `SUMMARY.txt` - 摘要
-- `config_scan.txt` - 配置扫描
-- `relations.txt` - 关系列表
-- `call_chains.txt` - 调用链
+**来源文件：** `examples/rust/export_doc.rs`、`examples/rust/summary_doc.rs`
 
-### 3. index/ 目录
+**生成逻辑：** 将 `fixtures/documents/` 下各格式（JSON/XML/YAML/TOML 等）经文档流水线
+（regex / serde / quick-xml 解析，非 tree-sitter）处理后导出。
 
-#### 3.1 test_basic (`index/test_basic/`)
+**输出内容：**
+- `scenarios/documents/chunks/{format}/{file_name}.txt` - 分块文本
+- `scenarios/documents/summary/{format}/{file_name}.md` - 文件级 DocSummary
 
-**生成来源:** 测试用例
+### 2. benchmark/ 目录
 
-**来源文件:** `tests/regression/e2e_outputs.rs`
+所有 benchmark 均直接复用 `data/benchmark/{baseline}/{project}/bge-m3/bench_data.rkyv`
+（预计算向量 + BM25 文本 + 查询），离线评测，无 LLM API 调用（rerank 生成除外）。
 
-**生成逻辑:**
-- 由 `test_output_manager_basic` 测试生成
-- 执行输出管理器基本功能测试
+#### 2.1 基础检索基准（`benchmark/{project}/`）
 
-**输出内容:**
-- `test.txt` - 测试结果输出
-
-### 4. benchmark/ 目录
-
-#### 4.1 once_cell 基准评估 (`benchmark/once_cell/`)
-
-**生成命令:**
+**生成命令：**
 ```bash
 cargo run --example benchmark_oncecell -p cce-e2e-tests
-```
-
-**来源文件:** `examples/rust/benchmark_oncecell.rs`
-
-**生成逻辑:**
-1. 从 `data/benchmark/{baseline}/once_cell/bge-m3/bench_data.rkyv` 加载基准数据
-2. 使用 `src/judgments/evaluate.rs` 中的评估函数
-3. 计算BGE-M3余弦相似度分数和BM25分数
-4. 使用 `src/judgments/report.rs` 中的报告函数生成报告
-5. 输出Precision@K、Recall@K、MRR@K、F1@K等指标
-
-**输出内容:**
-- `aggregate_metrics_top{k}.md` - 聚合指标报告（top5/10/20/30/50）
-- `aggregate_metrics_by_query_type_top{k}.md` - 按查询类型分组的聚合指标
-- `per_query_results_top{k}.md` - 每条查询的详细结果
-- `relevance_top5.md` - 相关性报告
-- `test_diagnostics.md` - 测试诊断信息
-- `run_manifest.txt` - 运行清单
-- `evaluation_scope.md` - 评估范围说明
-- `bm25_parameter_sweep/` - BM25参数扫描结果
-
-#### 4.2 ripgrep 基准评估 (`benchmark/ripgrep/`)
-
-**生成命令:**
-```bash
 cargo run --example benchmark_ripgrep -p cce-e2e-tests
-```
-
-**来源文件:** `examples/rust/benchmark_ripgrep.rs`
-
-**生成逻辑:**
-- 与 benchmark_oncecell 相同的评估流程
-- 使用 ripgrep fixture 和 ripgrep 相关性判断
-- 评估范围：CoreRetrieval
-
-**输出内容:**
-- (同 once_cell 结构)
-
-#### 4.3 Flask 基准评估 (`benchmark/flask/`)
-
-**生成命令:**
-```bash
 cargo run --example benchmark_flask -p cce-e2e-tests
+cargo run --example benchmark_express / benchmark_gin / benchmark_jackson_core \
+  / benchmark_spring_boot / benchmark_mediatr -p cce-e2e-tests
 ```
 
-**来源文件:** `examples/python/benchmark_flask.rs`
+**来源文件：** `examples/javascript/benchmark_express.rs`、`examples/go/benchmark_gin.rs`、
+`examples/csharp/benchmark_mediatr.rs`、`examples/java/benchmark_{jackson_core,spring_boot}.rs`；
+核心逻辑 `src/judgments/{evaluate,report}.rs`（判定集定义在 `src/judgments/{project}.rs`）
 
-**生成逻辑:**
-- 与 once_cell 相同的评估流程
-- 使用 Python Flask fixture
+**生成逻辑：** 对 embedding 变体和 BM25 变体计算 Precision@K、Recall@K、MRR@K、F1@K。
 
-**输出内容:**
-- (同 once_cell 结构)
+**输出内容：**
+- `aggregate_metrics_top{k}.md` / `aggregate_metrics_by_query_type_top{k}.md`
+- `per_query_results_top{k}.md` / `relevance_top5.md`
+- `test_diagnostics.md` / `run_manifest.txt` / `evaluation_scope.md`
 
-#### 4.4 BM25参数扫描 (`benchmark/{once_cell,ripgrep,flask}/bm25_parameter_sweep/`)
+#### 2.2 召回方式基准（`benchmark/{once_cell,ripgrep,flask}/retrieval_method/`）
 
-**生成命令:**
-```bash
-cargo run --example bm25_para_oncecell -p cce-e2e-tests
-cargo run --example bm25_para_ripgrep -p cce-e2e-tests
-cargo run --example bm25_para_flask -p cce-e2e-tests
-```
-
-**来源文件:**
-- `examples/rust/bm25_para_oncecell.rs`
-- `examples/rust/bm25_para_ripgrep.rs`
-- `examples/python/bm25_para_flask.rs`
-
-**生成逻辑:**
-- 对BM25参数（k1, b）进行网格搜索
-- 计算不同参数组合下的MRR@10、F1@10、Recall@20等指标
-
-**输出内容:**
-- `aggregate_metrics.md` - 聚合指标
-- `aggregate_metrics_by_query_type.md` - 按查询类型分组
-- `per_query_metrics.md` - 每条查询的指标
-- `manifest.md` - 参数清单
-
-#### 4.5 召回方式基准测试 (`benchmark/{once_cell,ripgrep,flask}/retrieval_method/`)
-
-**生成命令:**
+**生成命令：**
 ```bash
 cargo run --example benchmark_retrieval_oncecell -p cce-e2e-tests
 cargo run --example benchmark_retrieval_ripgrep -p cce-e2e-tests
 cargo run --example benchmark_retrieval_flask -p cce-e2e-tests
 ```
 
-**来源文件:**
-- `examples/rust/benchmark_retrieval_oncecell.rs`
-- `examples/rust/benchmark_retrieval_ripgrep.rs`
-- `examples/python/benchmark_retrieval_flask.rs`
-- 核心逻辑：`src/retrieval_method/{fusion,benchmark,report}.rs`
+**来源文件：** `examples/{lang}/benchmark_retrieval_{project}.rs`；
+核心逻辑 `src/retrieval_method/{fusion,benchmark,report}.rs`
 
-**生成逻辑:**
-- 直接复用 `data/benchmark/{baseline}/{fixture}/bge-m3/bench_data.rkyv`（emb 向量 + bm25 文本 + 查询），无需重新生成数据、无需 LLM API
+**生成逻辑：**
 - 评测方法矩阵：`emb`、`bm25`、`minmax-*`（7 组 vector/bm25 权重）、`rrf-*`（k=30/60/100）
-- 跨路径对齐键为 `(file_path, entity_name)`（当前 ChunkData 无 `content_entity_ids`）；所有方法统一按对齐键去重后评测，保证 hybrid 与单路口径一致
-- 复用 `evaluate_ranked_chunks_range_based` 计算 P/R/F1，另加首次命中排位、同 range 重复占位、fusion_gain、权重敏感性指标
+- 跨路径对齐键去重后评测，保证 hybrid 与单路口径一致
+- 复用 range-based P/R/F1 计算，另加首次命中排位、同 range 重复占位、fusion_gain、权重敏感性指标
 
-**输出内容:**
-- `run_manifest.txt` - 运行清单（数据源、方法矩阵、对齐键、各 baseline chunk/键统计）
-- `alignment_coverage.md` - 跨路径对齐键覆盖统计（失真可见性）
-- `aggregate_top{k}.md` - 按 (baseline, method) 聚合的 P/R/F1/1st_hit/redund
-- `aggregate_by_query_type_top{k}.md` - 按查询类型聚合
-- `per_query_top{k}.md` - 逐 query × 逐 method 明细
-- `fusion_gain_by_query_type_top{k}.md` - 融合相对最优单路的提升
-- `weight_sensitivity.md` - minmax 7 权重敏感性（含 std）
-- `rrf_k_sensitivity.md` - rrf 3 个 k 值对比（含 std）
-- `relevance_top5.md` - top-5 strong/related 命中明细
+**输出内容：**
+- `run_manifest.txt` / `alignment_coverage.md`
+- `aggregate_top{k}.md` / `aggregate_by_query_type_top{k}.md` / `per_query_top{k}.md`
+- `fusion_gain_by_query_type_top{k}.md` / `weight_sensitivity.md` / `rrf_k_sensitivity.md`
+- `relevance_top5.md`
 
-#### 4.6 重排基准测试 (`benchmark/{once_cell}/rerank_{variant}/`)
+#### 2.3 重排基准（`benchmark/once_cell/rerank_{variant}/`）
 
-**生成命令（两步）:**
+**生成命令（两步）：**
 ```bash
 cargo run --example gen_rerank_oncecell -p cce-e2e-tests       # 调用真实重排模型，生成分数旁路文件
-cargo run --example benchmark_rerank_oncecell -p cce-e2e-tests # 纯离线评分，生成报告（默认使用 config 融合）
-# 离线融合变体（无需重新调用模型，旁路只存纯重排分）:
+cargo run --example benchmark_rerank_oncecell -p cce-e2e-tests # 纯离线评分（默认使用 config 融合）
+# 离线融合变体（旁路只存纯重排分，无需重新调用模型）:
 cargo run --example benchmark_rerank_oncecell -p cce-e2e-tests -- rerank_only
 cargo run --example benchmark_rerank_oncecell -p cce-e2e-tests -- multiplicative
 cargo run --example benchmark_rerank_oncecell -p cce-e2e-tests -- linear_weighted --normalize-initial
 ```
 
-**来源文件:**
-- `examples/rust/gen_rerank_oncecell.rs`（生成）
-- `examples/rust/benchmark_rerank_oncecell.rs`（评分）
-- 核心逻辑：`src/rerank_benchmark.rs`（旁路类型、候选构造、分数生成、离线评分）、`src/rerank_benchmark/report.rs`（报告）
+**来源文件：** `examples/rust/gen_rerank_oncecell.rs`、`examples/rust/benchmark_rerank_oncecell.rs`；
+核心逻辑 `src/rerank_benchmark.rs` + `src/rerank_benchmark/report.rs`
 
-**生成逻辑:**
-- 直接复用 `data/benchmark/{baseline}/{fixture}/bge-m3/bench_data.rkyv`（不修改、不扩展其结构；通过 FNV-1a 源哈希校验一致性）
-- 评测矩阵：`emb`、`bm25`、`minmax-0.5`（固定均衡混合代表档）× 对照/重排后；候选为各召回排序头部固定 50 个
-- 候选文本规则：向量路取向量切块文本，BM25 路取三字段文档的 `content` 字段，混合档按代表切块归属路径取值；请求组装沿用生产侧 500 字符截断
-- 生成阶段逐查询串行调用 `/rerank` 端点（真实模型 `BAAI/bge-reranker-v2-m3`，`cross_encoder` 模式），失败样本记录 `failed` 而不阻塞；评分阶段只读旁路文件离线融合（`[rerank].score_fusion_strategy`，可用参数覆盖为 `rerank_only`/`multiplicative`/`linear_weighted`）+ `RankedScan` 评分，更换融合策略只需重跑评分
-- `--normalize-initial` 在融合前对每 query 的初始分做 min-max 归一化到 [0,1]（全等退化时全置 1.0），使 `alpha` 在 BM25 原始分/余弦窄带/归一化混合分之间可比；每个（融合，归一化）变体写入独立的 `rerank_{variant}/` 目录，互不覆盖
-- 对照组与重排组共享同一候选列表与评估映射，唯一差异是重排重排位；旁路文件过期（源哈希/方法/深度/候选/模型任一变化）则直接报错而非产出误导数字
+**生成逻辑：**
+- 复用 `bench_data.rkyv` + `rerank_*.rkyv` 旁路（FNV-1a 源哈希校验一致性，过期直接报错）
+- 评测矩阵：`emb`/`bm25`/`minmax-0.5` × 对照/重排后；候选为各召回排序头部固定 50 个
+- 候选文本两种来源：`emb-text`（向量切块文本）与 `raw-code`（真实源码切片），
+  每种文本来源产生独立变体目录
+- 变体目录名示例：`rerank_rerank_only_emb-text/`、
+  `rerank_linear-weighted-alpha0.7_raw-code_norm-init/`
+- 更换融合策略只需重跑评分阶段
 
-**输出内容（`outputs/benchmark/{fixture}/rerank_{variant}/`，如 `rerank_linear-weighted-alpha0.7/`、`rerank_rerank_only/`、`rerank_multiplicative/`、`rerank_linear-weighted-alpha0.7_norm-init/`）:**
-- `run_manifest.txt` - 运行清单（模型、深度、融合策略、文本规则、各基线源哈希与可用方法）
-- `aggregate_top{k}.md` - 按 (baseline, method) 聚合的 P/R/F1/1st_hit/redund（method 含 `emb`/`emb+rerank` 等对照对）
-- `aggregate_by_query_type_top{k}.md` - 按查询类型聚合
-- `per_query_top{k}.md` - 逐 query × 逐 method 明细
-- `rerank_gain_by_query_type_top{k}.md` - 重排相对对照的提升（ΔR/ΔF1、胜负统计、首命中排名变化）
-- `latency_cost.md` - 逐 (baseline, method) 的调用次数、失败率、耗时分布与平均候选数
-- `relevance_top5.md` - top-5 strong/related 命中明细
+**输出内容（每个变体目录）：**
+- `run_manifest.txt` / `aggregate_top{k}.md` / `aggregate_by_query_type_top{k}.md`
+- `per_query_top{k}.md` / `rerank_gain_by_query_type_top{k}.md`
+- `latency_cost.md` / `relevance_top5.md`
 
-#### 4.7 Hybrid对齐审查报告 (`scenarios/rust/alignment/`)
+#### 2.4 聚合增强基准（`benchmark/{project}/aggregation_enhance/`）
 
-**生成命令:**
+**生成命令：**
 ```bash
-cargo run --example alignment_report -p cce-e2e-tests
+cargo run --example benchmark_agg_oncecell -p cce-e2e-tests
+cargo run --example benchmark_agg_ripgrep -p cce-e2e-tests
+cargo run --example benchmark_agg_flask -p cce-e2e-tests
 ```
 
-**来源文件:** `examples/rust/alignment_report.rs`
+**来源文件：** `examples/rust/benchmark_agg_{oncecell,ripgrep,flask}.rs`；
+核心逻辑 `src/aggregation_enhance/{enhance,benchmark,report}.rs`
 
-**生成逻辑:**
-- 加载 `fixtures/rust/basic` fixture，使用确定性 mock 嵌入服务（`src/mock_embedding_server.rs`），无需 LLM API
-- 探测 Qdrant 可用性：可用时执行 vector/BM25/hybrid 三路查询，不可用时降级为 BM25-only 并在 manifest 中记录
-- 使用 `OutputManager`（`Scenarios` 类别 + `rust` 语言 + `alignment` 场景）写入输出
+**生成逻辑：**
+- 只消费 `full_pipeline` 数据集，比较普通 base 排序 vs 离线 summary/relation boost 后排序
+- summary 信号镜像生产侧 `cce_orchestrator::query::boost` 公式（文件向量均值池化 +
+  逐 query 余弦 + 阈值归一化）；relation 信号为离线代理（文件内聚实体图 + BFS 扩展 +
+  `1/sqrt(hops)` 衰减）
+- 聚合逻辑镜像生产 `apply_boosts`（分源上限 + 全局 `max_addition`，乘法加成）
 
-**输出内容:**
-- `run_manifest.txt` - 运行清单（fixture、Qdrant 可用性、mock 嵌入、对齐键口径、查询列表）
-- `alignment_summary.md` - 逐 query 的 vector/bm25 键数、跨路径匹配键数与对齐率、hybrid 键包含关系
-- `per_query_alignment.md` - 逐 query 的 vector/bm25/hybrid 对齐键明细
+**输出内容：**
+- `run_manifest.txt`
+- `aggregate_top{k}.md` / `aggregate_by_query_type_top{k}.md`
+- `enhance_gain_by_query_type_top{k}.md` - boost 相对 base 的提升
+- `per_query_top{k}.md` / `relevance_top5.md`
 
-### 5. debug/ 目录
+### 3. demo/ 目录
 
-#### 5.1 检索器对比 (`debug/{direct_chunking,full_pipeline,full_pipeline_raw_source}/`)
+#### 3.1 文档分块演示（`demo/documents/`）
 
-**生成命令:**
-```bash
-cargo run --example debug_matrix -p cce-e2e-tests
-```
-
-**来源文件:** `examples/rust/debug_matrix.rs`
-
-**生成逻辑:**
-- 加载基准数据
-- 对比BGE-M3和BM25两种检索器的性能
-- 生成对比报告
-
-**输出内容:**
-- `comparison.txt` - 检索器对比报告
-
-### 6. 其他输出
-
-#### 6.1 文档分块演示 (`outputs/demo/documents/`)
-
-**生成命令:**
+**生成命令：**
 ```bash
 cargo run --example dump_document_chunks -p cce-e2e-tests
 ```
 
-**来源文件:** `examples/rust/dump_document_chunks.rs`
+**来源文件：** `examples/rust/dump_document_chunks.rs`
 
-**输出内容:**
-- `{file_name}.emb/` - Embedding路径分块
-- `{file_name}.bm25/` - BM25路径分块
-- `SUMMARY.md` - 概览
+**输出内容：**
+- `{file_name}_{type}/chunk_XXXX.txt` - 每个分块的文本
+- `{file_name}_{type}/metadata.csv` - 分块元数据
 
-#### 6.2 检索结果转储 (`outputs/benchmark/results/{baseline}/{retriever}/ranked/`)
+### 4. index/ 目录
 
-**生成命令:**
-```bash
-cargo run --example dump_retrieval -p cce-e2e-tests
-```
+**生成来源：** 回归测试（`tests/regression/e2e_outputs.rs` 等）产生的索引工作流输出。
 
-**来源文件:** `examples/rust/dump_retrieval.rs`
+### 5. 临时/诊断示例
 
-**输出内容:**
-- `{query_id}.txt` - 每条查询的检索 ranked 结果
+部分示例不产出标准 outputs 目录，仅供临时诊断：
 
-#### 6.3 文件折叠导出 (`outputs/tools/file-fold/`)
-
-**生成命令:**
-```bash
-cargo run --example export_file_fold -p cce-e2e-tests
-```
-
-**来源文件:** `examples/tools/export_file_fold.rs`
-
-**生成逻辑:**
-- 加载 `fixtures/tools/file-fold` fixture group
-- 对每个文件调用无状态 `FileFoldTool::fold`，不读取索引、不依赖项目上下文
-- 每个文件先生成 `detailed` 基线；`minimal` 仅在基线具备可解析结构时生成，`tight` 仅在小预算可能继续缩减基线结果时生成
-
-**输出内容:**
-- `SUMMARY.md` - 汇总表格（文件、模式、预算、语言、structure_known、token 与 section 统计）
-- `folded/<flattened-file>.<mode>.md` - 单个文件的折叠文本与统计
-
-### 7. 基准数据生成 (`data/benchmark/`)
-
-**生成命令:**
-```bash
-cargo run --example gen_bench_oncecell -p cce-e2e-tests
-cargo run --example gen_bench_ripgrep -p cce-e2e-tests
-cargo run --example gen_bench_flask -p cce-e2e-tests
-```
-
-**来源文件:**
-- `examples/rust/gen_bench_oncecell.rs`
-- `examples/rust/gen_bench_ripgrep.rs`
-- `examples/python/gen_bench_flask.rs`
-
-**生成逻辑:**
-1. 加载目标代码库和 distractor 代码库的源文件
-2. 执行三种分块基线：full_pipeline、direct_chunking、text_cleaner
-3. 对所有分块文本和查询文本进行批量嵌入（如配置了API key）
-4. 将结果序列化为 `rkyv` 格式
-
-**输出内容:**
-- `data/benchmark/{baseline}/{fixture}/bge-m3/bench_data.rkyv`
-- `data/benchmark/{baseline}/{fixture}/bge-m3/rerank_{model}_{method}_depth{depth}.rkyv` - 重排分数旁路文件（由 `gen_rerank_*` 生成，评分阶段只读）
+- `debug_convert` / `dbg_check` / `dbg_issue_tmp` / `dbg_meta` - 转换/解析诊断
+- `zz_diag_rerank` - 转储单个 query 的重排精确输入
+- `dump_retrieval` - 转储每条查询的检索 ranked 结果到 `benchmark/results/` 下
+  （路径由代码内 `ranked_dir` 决定）
 
 ## 核心生成模块说明
 
-### OutputManager (`src/output_manager.rs`)
+### OutputManager / OutputBuilder (`src/output_manager.rs`)
 
 输出管理器，负责管理输出目录结构和文件创建。
 
-**关键功能:**
+**关键功能：**
 - `OutputCategory` 枚举定义输出类别：Index、Query、Scenarios、HotUpdate、Tools
-- `OutputBuilder` 用于构建输出路径（支持语言、场景、时间戳等维度）
-- `write()` 方法写入文件内容
+- `OutputBuilder` 链式设置 category / language / scenario 后 `build()` 出 `OutputManager`
+- `write()` 方法写入文件内容；默认基础目录为 crate 根 `outputs/`
 
 ### OutputReporter (`src/output_reporter.rs`)
 
 高级报告生成器。
 
-**关键功能:**
+**关键功能：**
 - `report_index_result()` - 生成索引结果报告
 - `write_custom()` - 写入自定义内容
 - 支持元数据（描述、类别、标签）
 
 ### OutputSerializer (`src/output_serializer.rs`)
 
-序列化器，支持JSON和Markdown格式。
+序列化器，支持 JSON 和 Markdown 格式。
 
-**关键功能:**
+**关键功能：**
 - `serialize_index_result()` - 序列化索引结果
 - `SerializableIndexResult` - 可序列化的索引结果结构
 - `json()` / `markdown()` - 快速构造序列化器
 
-### PipelineDebugExporter (`src/pipeline_debug.rs`)
+### ReviewExportJob (`src/review_export.rs`)
 
-流水线调试导出器。
+各语言 `export_{lang}` 示例的统一导出框架：单次解析产出 summary / chunks / structured
+三种输出，保证三路审查基于同一解析快照。
 
-**关键功能:**
-- `render_entity_tree()` - 渲染实体树
-- `render_groups()` - 渲染分组信息
-- `render_pipeline_summary()` - 渲染流水线摘要
-- `render_chunk_alignment()` - 渲染分块对齐
+### StructuredOutputWriter (`src/structured_output/`)
 
-### DirectExporter (`cce_orchestrator::export`)
+结构化报告渲染框架：符号表（按 kind 域分组）、关系（按文件归位）、类型推断，
+含层级目录概览（`<dir>.dir.txt`）。
 
-NL文档导出器，用于导出Markdown格式的自然语言文档。
+### annotation_review (`src/annotation_review.rs`)
 
-**关键功能:**
-- `export_groups()` - 导出实体组为NL文档
+关系标注审查导出：离线 embedding 召回重放 + `RelationAnnotator` 标注对照。
+（旧名 `assembly_review` / `assembly_{project}` 示例，已统一改名为 `annotation_*`。）
 
-### NlDocumentExporter (`cce_orchestrator::export`)
+### judgments / retrieval_method / rerank_benchmark / aggregation_enhance
 
-文件级NL文档导出器。
+四套基准的核心逻辑模块，分别对应上文 2.1–2.4 四类基准输出；示例仅做 fixture
+与判定集（`src/judgments/{project}.rs`）的装配。
 
-**关键功能:**
-- 导出文件级的Markdown摘要文档
+### DirectExporter / NlDocumentExporter (`cce_orchestrator::export`)
+
+NL 文档导出器：`export_groups()` 导出实体组 Markdown；`NlDocumentExporter` 导出
+文件级摘要文档。
 
 ### FileProcessor (`cce_orchestrator::index`)
 
 文件处理器，负责完整流水线处理。
 
-**关键功能:**
+**关键功能：**
 - `process_file_complete()` - 处理单个文件的完整流水线
 - 支持 Embedding 和 BM25 两种路径
+
+## 基准数据生成 (`data/benchmark/`)
+
+**生成命令：**
+```bash
+cargo run --example gen_bench_oncecell -p cce-e2e-tests
+cargo run --example gen_bench_ripgrep -p cce-e2e-tests
+cargo run --example gen_bench_flask -p cce-e2e-tests
+cargo run --example gen_bench_express / gen_bench_gin / gen_bench_jackson_core \
+  / gen_bench_spring_boot / gen_bench_mediatr -p cce-e2e-tests
+```
+
+**来源文件：** `examples/{lang}/gen_bench_{project}.rs`
+
+**生成逻辑：**
+1. 加载目标代码库和 distractor 代码库的源文件
+2. 执行三种分块基线：full_pipeline、direct_chunking、full_pipeline_raw_source
+3. 对所有分块文本和查询文本进行批量嵌入（如配置了 API key；无 key 时仅生成 chunk）
+4. 将结果序列化为 `rkyv` 格式
+
+**输出内容：**
+- `data/benchmark/{baseline}/{project}/bge-m3/bench_data.rkyv`
+- `data/benchmark/{baseline}/{project}/bge-m3/rerank_{model}_{text_source}_depth{depth}.rkyv`
+  - 重排分数旁路文件（由 `gen_rerank_oncecell` 生成，评分阶段只读）
 
 ## 生成命令汇总
 
 | 输出目录 | 生成命令 | 来源文件 | 是否依赖向量化 |
 |---------|---------|---------|---------------|
-| scenarios/rust/summary/once_cell/ | `cargo run --example export_rs` | examples/rust/export_rs.rs | 否（直接调用 `FileProcessor`） |
-| scenarios/rust/summary/ripgrep/ | `cargo run --example export_rs` | examples/rust/export_rs.rs | 否（直接调用 `FileProcessor`） |
-| scenarios/rust/summary/index_sidecar/ | `cargo run --example export_rs` | examples/rust/export_rs.rs | 否（直接调用 `FileProcessor`） |
-| scenarios/rust/chunks/once_cell/{emb,bm25}/ | `cargo run --example export_rs` | examples/rust/export_rs.rs | 否（直接调用 `FileProcessor`） |
-| scenarios/rust/chunks/ripgrep/{emb,bm25}/ | `cargo run --example export_rs` | examples/rust/export_rs.rs | 否（直接调用 `FileProcessor`） |
-| scenarios/rust/chunks/index_sidecar/{emb,bm25}/ | `cargo run --example export_rs` | examples/rust/export_rs.rs | 否（直接调用 `FileProcessor`） |
-| scenarios/java/summary/springboot-minimal-demo/ | `cargo run --example java_spring_boot_export` | examples/java/spring_boot_export.rs | 否 |
-| scenarios/python/summary/{basic,flask,index_sidecar}/ | `cargo run --example export_py` | examples/python/export_py.rs | 否 |
-| scenarios/python/chunks/{basic,flask,index_sidecar}/{emb,bm25}/ | `cargo run --example export_py` | examples/python/export_py.rs | 否 |
-| scenarios/documents/chunks/{json,md,toml,xml,yaml}/ | `cargo run --example export_doc` | examples/rust/export_doc.rs | 否 |
-| scenarios/documents/summary/{json,toml,xml,yaml}/ | `cargo run --example summary_doc` | examples/rust/summary_doc.rs | 否 |
-| relation/rust/presentation/relation_demo/ | `cargo run --example relation` | examples/rust/relation.rs | 否（关系查询） |
-| relation/rust/presentation/relation_diamond/ | `cargo run --example relation` | examples/rust/relation.rs | 否（关系查询） |
-| benchmark/once_cell/ | `cargo run --example benchmark_oncecell` | examples/rust/benchmark_oncecell.rs | 是（使用预计算向量） |
-| benchmark/ripgrep/ | `cargo run --example benchmark_ripgrep` | examples/rust/benchmark_ripgrep.rs | 是（使用预计算向量） |
-| benchmark/flask/ | `cargo run --example benchmark_flask` | examples/python/benchmark_flask.rs | 是（使用预计算向量） |
-| benchmark/{once_cell,ripgrep,flask}/bm25_parameter_sweep/ | `cargo run --example bm25_para_{oncecell,ripgrep,flask}` | examples/rust|python/bm25_para_*.rs | 否 |
-| benchmark/{once_cell,ripgrep,flask}/retrieval_method/ | `cargo run --example benchmark_retrieval_{oncecell,ripgrep,flask}` | examples/rust|python/benchmark_retrieval_*.rs | 否（使用预计算向量与文本） |
-| benchmark/{once_cell}/rerank_{variant}/ | `cargo run --example benchmark_rerank_oncecell [-- fusion] [--normalize-initial]` | examples/rust/benchmark_rerank_oncecell.rs | 否（使用预计算向量、文本与重排旁路分数） |
+| scenarios/{lang}/summary\|chunks\|structured/ | `cargo run --example export_{lang}` | examples/{lang}/export_{lang}.rs | 否（直接调用文件流水线） |
+| scenarios/{lang}/summary\|structured/{type_inference case}/ | `cargo run --example export_type_inference` | examples/type_inference/export_type_inference.rs | 否 |
+| scenarios/{lang}/annotation/{project}/ | `cargo run --example annotation_{project}` | examples/{lang}/annotation_{project}.rs | 否（离线余弦重放） |
+| scenarios/rust/alignment/ | `cargo run --example alignment_report` | examples/rust/alignment_report.rs | 否（mock 嵌入；hybrid 路需 Qdrant） |
+| scenarios/rust/presentation/basic/ | `cargo run --example rust_basic` | examples/rust/basic.rs | 是（完整索引） |
+| scenarios/multi_language/ | `cargo run --example multi_language_basic` | examples/multi_language/basic.rs | 是（完整索引） |
+| scenarios/documents/chunks/ | `cargo run --example export_doc` | examples/rust/export_doc.rs | 否 |
+| scenarios/documents/summary/ | `cargo run --example summary_doc` | examples/rust/summary_doc.rs | 否 |
+| benchmark/{project}/ | `cargo run --example benchmark_{project}` | examples/{lang}/benchmark_{project}.rs | 否（使用预计算向量） |
+| benchmark/{once_cell,ripgrep,flask}/retrieval_method/ | `cargo run --example benchmark_retrieval_{project}` | examples/{lang}/benchmark_retrieval_{project}.rs | 否（使用预计算向量与文本） |
+| benchmark/once_cell/rerank_{variant}/ | `cargo run --example benchmark_rerank_oncecell [-- fusion] [--normalize-initial]` | examples/rust/benchmark_rerank_oncecell.rs | 否（离线融合旁路分数） |
 | data/benchmark/.../rerank_*.rkyv | `cargo run --example gen_rerank_oncecell` | examples/rust/gen_rerank_oncecell.rs | **是**（调用真实重排模型） |
-| scenarios/rust/alignment/ | `cargo run --example alignment_report` | examples/rust/alignment_report.rs | 否（确定性 mock 嵌入；hybrid 路需 Qdrant） |
-| debug/ | `cargo run --example debug_matrix` | examples/rust/debug_matrix.rs | 是（使用预计算向量） |
-| tools/file-fold/ | `cargo run --example export_file_fold` | examples/tools/export_file_fold.rs | 否（无状态折叠工具） |
-| data/benchmark/ (once_cell) | `cargo run --example gen_bench_oncecell` | examples/rust/gen_bench_oncecell.rs | **可选**（无 API key 时仅生成 chunk） |
-| data/benchmark/ (ripgrep) | `cargo run --example gen_bench_ripgrep` | examples/rust/gen_bench_ripgrep.rs | **可选**（无 API key 时仅生成 chunk） |
-| data/benchmark/ (flask) | `cargo run --example gen_bench_flask` | examples/python/gen_bench_flask.rs | **可选**（无 API key 时仅生成 chunk） |
+| benchmark/{project}/aggregation_enhance/ | `cargo run --example benchmark_agg_{project}` | examples/{lang}/benchmark_agg_{project}.rs | 否（离线 boost 模拟） |
+| demo/documents/ | `cargo run --example dump_document_chunks` | examples/rust/dump_document_chunks.rs | 否 |
+| data/benchmark/ (各 project) | `cargo run --example gen_bench_{project}` | examples/{lang}/gen_bench_{project}.rs | **可选**（无 API key 时仅生成 chunk） |
 
 ## 注意事项
 
 1. **不提交到版本控制**: outputs目录已被 `.gitignore` 忽略
-2. **人工审查用途**: 这些输出仅用于人工审查，不参与自动断言
+2. **人工审查用途**: 这些输出仅用于人工审查，不参与自动断言（见 `examples/README.md`）
 3. **重新生成**: 修改核心逻辑后，应重新运行对应示例生成输出文件
 4. **对比审查**: 使用 `git diff` 观察输出变化是否符合预期
+5. **示例命名**: `examples/{dir}/{file}.rs` 注册为 `{dir}_{file}` 风格的示例名，
+   具体以 `Cargo.toml` 的 `[[example]]` 条目为准
