@@ -23,6 +23,16 @@ outputs/
 │   │   └── annotation/{project}/            # 关系标注审查（assembly 改名而来）
 │   │       ├── index.md
 │   │       └── {query_id}.md                # 原始召回 vs 标注后对照
+│   │   ├── query_review/{project}/          # 真实检索链路审查（BM25/混合 + 关系扩展标注）
+│   │   │   ├── run_manifest.txt
+│   │   │   ├── index.md
+│   │   │   ├── {query_id}.md               # 命中表 + 命中明细 + 标注内容
+│   │   │   └── aggregated_demo.md           # 聚合查询演示（`*_aggregated` 示例）
+│   │   └── relation_review/{project}/       # 关系图可视化导出（调用链 + ego 图）
+│   │       ├── run_manifest.txt
+│   │       ├── index.md
+│   │       ├── entity/{seed}.md             # 逐种子：callee/caller/前后向链/ego 图
+│   │       └── graph/{seed}.json            # 机器可读 ego 图快照
 │   ├── rust/alignment/                      # Hybrid 跨路径对齐审查报告
 │   │   ├── run_manifest.txt
 │   │   ├── alignment_summary.md
@@ -233,6 +243,52 @@ cargo run --example summary_doc -p cce-e2e-tests    # 文件级摘要
 **输出内容：**
 - `scenarios/documents/chunks/{format}/{file_name}.txt` - 分块文本
 - `scenarios/documents/summary/{format}/{file_name}.md` - 文件级 DocSummary
+
+#### 1.7 真实检索链路审查（`scenarios/{lang}/query_review/{project}/`）
+
+**生成命令：**
+```bash
+cargo run --example query_review_oncecell -p cce-e2e-tests
+cargo run --example query_review_flask -p cce-e2e-tests
+```
+
+**来源文件：** `examples/{rust,python}/query_review_{oncecell,flask}.rs`；
+核心逻辑 `src/query_review.rs`（判定集定义在 `src/judgments/{project}.rs`）
+
+**生成逻辑：** 经 `QueryWorkflowTest` 做真实索引（BM25 + SQLite 元数据 + 内存关系图，
+无 Qdrant 无网络）后逐判定查询；每个命中用内容状态机物化正文（超限降级为引用），
+经 `RelationAnnotator::annotate_single` 做关系扩展标注（命中行范围反查关系快照取
+callee/caller，前后向各最多 3 个），同一对齐键去重后渲染。
+
+**输出内容：**
+- `run_manifest.txt` - 运行清单（索引文件/实体/关系数、outcome/errors、请求来源与
+  执行策略、融合权重、缓存命中情况）
+- `index.md` - 逐 query 汇总表
+- `{query_id}.md` - 命中表（含对齐键、boost 原因列）+ 逐命中明细（内容状态、
+  标注内容与扩展节点）
+- `aggregated_demo.md` - 聚合查询演示（仅 `*_aggregated` 示例输出）
+
+#### 1.8 关系图可视化导出（`scenarios/{lang}/relation_review/{project}/`）
+
+**生成命令：**
+```bash
+cargo run --example relation_review_oncecell -p cce-e2e-tests
+cargo run --example relation_review_flask -p cce-e2e-tests
+```
+
+**来源文件：** `examples/{rust,python}/relation_review_{oncecell,flask}.rs`；
+核心逻辑 `src/relation_review.rs`（种子来自 `src/judgments/{project}.rs` 的强期望
+行范围与 hub 名）
+
+**生成逻辑：** 同 query_review 的真实索引链路，但只消费关系图：种子经快照行范围
+查找与 `get_function_ids_by_name` 解析，对每种子跑生产关系查询（callee/caller、
+前后向调用链、ego 图）并渲染。关系查询无需向量后端，全程离线。
+
+**输出内容：**
+- `run_manifest.txt` - 运行清单（种子数、索引实体/关系数、项目图节点/边数、未命中 hub）
+- `index.md` - 逐种子汇总表（callee/caller/前后向链/ego 节点边数）
+- `entity/{seed}.md` - 逐种子的调用链与 ego 图明细
+- `graph/{seed}.json` - 机器可读 ego 图快照
 
 ### 2. benchmark/ 目录
 

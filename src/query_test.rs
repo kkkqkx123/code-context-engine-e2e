@@ -17,6 +17,7 @@ use cce_storage_vector_qdrant::QdrantConfig;
 
 use super::EmbeddingConfig;
 use crate::fixture::FixtureAccess;
+use crate::index_test::TestRelationPublisher;
 
 /// Query workflow test helper
 ///
@@ -218,12 +219,27 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
 
         // Set up checkpoint manager for operation progress tracking
         let sqlite_db = Arc::new(SqliteClient::in_memory()?);
+        // Register the project row before any metadata write so FK-scoped
+        // file/entity/chunk inserts resolve, and so query-time source reads
+        // locate the real fixture root. Inserted first so the publisher's
+        // placeholder ensure cannot win the INSERT OR IGNORE race.
+        {
+            let root_path = self.fixture.root_path().to_string_lossy().to_string();
+            let project_id = self.project_id;
+            sqlite_db.with_transaction(|tx| {
+                cce_storage_metadb_sqlite::ProjectRepository::ensure(tx, project_id, &root_path)
+            })?;
+        }
         let checkpoint_manager = Arc::new(CheckpointManager::new_for_project(
             self.project_id,
             sqlite_db.clone(),
         ));
-        self.sqlite_db = Some(sqlite_db);
+        self.sqlite_db = Some(sqlite_db.clone());
         orchestrator = orchestrator.with_checkpoint_manager(checkpoint_manager);
+        orchestrator = orchestrator.with_metadata_store(sqlite_db.clone());
+        orchestrator = orchestrator.with_relation_publisher(Arc::new(
+            TestRelationPublisher::with_sqlite((*sqlite_db).clone()),
+        ));
 
         // Each test instance gets a unique BM25 index temp directory to prevent cross-test
         // data pollution (Tantivy lock contention, stale data from other tests).
@@ -281,6 +297,9 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             // Always enable BM25 so search_bm25() queries return results
             store_bm25: true,
             store_vectors: self.search_sources.vector,
+            // Summary vectors need a vector backend; BM25-only runs keep
+            // summary text/BM25 but skip embedding.
+            embed_summaries: self.search_sources.vector,
             ..Default::default()
         };
 
@@ -360,6 +379,18 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         self.query_coordinator
             .as_ref()
             .expect("Query coordinator not initialized")
+    }
+
+    /// Initialize the query coordinator without running a query.
+    ///
+    /// Relation-only consumers (relation review, annotation expansion)
+    /// need the coordinator right after indexing; queries lazily init it,
+    /// but direct `coordinator()` access panics before the first query.
+    pub async fn ensure_coordinator(&mut self) -> Result<()> {
+        if self.query_coordinator.is_none() {
+            self.init_query_coordinator().await?;
+        }
+        Ok(())
     }
 
     /// Best-effort removal of this test's Qdrant points.
@@ -528,7 +559,6 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         app_config.llm.providers = providers;
         app_config.llm.embedding_models = models;
         app_config.embedder.default_model = self.embedding_config.model.clone();
-        app_config.embedder.use_base64 = false;
 
         // Create embedder using from_model (or reuse the externally provided
         // one so the index and query sides share the same embedder)

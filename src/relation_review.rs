@@ -98,6 +98,10 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
         .with_embedder(embedder)
         .with_sources(SearchSources::none().with_bm25());
     let index_result = query_test.index().await.context("index fixture")?.clone();
+    query_test
+        .ensure_coordinator()
+        .await
+        .context("init query coordinator")?;
 
     let seeds = resolve_seeds(&query_test, &config);
     let relation_options = RelationQueryOptions {

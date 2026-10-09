@@ -7,7 +7,7 @@
 //!   outputs/scenarios/python/query_review/flask/
 //!   ├── run_manifest.txt
 //!   ├── index.md
-//!   ├── {query_id}.md         — full hits with scores, content, annotation对照
+//!   ├── {query_id}.md         — full hits with scores, content, annotation comparison
 //!   └── aggregated_demo.md    — two-sub-query merge demo
 
 use cce_e2e_tests::FixtureSpec;

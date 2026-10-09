@@ -279,7 +279,6 @@ pub fn build_embedder() -> (EmbeddingConfig, AppConfig) {
         ac.llm.providers = providers;
         ac.llm.embedding_models = models;
         ac.embedder.default_model = emb_config.model.clone();
-        ac.embedder.use_base64 = false;
         ac
     };
     (emb_config, app_config)

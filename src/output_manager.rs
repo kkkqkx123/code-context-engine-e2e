@@ -140,10 +140,14 @@ impl OutputManager {
 
     /// Write content to an output file
     ///
-    /// Creates the output directory if it doesn't exist.
+    /// Creates the output directory (including any nested parents of
+    /// `filename`, e.g. `entity/x.md`) if it doesn't exist.
     pub fn write(&self, filename: &str, content: &str) -> io::Result<PathBuf> {
         self.ensure_output_dir()?;
         let path = self.output_path(filename);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         if path.exists() && !self.config.overwrite {
             return Err(io::Error::new(

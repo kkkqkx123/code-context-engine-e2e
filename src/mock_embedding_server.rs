@@ -258,7 +258,6 @@ pub fn mock_embedding_config(base_url: &str) -> cce_config::AppConfig {
     app_config.llm.providers = providers;
     app_config.llm.embedding_models = models;
     app_config.embedder.default_model = "mock".to_string();
-    app_config.embedder.use_base64 = false;
     app_config
 }
 

@@ -15,7 +15,7 @@
 //!
 //! Each `{query_id}.md` carries the judgment expectation (relevant ranges),
 //! the top-K score table, every hit with complete metadata and full content,
-//! and a raw-vs-annotated对照 produced by the production
+//! and a raw-vs-annotated comparison produced by the production
 //! [`RelationAnnotator`]. The aggregated demo exercises
 //! [`QueryCoordinator::search_aggregated`] with two sub-queries derived from
 //! the same judgment set. Outputs are for manual review only and never
@@ -24,13 +24,16 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use cce_codegraph::index::SnapshotEntityQueryOps;
 use cce_llm_client::OpenAICompatibleProvider;
 use cce_orchestrator::query::annotation::{
-    RelationAnnotationConfig, RelationAnnotator, SearchResultInput,
+    AnnotatedResult, ExpandedUnit, ExpansionOrigin, RelationAnnotationConfig, RelationAnnotator,
+    SearchResultInput,
 };
+use cce_orchestrator::query::types::ExecutionStrategy;
 use cce_orchestrator::query::types::SearchResult;
 use cce_orchestrator::{
-    AggregatedQueryOptions, QueryResult, SearchConfig, SearchSources, SubQuery,
+    AggregatedQueryOptions, QueryCoordinator, QueryResult, SearchConfig, SearchSources, SubQuery,
 };
 
 use crate::bench_data::{RelevanceJudgment, RelevanceLevel};
@@ -54,7 +57,7 @@ pub struct QueryReviewConfig {
     pub judgments: Vec<RelevanceJudgment>,
     /// Number of hits rendered per query.
     pub top_k: usize,
-    /// Optional output directory suffix for single-source对照 runs.
+    /// Optional output directory suffix for single-source comparison runs.
     pub scenario_suffix: Option<&'static str>,
 }
 
@@ -104,7 +107,13 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
         .with_config(search_config.clone());
     let index_result = query_test.index().await.context("index fixture")?.clone();
 
-    let annotator = RelationAnnotator::new(RelationAnnotationConfig::new().enable(true));
+    let annotator = RelationAnnotator::new(
+        RelationAnnotationConfig::new()
+            .enable(true)
+            .with_expansion(true)
+            .with_max_expanded_units(6)
+            .with_caller_expansion(true),
+    );
 
     let mut outcomes = Vec::new();
     for judgment in &config.judgments {
@@ -113,7 +122,17 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
             .await
             .with_context(|| format!("query {}", judgment.id))?
             .clone();
-        let page = render_query_page(judgment, &result, sources, &search_config, &annotator).await;
+        let fixture_root = query_test.fixture().root_path().to_path_buf();
+        let page = render_query_page(
+            judgment,
+            &result,
+            sources,
+            &search_config,
+            &annotator,
+            query_test.coordinator(),
+            &fixture_root,
+        )
+        .await;
         manager.write(&format!("{}.md", judgment.id), &page)?;
         outcomes.push(QueryOutcome {
             id: judgment.id.clone(),
@@ -213,7 +232,11 @@ where
     ));
     page.push_str(&render_hit_table(&result));
     for (rank, item) in result.items.iter().enumerate() {
-        page.push_str(&render_hit_detail(rank, item, None));
+        page.push_str(&render_hit_detail(
+            rank,
+            item,
+            AnnotationOutcome::Skipped("aggregated demo omits annotation comparison"),
+        ));
     }
     Ok(Some(page))
 }
@@ -225,19 +248,33 @@ async fn render_query_page(
     sources: SearchSources,
     search_config: &SearchConfig,
     annotator: &RelationAnnotator,
+    coordinator: &QueryCoordinator,
+    fixture_root: &std::path::Path,
 ) -> String {
+    let strategy = ExecutionStrategy::from_sources(&sources, search_config);
     let mut page = format!("# Query: {}\n\n", judgment.id);
     page.push_str(&format!("- Text: `{}`\n", judgment.query_text));
     page.push_str(&format!("- Type: {}\n", judgment.query_type));
     if let Some(subtype) = &judgment.fuzzy_subtype {
         page.push_str(&format!("- Fuzzy subtype: {subtype}\n"));
     }
-    page.push_str(&format!("- Sources: {sources}\n"));
+    page.push_str(&format!("- Request sources: {sources}\n"));
+    page.push_str(&format!("- Execution strategy: {strategy}\n"));
     page.push_str(&format!(
-        "- Total: {} | elapsed: {}ms | result sources: {}\n",
+        "- Intent: default hybrid (no per-query override)\n"
+    ));
+    page.push_str(&format!(
+        "- Fusion: vector_weight={:.2} bm25_weight={:.2} algorithm={:?}\n",
+        search_config.fusion.vector_weight,
+        search_config.fusion.bm25_weight,
+        search_config.fusion.algorithm,
+    ));
+    page.push_str(&format!(
+        "- Total: {} | elapsed: {}ms | result sources: {} | cache: {}\n",
         result.total,
         result.elapsed_ms,
-        result.sources.join(",")
+        result.sources.join(","),
+        if result.from_cache { "hit" } else { "miss" },
     ));
     page.push_str(&format!(
         "- Config: limit={} min_score={:.2} vector_top_k={} vector_min_score={:.2} bm25_min_score={:.2} timeout_ms={}\n",
@@ -276,13 +313,165 @@ async fn render_query_page(
     page.push_str(&render_hit_table(result));
 
     for (rank, item) in result.items.iter().enumerate() {
-        let annotated = annotator
-            .annotate_single(search_result_input(item), Vec::new(), Vec::new())
-            .await
-            .ok();
-        page.push_str(&render_hit_detail(rank, item, annotated.as_ref()));
+        let annotation = annotate_hit(item, coordinator, fixture_root, annotator).await;
+        page.push_str(&render_hit_detail(rank, item, annotation));
     }
     page
+}
+
+/// Annotation outcome for one hit, kept distinct so disabled expansion and
+/// genuine failures read differently in review output.
+enum AnnotationOutcome {
+    Annotated(Box<AnnotatedResult>),
+    Skipped(&'static str),
+    Failed,
+}
+
+/// Annotate one hit with real relation expansion.
+///
+/// The primary unit uses the identity range over the enriched body (matching
+/// production), while forward/backward units resolve the hit's first entity
+/// through the relation searcher and read snippets from the fixture sources.
+async fn annotate_hit(
+    item: &SearchResult,
+    coordinator: &QueryCoordinator,
+    fixture_root: &std::path::Path,
+    annotator: &RelationAnnotator,
+) -> AnnotationOutcome {
+    if item.content_state.is_reference() {
+        return AnnotationOutcome::Skipped("reference content carries no annotatable body");
+    }
+    if item.content.trim().is_empty() {
+        return AnnotationOutcome::Skipped("empty body carries no annotatable unit");
+    }
+    if item.entity_ids.is_empty() {
+        return AnnotationOutcome::Skipped("hit carries no entity for expansion lookup");
+    };
+    let (forward, backward) = expansion_units(
+        coordinator,
+        fixture_root,
+        &item.file_path,
+        item.start_line,
+        item.end_line,
+    );
+    match annotator
+        .annotate_single(search_result_input(item), forward, backward)
+        .await
+    {
+        Ok(annotated) => AnnotationOutcome::Annotated(Box::new(annotated)),
+        Err(_) => AnnotationOutcome::Failed,
+    }
+}
+
+/// Resolve up to three callees and three callers into annotator units.
+///
+/// Seeds resolve through the snapshot line-range lookup (the relation index
+/// ID space), not the hit's retrieval entity IDs (the SQLite row space), so
+/// method groups represented by their impl block still surface member call
+/// edges instead of reading empty.
+fn expansion_units(
+    coordinator: &QueryCoordinator,
+    fixture_root: &std::path::Path,
+    file_path: &str,
+    start_line: u32,
+    end_line: u32,
+) -> (Vec<ExpandedUnit>, Vec<ExpandedUnit>) {
+    const PER_DIRECTION_LIMIT: usize = 3;
+    let snapshot = coordinator.relation_searcher().query().index();
+
+    let mut seeds =
+        snapshot.get_entities_in_line_range(file_path, start_line as usize, end_line as usize);
+    seeds.sort_by_key(|id| id.0);
+    seeds.truncate(4);
+    let mut forward = Vec::new();
+    let mut seen_forward = std::collections::HashSet::new();
+    for entity_id in &seeds {
+        if forward.len() >= PER_DIRECTION_LIMIT {
+            break;
+        }
+        let callees = coordinator
+            .get_callees(*entity_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|relation| relation.callee_id);
+        for callee in callees {
+            if forward.len() >= PER_DIRECTION_LIMIT || !seen_forward.insert(callee.0) {
+                continue;
+            }
+            if let Some(unit) = snippet_unit(
+                snapshot,
+                fixture_root,
+                callee,
+                ExpansionOrigin::Forward,
+                "calls",
+            ) {
+                forward.push(unit);
+            }
+        }
+    }
+
+    let mut backward = Vec::new();
+    let mut seen_backward = std::collections::HashSet::new();
+    for entity_id in &seeds {
+        if backward.len() >= PER_DIRECTION_LIMIT {
+            break;
+        }
+        let callers = coordinator
+            .get_callers(*entity_id)
+            .unwrap_or_default()
+            .into_iter();
+        for caller in callers {
+            if backward.len() >= PER_DIRECTION_LIMIT || !seen_backward.insert(caller.0) {
+                continue;
+            }
+            if let Some(unit) = snippet_unit(
+                snapshot,
+                fixture_root,
+                caller,
+                ExpansionOrigin::Backward,
+                "called by",
+            ) {
+                backward.push(unit);
+            }
+        }
+    }
+    (forward, backward)
+}
+
+/// Read one entity's source snippet from the fixture tree as an annotator unit.
+fn snippet_unit(
+    snapshot: &cce_codegraph::index::LayeredSnapshotIndex,
+    fixture_root: &std::path::Path,
+    entity_id: cce_types::EntityId,
+    origin: ExpansionOrigin,
+    edge_label: &str,
+) -> Option<ExpandedUnit> {
+    let entity = snapshot.get_function_by_entity_id(entity_id)?;
+    let file_path = snapshot.get_file_path_by_entity(entity_id)?;
+    let text = std::fs::read_to_string(fixture_root.join(&file_path)).ok()?;
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let start = (entity.span.start_position.row + 1).max(1);
+    let end = (entity.span.end_position.row + 1).max(start);
+    let end = end.min(lines.len());
+    let start = start.min(end);
+    let code = lines[start - 1..end].join("\n");
+    if code.trim().is_empty() {
+        return None;
+    }
+    Some(
+        ExpandedUnit::new(
+            code,
+            file_path,
+            start as u32,
+            end as u32,
+            entity.name.clone(),
+        )
+        .with_expansion(origin, edge_label)
+        .with_entity_id(entity_id),
+    )
 }
 
 /// Compact score table over the returned hits.
@@ -291,7 +480,7 @@ fn render_hit_table(result: &QueryResult) -> String {
         return String::from("(no hits)\n");
     }
     let mut table = String::from(
-        "| rank | score | original | vector | bm25 | sources | boosted | key | file | entity |\n|---:|---:|---:|---:|---:|---|---|---|---|---|\n",
+        "| rank | score | original | vector | bm25 | sources | boosted | boost reason | key | file | entity |\n|---:|---:|---:|---:|---:|---|---|---|---|---|---|\n",
     );
     for (rank, item) in result.items.iter().enumerate() {
         let bm25 = item
@@ -299,7 +488,7 @@ fn render_hit_table(result: &QueryResult) -> String {
             .map(|score| format!("{score:.4}"))
             .unwrap_or_else(|| "-".to_string());
         table.push_str(&format!(
-            "| {} | {:.4} | {:.4} | {:.4} | {} | {} | {} | {} | {}:{}-{} | {} {} |\n",
+            "| {} | {:.4} | {:.4} | {:.4} | {} | {} | {} | {} | {} | {}:{}-{} | {} {} |\n",
             rank + 1,
             item.score,
             item.original_score,
@@ -307,6 +496,7 @@ fn render_hit_table(result: &QueryResult) -> String {
             bm25,
             item.sources.join("+"),
             if item.is_boosted { "yes" } else { "no" },
+            cell(item.boost_reason.as_deref().unwrap_or("-")),
             cell(&alignment_key_of(item)),
             cell(&item.file_path),
             item.start_line,
@@ -319,12 +509,8 @@ fn render_hit_table(result: &QueryResult) -> String {
     table
 }
 
-/// Complete metadata plus full content and the annotation对照 for one hit.
-fn render_hit_detail(
-    rank: usize,
-    item: &SearchResult,
-    annotated: Option<&cce_orchestrator::query::annotation::AnnotatedResult>,
-) -> String {
+/// Complete metadata plus full content and the annotation comparison for one hit.
+fn render_hit_detail(rank: usize, item: &SearchResult, annotation: AnnotationOutcome) -> String {
     let mut out = format!(
         "### {}. {} `{}`\n\n",
         rank + 1,
@@ -384,8 +570,8 @@ fn render_hit_detail(
     out.push_str(&fenced(&item.content));
     out.push_str("\n```\n");
 
-    match annotated {
-        Some(result) => {
+    match annotation {
+        AnnotationOutcome::Annotated(result) => {
             out.push_str("\n#### Annotated content\n\n");
             out.push_str(&format!(
                 "- expanded: {} | expanded_nodes: {} (forward {}, backward {}) | files: {} | truncated: {}\n",
@@ -400,7 +586,12 @@ fn render_hit_detail(
             out.push_str(&fenced(&result.annotated_content));
             out.push_str("\n```\n");
         }
-        None => {
+        AnnotationOutcome::Skipped(reason) => {
+            out.push_str(&format!(
+                "\n#### Annotated content\n\n(annotation skipped: {reason}; see raw content above)\n"
+            ));
+        }
+        AnnotationOutcome::Failed => {
             out.push_str("\n#### Annotated content\n\n(annotation failed; see raw content above)\n")
         }
     }
@@ -435,13 +626,51 @@ fn render_manifest(
         search_config.timeout_ms,
     ));
     manifest.push_str(&format!(
+        "fusion: vector_weight={:.2} bm25_weight={:.2} algorithm={:?}\n",
+        search_config.fusion.vector_weight,
+        search_config.fusion.bm25_weight,
+        search_config.fusion.algorithm,
+    ));
+    manifest.push_str(&format!(
         "index: files={} entities={} relations={} vectors={}\n",
         index_result.total_files,
         index_result.total_entities,
         index_result.total_relations,
         index_result.total_vectors,
     ));
-    manifest.push_str("expectations: src/judgments/{project}.rs relevant_ranges\n");
+    manifest.push_str(&format!(
+        "outcome: {}\n",
+        if index_result.is_success() {
+            "success".to_string()
+        } else {
+            "incomplete".to_string()
+        },
+    ));
+    if index_result.errors().is_empty() {
+        manifest.push_str("errors: none\n");
+    } else {
+        manifest.push_str("errors:\n");
+        for error in index_result.errors().iter().take(20) {
+            manifest.push_str(&format!("- {error}\n"));
+        }
+        if index_result.errors().len() > 20 {
+            manifest.push_str(&format!(
+                "- ... ({} more)\n",
+                index_result.errors().len() - 20
+            ));
+        }
+    }
+    if hybrid_available {
+        manifest.push_str("capability: hybrid default (vector+bm25)\n");
+    } else {
+        manifest.push_str(
+            "capability: bm25-only fallback; semantic (G2), fuzzy (FZ), and cross-language (G4) conclusions are not representative without vectors\n",
+        );
+    }
+    manifest.push_str(&format!(
+        "expectations: src/judgments/{}.rs relevant_ranges\n",
+        config.project
+    ));
     manifest
 }
 
@@ -477,15 +706,21 @@ fn alignment_key_of(item: &SearchResult) -> String {
 }
 
 /// Adapt a search hit to the annotator input shape.
+///
+/// The body is already the exact unit, so a 1-based whole-unit range makes
+/// extraction identity (matching production); absolute line metadata stays
+/// owned by the result itself.
 fn search_result_input(item: &SearchResult) -> SearchResultInput {
+    let line_count = item.content.lines().count();
+    let end_line = u32::try_from(line_count).unwrap_or(u32::MAX).max(1);
     SearchResultInput {
         id: item.id.clone(),
         entity_id: item.entity_ids.first().copied(),
         name: item.name.clone(),
         kind: item.kind.clone(),
         file_path: item.file_path.clone(),
-        start_line: item.start_line,
-        end_line: item.end_line,
+        start_line: 1,
+        end_line,
         content: item.content.clone(),
         score: item.score,
     }
