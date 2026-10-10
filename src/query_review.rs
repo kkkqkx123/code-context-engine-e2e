@@ -41,7 +41,7 @@ use cce_orchestrator::{
     AggregatedQueryOptions, QueryCoordinator, QueryResult, SearchConfig, SearchSources, SubQuery,
 };
 
-use crate::bench_data::{RelevanceJudgment, RelevanceLevel};
+use crate::bench_data::{QueryType, RelevanceJudgment, RelevanceLevel};
 use crate::embedding::EmbeddingConfig;
 use crate::fixture::{FixtureSpec, TestFixture};
 use crate::mock_embedding_server::{
@@ -125,7 +125,8 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
             .enable(true)
             .with_expansion(true)
             .with_max_expanded_units(6)
-            .with_caller_expansion(true),
+            .with_caller_expansion(true)
+            .omit_primary_body(true),
     );
 
     let mut outcomes = Vec::new();
@@ -136,15 +137,16 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
             .with_context(|| format!("query {}", judgment.id))?
             .clone();
         let fixture_root = query_test.fixture().root_path().to_path_buf();
-        let page = render_query_page(
+        let page = render_query_page(QueryPageInput {
             judgment,
-            &result,
+            result: &result,
             sources,
-            &search_config,
-            &annotator,
-            query_test.coordinator(),
-            &fixture_root,
-        )
+            search_config: &search_config,
+            hybrid_available,
+            annotator: &annotator,
+            coordinator: query_test.coordinator(),
+            fixture_root: &fixture_root,
+        })
         .await;
         manager.write(&format!("{}.md", judgment.id), &page)?;
         outcomes.push(QueryOutcome {
@@ -167,6 +169,7 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
         manager.write("aggregated_demo.md", &page)?;
     }
 
+    let fixture_root = query_test.fixture().root_path().to_path_buf();
     manager.write(
         "run_manifest.txt",
         &render_manifest(
@@ -175,9 +178,13 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
             hybrid_available,
             &search_config,
             &index_result,
+            &fixture_root,
         ),
     )?;
-    manager.write("index.md", &render_index(&config, &outcomes))?;
+    manager.write(
+        "index.md",
+        &render_index(&config, &outcomes, hybrid_available),
+    )?;
 
     println!("Query review written to {}", manager.output_dir().display());
     query_test.cleanup().await;
@@ -243,7 +250,7 @@ where
         result.sources.join(","),
         result.failed_sub_queries,
     ));
-    page.push_str(&render_hit_table(&result));
+    page.push_str(&render_hit_table_aggregated(&result, &[first, second]));
     for (rank, item) in result.items.iter().enumerate() {
         page.push_str(&render_hit_detail(
             rank,
@@ -254,16 +261,33 @@ where
     Ok(Some(page))
 }
 
-/// Render one self-contained per-query markdown page.
-async fn render_query_page(
-    judgment: &RelevanceJudgment,
-    result: &QueryResult,
+/// Borrowed inputs for rendering one per-query review page.
+///
+/// Groups the judgment, its search result, the run-level search context, and
+/// the annotation dependencies so the renderer takes a single argument.
+struct QueryPageInput<'a> {
+    judgment: &'a RelevanceJudgment,
+    result: &'a QueryResult,
     sources: SearchSources,
-    search_config: &SearchConfig,
-    annotator: &RelationAnnotator,
-    coordinator: &QueryCoordinator,
-    fixture_root: &std::path::Path,
-) -> String {
+    search_config: &'a SearchConfig,
+    hybrid_available: bool,
+    annotator: &'a RelationAnnotator,
+    coordinator: &'a QueryCoordinator,
+    fixture_root: &'a std::path::Path,
+}
+
+/// Render one self-contained per-query markdown page.
+async fn render_query_page(input: QueryPageInput<'_>) -> String {
+    let QueryPageInput {
+        judgment,
+        result,
+        sources,
+        search_config,
+        hybrid_available,
+        annotator,
+        coordinator,
+        fixture_root,
+    } = input;
     let strategy = ExecutionStrategy::from_sources(&sources, search_config);
     let mut page = format!("# Query: {}\n\n", judgment.id);
     page.push_str(&format!("- Text: `{}`\n", judgment.query_text));
@@ -280,8 +304,15 @@ async fn render_query_page(
         search_config.fusion.bm25_weight,
         search_config.fusion.algorithm,
     ));
+    if hybrid_available {
+        page.push_str("- Capability: hybrid (vector+bm25)\n");
+    } else {
+        page.push_str(
+            "- Capability: BM25-only fallback; semantic (G2), fuzzy (FZ), and cross-language (G4) conclusions are not representative without vectors\n",
+        );
+    }
     page.push_str(&format!(
-        "- Total: {} | elapsed: {}ms | result sources: {} | cache: {}\n",
+        "- Total: {} | elapsed: {}ms | executed as: {} | cache: {}\n",
         result.total,
         result.elapsed_ms,
         result.sources.join(","),
@@ -319,9 +350,14 @@ async fn render_query_page(
             ));
         }
     }
+    page.push_str(&format!("\n{}\n", coverage_summary(judgment, result)));
+
+    if result.items.is_empty() {
+        page.push_str(&format!("{}\n", zero_hit_note(judgment, hybrid_available)));
+    }
 
     page.push_str("\n## Hits (top-K)\n\n");
-    page.push_str(&render_hit_table(result));
+    page.push_str(&render_hit_table(result, judgment));
 
     for (rank, item) in result.items.iter().enumerate() {
         let annotation = annotate_hit(item, coordinator, fixture_root, annotator).await;
@@ -413,6 +449,7 @@ fn expansion_units(
     let mut seeds = snapshot.get_entities_in_line_range(file_path, first_row, last_row);
     seeds.sort_by_key(|id| id.0);
     seeds.truncate(4);
+    let seed_set: std::collections::HashSet<cce_types::EntityId> = seeds.iter().copied().collect();
     let mut forward = Vec::new();
     let mut seen_forward = std::collections::HashSet::new();
     for entity_id in &seeds {
@@ -426,6 +463,9 @@ fn expansion_units(
             let Some(callee) = relation.callee_id else {
                 continue;
             };
+            if seed_set.contains(&callee) {
+                continue;
+            }
             if forward.len() >= PER_DIRECTION_LIMIT || !seen_forward.insert(callee.0) {
                 continue;
             }
@@ -453,15 +493,24 @@ fn expansion_units(
             .unwrap_or_default()
         {
             let caller = relation.caller;
+            if seed_set.contains(&caller) {
+                continue;
+            }
             if backward.len() >= PER_DIRECTION_LIMIT || !seen_backward.insert(caller.0) {
                 continue;
             }
+            // Constructor edges describe construction, not ordinary calls.
+            let edge_label = if relation.relation_type.is_constructor_call() {
+                "constructed by"
+            } else {
+                "called by"
+            };
             if let Some(unit) = snippet_unit(
                 snapshot,
                 fixture_root,
                 caller,
                 ExpansionOrigin::Backward,
-                "called by",
+                edge_label,
                 &relation,
             ) {
                 backward.push(unit);
@@ -471,8 +520,25 @@ fn expansion_units(
     (forward, backward)
 }
 
-/// Read one entity's source snippet from the fixture tree as an annotator unit,
-/// tagged with the edge that produced it.
+/// Minimal reference window around a 0-based definition row.
+///
+/// Review expansions only need to identify the referenced symbol, so the
+/// window covers the definition line plus one line of context on each side
+/// (clamped to the file). Full bodies stay in `#### Content`.
+fn reference_window(def_row: usize, total_lines: usize) -> (usize, usize) {
+    if total_lines == 0 {
+        return (0, 0);
+    }
+    let last = total_lines - 1;
+    let capped = def_row.min(last);
+    (capped.saturating_sub(1), (capped + 1).min(last))
+}
+
+/// Read one entity's minimal source reference from the fixture tree as an
+/// annotator unit, tagged with the edge that produced it.
+///
+/// Only the definition line plus one line of context on each side is kept;
+/// the full body is already shown in the hit's `#### Content` section.
 fn snippet_unit(
     snapshot: &cce_codegraph::index::LayeredSnapshotIndex,
     fixture_root: &std::path::Path,
@@ -488,11 +554,11 @@ fn snippet_unit(
     if lines.is_empty() {
         return None;
     }
-    let start = (entity.span.start_position.row + 1).max(1);
-    let end = (entity.span.end_position.row + 1).max(start);
-    let end = end.min(lines.len());
-    let start = start.min(end);
-    let code = lines[start - 1..end].join("\n");
+    let def_row = entity.span.start_position.row;
+    let (window_start, window_end) = reference_window(def_row, lines.len());
+    let start = window_start + 1;
+    let end = window_end + 1;
+    let code = lines[window_start..=window_end].join("\n");
     if code.trim().is_empty() {
         return None;
     }
@@ -512,21 +578,135 @@ fn snippet_unit(
     )
 }
 
+/// Highest judgment level overlapped by one hit, if any.
+///
+/// Overlap uses normalized file paths and inclusive 1-based line ranges, the
+/// same semantics as the range evaluator. Strong outranks related.
+fn hit_match_level(
+    judgment: &RelevanceJudgment,
+    file_path: &str,
+    start_line: u32,
+    end_line: u32,
+) -> Option<RelevanceLevel> {
+    let hit_file = crate::bench_data::normalize_path(file_path);
+    let hit_start = start_line.min(end_line) as usize;
+    let hit_end = start_line.max(end_line) as usize;
+    let mut best: Option<RelevanceLevel> = None;
+    for (range, level) in &judgment.relevant_ranges {
+        if crate::bench_data::normalize_path(&range.file) != hit_file {
+            continue;
+        }
+        if hit_start <= range.end_line && hit_end >= range.start_line {
+            best = Some(match (best, *level) {
+                (Some(RelevanceLevel::Strong), _) | (_, RelevanceLevel::Strong) => {
+                    RelevanceLevel::Strong
+                }
+                (Some(RelevanceLevel::Related), _) | (_, RelevanceLevel::Related) => {
+                    RelevanceLevel::Related
+                }
+                _ => RelevanceLevel::Irrelevant,
+            });
+            if best == Some(RelevanceLevel::Strong) {
+                break;
+            }
+        }
+    }
+    best
+}
+
+/// One-line expected-vs-hit coverage summary for the page header.
+fn coverage_summary(judgment: &RelevanceJudgment, result: &QueryResult) -> String {
+    if judgment.relevant_ranges.is_empty() {
+        return String::from("- Coverage: no judged ranges; nothing to cover.");
+    }
+    let strong_total = judgment
+        .relevant_ranges
+        .iter()
+        .filter(|(_, level)| *level == RelevanceLevel::Strong)
+        .count();
+    let related_total = judgment
+        .relevant_ranges
+        .iter()
+        .filter(|(_, level)| *level == RelevanceLevel::Related)
+        .count();
+    let mut strong_covered = 0_usize;
+    let mut related_covered = 0_usize;
+    let mut covered_targets = std::collections::HashSet::new();
+    let mut first_strong_rank: Option<usize> = None;
+    for (index, (range, level)) in judgment.relevant_ranges.iter().enumerate() {
+        let range_file = crate::bench_data::normalize_path(&range.file);
+        for (rank, item) in result.items.iter().enumerate() {
+            if crate::bench_data::normalize_path(&item.file_path) != range_file {
+                continue;
+            }
+            let hit_start = item.start_line.min(item.end_line) as usize;
+            let hit_end = item.start_line.max(item.end_line) as usize;
+            if hit_start <= range.end_line && hit_end >= range.start_line {
+                if covered_targets.insert(index) {
+                    match level {
+                        RelevanceLevel::Strong => {
+                            strong_covered += 1;
+                            if first_strong_rank.is_none() {
+                                first_strong_rank = Some(rank + 1);
+                            }
+                        }
+                        RelevanceLevel::Related => related_covered += 1,
+                        RelevanceLevel::Irrelevant => {}
+                    }
+                }
+                break;
+            }
+        }
+    }
+    if strong_total + related_total == 0 {
+        return String::from("- Coverage: judged ranges carry no strong/related target.");
+    }
+    if covered_targets.is_empty() {
+        return format!(
+            "- Coverage: 0/{strong_total} strong, 0/{related_total} related covered in top-K; no expected range hit."
+        );
+    }
+    match first_strong_rank {
+        Some(rank) => format!(
+            "- Coverage: {strong_covered}/{strong_total} strong, {related_covered}/{related_total} related covered in top-K; first strong hit at rank {rank}."
+        ),
+        None => format!(
+            "- Coverage: {strong_covered}/{strong_total} strong, {related_covered}/{related_total} related covered in top-K."
+        ),
+    }
+}
+
+/// Mechanism note for zero-hit pages so reviewers do not misread them as index gaps.
+fn zero_hit_note(judgment: &RelevanceJudgment, hybrid_available: bool) -> String {
+    if judgment.query_type == QueryType::CrossLang && !hybrid_available {
+        return String::from(
+            "- Note: zero hits are expected here: a non-English query cannot match the English BM25 index without vectors (BM25-only fallback).",
+        );
+    }
+    String::from(
+        "- Note: zero hits after min_score filtering; lower min_score or check index coverage when triaging.",
+    )
+}
+
 /// Compact score table over the returned hits.
-fn render_hit_table(result: &QueryResult) -> String {
+fn render_hit_table(result: &QueryResult, judgment: &RelevanceJudgment) -> String {
     if result.items.is_empty() {
         return String::from("(no hits)\n");
     }
     let mut table = String::from(
-        "| rank | score | original | vector | bm25 | sources | boosted | boost reason | key | file | entity |\n|---:|---:|---:|---:|---:|---|---|---|---|---|---|\n",
+        "| rank | score | original | vector | bm25 | sources | boosted | boost reason | key | file | entity | in_expected |\n|---:|---:|---:|---:|---:|---|---|---|---|---|---|---|\n",
     );
     for (rank, item) in result.items.iter().enumerate() {
         let bm25 = item
             .bm25_score
             .map(|score| format!("{score:.4}"))
             .unwrap_or_else(|| "-".to_string());
+        let in_expected =
+            hit_match_level(judgment, &item.file_path, item.start_line, item.end_line)
+                .map(|level| level.to_string())
+                .unwrap_or_else(|| "-".to_string());
         table.push_str(&format!(
-            "| {} | {:.4} | {:.4} | {:.4} | {} | {} | {} | {} | {} | {}:{}-{} | {} {} |\n",
+            "| {} | {:.4} | {:.4} | {:.4} | {} | {} | {} | {} | {} | {}:{}-{} | {} {} | {} |\n",
             rank + 1,
             item.score,
             item.original_score,
@@ -541,6 +721,59 @@ fn render_hit_table(result: &QueryResult) -> String {
             item.end_line,
             cell(&item.kind),
             cell(&item.name),
+            in_expected,
+        ));
+    }
+    table.push('\n');
+    table
+}
+
+/// Compact score table for the aggregated demo, which merges two judgments and
+/// therefore carries no single expectation to align against.
+fn render_hit_table_aggregated(
+    result: &QueryResult,
+    judgments: &[&RelevanceJudgment],
+) -> String {
+    if result.items.is_empty() {
+        return String::from("(no hits)\n");
+    }
+    let mut table = String::from(
+        "| rank | score | original | vector | bm25 | sources | boosted | boost reason | key | file | entity | in_expected |\n|---:|---:|---:|---:|---:|---|---|---|---|---|---|---|\n",
+    );
+    for (rank, item) in result.items.iter().enumerate() {
+        let bm25 = item
+            .bm25_score
+            .map(|score| format!("{score:.4}"))
+            .unwrap_or_else(|| "-".to_string());
+        let level = judgments
+            .iter()
+            .filter_map(|judgment| {
+                hit_match_level(judgment, &item.file_path, item.start_line, item.end_line)
+            })
+            .max();
+        let level = match level {
+            Some(RelevanceLevel::Strong) => "strong",
+            Some(RelevanceLevel::Related) => "related",
+            Some(RelevanceLevel::Irrelevant) => "irrelevant",
+            None => "-",
+        };
+        table.push_str(&format!(
+            "| {} | {:.4} | {:.4} | {:.4} | {} | {} | {} | {} | {} | {}:{}-{} | {} {} | {} |\n",
+            rank + 1,
+            item.score,
+            item.original_score,
+            item.vector_score,
+            bm25,
+            item.sources.join("+"),
+            if item.is_boosted { "yes" } else { "no" },
+            cell(item.boost_reason.as_deref().unwrap_or("-")),
+            cell(&alignment_key_of(item)),
+            cell(&item.file_path),
+            item.start_line,
+            item.end_line,
+            cell(&item.kind),
+            cell(&item.name),
+            level,
         ));
     }
     table.push('\n');
@@ -620,9 +853,13 @@ fn render_hit_detail(rank: usize, item: &SearchResult, annotation: AnnotationOut
                 result.metadata.file_count,
                 result.metadata.truncated,
             ));
-            out.push_str("```text\n");
-            out.push_str(&fenced(&result.annotated_content));
-            out.push_str("\n```\n");
+            if result.annotated_content.trim().is_empty() {
+                out.push_str("\n(no expansion units; see Content above)\n");
+            } else {
+                out.push_str("```text\n");
+                out.push_str(&fenced(&result.annotated_content));
+                out.push_str("\n```\n");
+            }
         }
         AnnotationOutcome::Skipped(reason) => {
             out.push_str(&format!(
@@ -644,12 +881,15 @@ fn render_manifest(
     hybrid_available: bool,
     search_config: &SearchConfig,
     index_result: &cce_orchestrator::IndexResult,
+    fixture_root: &std::path::Path,
 ) -> String {
     let mut manifest = format!("project: {}\n", config.project);
     manifest.push_str(&format!("language: {}\n", config.language));
     manifest.push_str(&format!("queries: {}\n", config.judgments.len()));
     manifest.push_str(&format!("top_k: {}\n", config.top_k));
-    manifest.push_str(&format!("sources: {sources}\n"));
+    manifest.push_str(&format!("request sources: {sources}\n"));
+    manifest.push_str(&format!("scope: full fixture tree at {} (no path filter)\n", fixture_root.display()));
+    manifest.push_str("scope note: structured/chunks reports exclude tests; entity and relation counts are not comparable across jobs\n");
     manifest.push_str(&format!(
         "qdrant_available: {}\n",
         if hybrid_available { "yes" } else { "no" }
@@ -713,9 +953,21 @@ fn render_manifest(
 }
 
 /// Entry page linking every query file with its top-1 hit.
-fn render_index(config: &QueryReviewConfig, outcomes: &[QueryOutcome]) -> String {
+fn render_index(
+    config: &QueryReviewConfig,
+    outcomes: &[QueryOutcome],
+    hybrid_available: bool,
+) -> String {
     let mut page = format!("# Query Review: {}\n\n", config.project);
+    if hybrid_available {
+        page.push_str("Capability: hybrid (vector+bm25).\n\n");
+    } else {
+        page.push_str(
+            "Capability: BM25-only fallback; semantic (G2), fuzzy (FZ), and cross-language (G4) conclusions are not representative without vectors.\n\n",
+        );
+    }
     page.push_str(&format!("{} queries, top-{}. Expected ranges come from the judgment set; open each file to compare hits against them.\n\n", outcomes.len(), config.top_k));
+    page.push_str("Scope: this job indexes the full fixture tree (tests included); structured/chunks reports exclude tests, so their counts differ by design.\n\n");
     page.push_str("| query | type | total | elapsed_ms | top score | top hit |\n|---|---|---:|---:|---:|---|\n");
     for outcome in outcomes {
         page.push_str(&format!(
@@ -745,20 +997,17 @@ fn alignment_key_of(item: &SearchResult) -> String {
 
 /// Adapt a search hit to the annotator input shape.
 ///
-/// The body is already the exact unit, so a 1-based whole-unit range makes
-/// extraction identity (matching production); absolute line metadata stays
-/// owned by the result itself.
+/// The body is already the exact unit and the span is its file-absolute
+/// range; extraction records both as-is in a single coordinate system.
 fn search_result_input(item: &SearchResult) -> SearchResultInput {
-    let line_count = item.content.lines().count();
-    let end_line = u32::try_from(line_count).unwrap_or(u32::MAX).max(1);
     SearchResultInput {
         id: item.id.clone(),
         entity_id: item.entity_ids.first().copied(),
         name: item.name.clone(),
         kind: item.kind.clone(),
         file_path: item.file_path.clone(),
-        start_line: 1,
-        end_line,
+        start_line: item.start_line,
+        end_line: item.end_line,
         content: item.content.clone(),
         score: item.score,
     }
@@ -782,4 +1031,18 @@ async fn probe_qdrant() -> Result<(), String> {
         cce_storage_vector_qdrant::QdrantClient::new(config, "test").map_err(|e| e.to_string())?;
     client.initialize().await.map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reference_window_keeps_definition_line_plus_one_context_line() {
+        assert_eq!(reference_window(5, 20), (4, 6));
+        assert_eq!(reference_window(0, 20), (0, 1));
+        assert_eq!(reference_window(19, 20), (18, 19));
+        assert_eq!(reference_window(0, 1), (0, 0));
+        assert_eq!(reference_window(7, 0), (0, 0));
+    }
 }
