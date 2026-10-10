@@ -20,6 +20,10 @@
 //! [`QueryCoordinator::search_aggregated`] with two sub-queries derived from
 //! the same judgment set. Outputs are for manual review only and never
 //! participate in assertions.
+//!
+//! A run without a reachable Qdrant degrades to BM25-only and writes to
+//! `query_review/{project}_bm25/` instead, so the default directory always
+//! carries hybrid output.
 
 use std::sync::Arc;
 
@@ -73,7 +77,16 @@ struct QueryOutcome {
 
 /// Run the full query-review export.
 pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
-    let scenario = match config.scenario_suffix {
+    // Hybrid requires a reachable Qdrant; without it the run degrades to
+    // BM25-only and must not pose as the default hybrid output, so an unset
+    // suffix becomes the explicit bm25 marker.
+    let hybrid_available = probe_qdrant().await.is_ok();
+    let effective_suffix = match config.scenario_suffix {
+        Some(suffix) => Some(suffix),
+        None if hybrid_available => None,
+        None => Some("bm25"),
+    };
+    let scenario = match effective_suffix {
         Some(suffix) => format!("query_review/{}_{}", config.project, suffix),
         None => format!("query_review/{}", config.project),
     };
@@ -90,7 +103,6 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
             .context("mock embedder")?,
     );
 
-    let hybrid_available = probe_qdrant().await.is_ok();
     let sources = if hybrid_available {
         SearchSources::default()
     } else {

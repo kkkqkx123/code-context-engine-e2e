@@ -88,6 +88,8 @@ outputs/
   `SUMMARY.md` 结构）。
 - `scenarios/{lang}/` 下的三个标准子目录（summary / chunks / structured）由统一的
   review 导出框架（`src/review_export.rs`）生成，任何语言的 `export_{lang}` 示例输出结构一致。
+- `query_review/{project}_bm25/` 为 Qdrant 不可用时的 BM25-only 单路输出；
+  `query_review/{project}/` 默认目录只承载 hybrid 结果。
 
 ## 输出文件生成来源分析
 
@@ -259,6 +261,11 @@ cargo run --example query_review_flask -p cce-e2e-tests
 无 Qdrant 无网络）后逐判定查询；每个命中用内容状态机物化正文（超限降级为引用），
 经 `RelationAnnotator::annotate_single` 做关系扩展标注（命中行范围反查关系快照取
 callee/caller，前后向各最多 3 个），同一对齐键去重后渲染。
+
+**目录后缀规则：** Qdrant 可用时落默认目录（hybrid）；不可用时降级为 BM25-only
+并改写 `query_review/{project}_bm25/` 后缀目录，manifest 的 `capability` 行声明
+该配置下语义（G2）、模糊（FZ）、跨语言（G4）结论不具代表性。默认目录只承载
+hybrid 输出。
 
 **输出内容：**
 - `run_manifest.txt` - 运行清单（索引文件/实体/关系数、outcome/errors、请求来源与

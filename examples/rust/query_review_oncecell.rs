@@ -4,7 +4,8 @@
 //! `src/judgments/once_cell.rs` through the real query pipeline, and renders
 //! per-query complete results plus an aggregated-search demo for manual
 //! review. Uses the deterministic mock embedder; hybrid search runs when
-//! Qdrant is reachable, otherwise BM25-only (recorded in the manifest).
+//! Qdrant is reachable, otherwise BM25-only into the `once_cell_bm25`
+//! directory (recorded in the manifest).
 //!
 //! Output:
 //!   outputs/scenarios/rust/query_review/once_cell/
