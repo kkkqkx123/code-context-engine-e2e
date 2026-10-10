@@ -730,10 +730,7 @@ fn render_hit_table(result: &QueryResult, judgment: &RelevanceJudgment) -> Strin
 
 /// Compact score table for the aggregated demo, which merges two judgments and
 /// therefore carries no single expectation to align against.
-fn render_hit_table_aggregated(
-    result: &QueryResult,
-    judgments: &[&RelevanceJudgment],
-) -> String {
+fn render_hit_table_aggregated(result: &QueryResult, judgments: &[&RelevanceJudgment]) -> String {
     if result.items.is_empty() {
         return String::from("(no hits)\n");
     }
@@ -888,7 +885,10 @@ fn render_manifest(
     manifest.push_str(&format!("queries: {}\n", config.judgments.len()));
     manifest.push_str(&format!("top_k: {}\n", config.top_k));
     manifest.push_str(&format!("request sources: {sources}\n"));
-    manifest.push_str(&format!("scope: full fixture tree at {} (no path filter)\n", fixture_root.display()));
+    manifest.push_str(&format!(
+        "scope: full fixture tree at {} (no path filter)\n",
+        fixture_root.display()
+    ));
     manifest.push_str("scope note: structured/chunks reports exclude tests; entity and relation counts are not comparable across jobs\n");
     manifest.push_str(&format!(
         "qdrant_available: {}\n",
