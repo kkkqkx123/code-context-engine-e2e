@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use cce_codegraph::index::SnapshotEntityQueryOps;
+use cce_codegraph::index::snapshot_query::SnapshotSymbolQueryOps;
 use cce_llm_client::OpenAICompatibleProvider;
 use cce_orchestrator::SearchSources;
 use cce_orchestrator::query::graph::{GraphDirection, SubGraph};
@@ -63,6 +64,8 @@ struct Seed {
     id: EntityId,
     name: String,
     provenance: String,
+    /// Cross-run join key; `None` when the entity has no registered symbol key.
+    stable_id: Option<String>,
 }
 
 /// Rendered per-seed outcome kept for the index page.
@@ -221,6 +224,7 @@ where
                     "judgment {} range {}:{}-{}",
                     judgment.id, range.file, range.start_line, range.end_line
                 ),
+                stable_id_of(snapshot, id),
             );
         }
     }
@@ -236,7 +240,14 @@ where
                 .get_function_by_entity_id(id)
                 .map(|entity| entity.name.clone())
                 .unwrap_or_else(|| hub.to_string());
-            push_seed(&mut seen, &mut seeds, id, name, format!("hub `{hub}`"));
+            push_seed(
+                &mut seen,
+                &mut seeds,
+                id,
+                name,
+                format!("hub `{hub}`"),
+                stable_id_of(snapshot, id),
+            );
         }
     }
     seeds
@@ -249,14 +260,26 @@ fn push_seed(
     id: EntityId,
     name: String,
     provenance: String,
+    stable_id: Option<String>,
 ) {
     if seen.insert(id.0) {
         seeds.push(Seed {
             id,
             name,
             provenance,
+            stable_id,
         });
     }
+}
+
+/// Stable symbol id for cross-run joins, when the entity has one.
+fn stable_id_of(
+    snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
+    id: EntityId,
+) -> Option<String> {
+    snapshot
+        .get_symbol_key_by_entity_id(id)
+        .map(|key| key.stable_id().0)
 }
 
 /// Whether a hub name contributed at least one rendered seed.
@@ -320,6 +343,10 @@ fn render_seed_page(
     let (name, kind, location) = describe(seed.id);
     let mut page = format!("# Seed: {name} (`{kind}`)\n\n");
     page.push_str(&format!("- Entity id: `{}`\n", seed.id.0));
+    page.push_str(&format!(
+        "- Stable id: `{}`\n",
+        seed.stable_id.as_deref().unwrap_or("(none)")
+    ));
     page.push_str(&format!("- Location: `{location}`\n"));
     page.push_str(&format!("- Provenance: {}\n", seed.provenance));
 
@@ -588,6 +615,8 @@ fn mermaid_label(label: &str) -> String {
 struct SeedGraphJson {
     seed_id: u64,
     seed_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    seed_stable_id: Option<String>,
     nodes: Vec<cce_orchestrator::query::graph::GraphNode>,
     edges: Vec<cce_orchestrator::query::graph::GraphEdge>,
 }
@@ -597,6 +626,7 @@ impl SeedGraphJson {
         Self {
             seed_id: seed.id.0,
             seed_name: seed.name.clone(),
+            seed_stable_id: seed.stable_id.clone(),
             nodes: ego.nodes.clone(),
             edges: ego.edges.clone(),
         }
