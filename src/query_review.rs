@@ -34,6 +34,7 @@ use cce_orchestrator::query::annotation::{
     AnnotatedResult, ExpandedUnit, ExpansionOrigin, RelationAnnotationConfig, RelationAnnotator,
     SearchResultInput,
 };
+use cce_orchestrator::query::relation_searcher::RelationQueryOptions;
 use cce_orchestrator::query::types::ExecutionStrategy;
 use cce_orchestrator::query::types::SearchResult;
 use cce_orchestrator::{
@@ -272,9 +273,7 @@ async fn render_query_page(
     }
     page.push_str(&format!("- Request sources: {sources}\n"));
     page.push_str(&format!("- Execution strategy: {strategy}\n"));
-    page.push_str(&format!(
-        "- Intent: default hybrid (no per-query override)\n"
-    ));
+    page.push_str("- Intent: default hybrid (no per-query override)\n");
     page.push_str(&format!(
         "- Fusion: vector_weight={:.2} bm25_weight={:.2} algorithm={:?}\n",
         search_config.fusion.vector_weight,
@@ -375,12 +374,22 @@ async fn annotate_hit(
     }
 }
 
-/// Resolve up to three callees and three callers into annotator units.
+/// Resolve up to three call-domain callees and three call-domain callers
+/// into annotator units.
 ///
 /// Seeds resolve through the snapshot line-range lookup (the relation index
 /// ID space), not the hit's retrieval entity IDs (the SQLite row space), so
 /// method groups represented by their impl block still surface member call
-/// edges instead of reading empty.
+/// edges instead of reading empty. Hit line numbers are one-based
+/// presentation values while the snapshot index compares zero-based
+/// tree-sitter rows, so the range is translated back before the lookup.
+///
+/// Both directions read the production paginated path with a call-domain
+/// filter (`relation_domains=["call"]`, `include_external=false`), so
+/// structural edges (impl association, trait bound, inheritance) and
+/// dependency edges (import/use) are never rendered as calls. The producer
+/// returns the edge behind each caller, so the labels `calls` / `called by`
+/// carry real call semantics and the units carry the real relation type.
 fn expansion_units(
     coordinator: &QueryCoordinator,
     fixture_root: &std::path::Path,
@@ -390,9 +399,18 @@ fn expansion_units(
 ) -> (Vec<ExpandedUnit>, Vec<ExpandedUnit>) {
     const PER_DIRECTION_LIMIT: usize = 3;
     let snapshot = coordinator.relation_searcher().query().index();
+    let options = RelationQueryOptions {
+        relation_domains: vec!["call".to_string()],
+        include_external: false,
+        limit: PER_DIRECTION_LIMIT,
+        ..RelationQueryOptions::default()
+    };
 
-    let mut seeds =
-        snapshot.get_entities_in_line_range(file_path, start_line as usize, end_line as usize);
+    // Snapshot spans are zero-based rows; hit lines are one-based.
+    let first_row = start_line.min(end_line).saturating_sub(1) as usize;
+    let last_row = start_line.max(end_line).saturating_sub(1) as usize;
+    let (first_row, last_row) = (first_row.min(last_row), first_row.max(last_row));
+    let mut seeds = snapshot.get_entities_in_line_range(file_path, first_row, last_row);
     seeds.sort_by_key(|id| id.0);
     seeds.truncate(4);
     let mut forward = Vec::new();
@@ -401,12 +419,13 @@ fn expansion_units(
         if forward.len() >= PER_DIRECTION_LIMIT {
             break;
         }
-        let callees = coordinator
-            .get_callees(*entity_id)
+        for relation in coordinator
+            .get_callees_paginated(*entity_id, &options)
             .unwrap_or_default()
-            .into_iter()
-            .filter_map(|relation| relation.callee_id);
-        for callee in callees {
+        {
+            let Some(callee) = relation.callee_id else {
+                continue;
+            };
             if forward.len() >= PER_DIRECTION_LIMIT || !seen_forward.insert(callee.0) {
                 continue;
             }
@@ -416,6 +435,7 @@ fn expansion_units(
                 callee,
                 ExpansionOrigin::Forward,
                 "calls",
+                &relation,
             ) {
                 forward.push(unit);
             }
@@ -428,11 +448,11 @@ fn expansion_units(
         if backward.len() >= PER_DIRECTION_LIMIT {
             break;
         }
-        let callers = coordinator
-            .get_callers(*entity_id)
+        for relation in coordinator
+            .get_callers_paginated(*entity_id, &options)
             .unwrap_or_default()
-            .into_iter();
-        for caller in callers {
+        {
+            let caller = relation.caller;
             if backward.len() >= PER_DIRECTION_LIMIT || !seen_backward.insert(caller.0) {
                 continue;
             }
@@ -442,6 +462,7 @@ fn expansion_units(
                 caller,
                 ExpansionOrigin::Backward,
                 "called by",
+                &relation,
             ) {
                 backward.push(unit);
             }
@@ -450,13 +471,15 @@ fn expansion_units(
     (forward, backward)
 }
 
-/// Read one entity's source snippet from the fixture tree as an annotator unit.
+/// Read one entity's source snippet from the fixture tree as an annotator unit,
+/// tagged with the edge that produced it.
 fn snippet_unit(
     snapshot: &cce_codegraph::index::LayeredSnapshotIndex,
     fixture_root: &std::path::Path,
     entity_id: cce_types::EntityId,
     origin: ExpansionOrigin,
     edge_label: &str,
+    relation: &cce_types::ResolvedRelation,
 ) -> Option<ExpandedUnit> {
     let entity = snapshot.get_function_by_entity_id(entity_id)?;
     let file_path = snapshot.get_file_path_by_entity(entity_id)?;
@@ -482,7 +505,10 @@ fn snippet_unit(
             entity.name.clone(),
         )
         .with_expansion(origin, edge_label)
-        .with_entity_id(entity_id),
+        .with_entity_id(entity_id)
+        .with_relation_type(relation.relation_type)
+        .with_external(relation.is_external)
+        .with_stdlib(relation.is_stdlib()),
     )
 }
 
