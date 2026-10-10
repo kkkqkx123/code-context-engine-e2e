@@ -63,12 +63,12 @@ API 响应反过来有、报告中没有的顶层字段：`success`、`relation_
 
 两者都走 `RelationAnnotator::annotate_single` + `StructureConcatenator`，拼接顺序为：
 
-1. 主单元（hit body），前缀 `// [file] <path>` 文件标记（`include_file_markers`）；
-2. 扩展单元按 score 择优、按（文件, 行号）结构化排序追加，每个单元前缀关系标记
-   `// [<direction>:<relation_type>] <name> (<file>:<start>-<end>)`，direction 为
-   `calls` / `called by`（构造调用为 `constructed by`）；
-3. 超预算单元降级为引用行（路径+行号+token 估计），缺失文件同样降级；
-4. 超出总量预算时追加 `// [omitted] N unit(s) (~T tokens)` 截断说明。
+1. 主单元（hit body），包在 `<unit name="..." lines="...">` 片段标签中；
+2. 扩展单元按 score 择优、按（文件, 行号）结构化排序追加，每个单元一个片段标签，
+   关系方向与类型编码为 `rel` 属性（`rel="calls"` / `rel="called by:call.method"`）；
+3. 超预算单元降级为自闭合引用标签（`<reference path lines reason/>`），缺失文件同样降级；
+4. 超出总量预算时追加自闭合 `<omitted units="N" tokens="~T"/>` 截断说明；
+5. 跨文件结果用 `<file path="...">` 分组，整体包在 `<annotation>` 根标签中。
 
 但参数与输入存在关键差异：
 
@@ -76,15 +76,15 @@ API 响应反过来有、报告中没有的顶层字段：`success`、`relation_
   callee/caller（call 域、每方向最多 3 个、seed 截断 4 个），并从 fixture 源码
   读取片段；而 REST 生产路径（`post_processing.rs`）调用
   `annotate_single(input, Vec::new(), Vec::new())`，**扩展列表恒为空**——即真实
-  API 输出的标注内容只含主单元（文件标记 + body），不会出现 `// [calls:...]`、
-  `// [called by:...]` 等 relation 标记。
+  API 输出的标注内容只含主单元片段，不会出现 `rel="calls"`、`rel="called by"`
+  等扩展片段标签。
 - **参考窗口**：报告的扩展单元只保留定义行 ±1 行的 3 行窗口
   （`reference_window`），且起始行号做了 +1 的展示层换算；这是审查专用的最小化
   展示，生产路径不存在该逻辑。
 - **omit_primary_body**：报告固定 `omit_primary_body(true)`——主 body 不重复渲染，
   因此第 1、3、5 号命中出现"Annotated content 只有扩展片段"的形态（`expanded: false`
   时直接写 "(no expansion units; see Content above)"）；生产默认值为 false，若
-  启用标注，`code_chunk` 会是"文件标记 + 完整 body"的完整拼接。
+  启用标注，`code_chunk` 会是"片段标签 + 完整 body"的完整拼接。
 - **annotated 主 body 的缩进**：报告 `Content` 中的前导缩进来自索引期原文；
   标注路径从 `content` 重新提取单元，两者共用同一坐标系（`search_result_input`
   不做行号换算），不会出现行号偏移。
@@ -92,8 +92,9 @@ API 响应反过来有、报告中没有的顶层字段：`success`、`relation_
 ### 3. 引用型 content（Reference 状态）
 
 `content_state` 为 Reference 系列时，`content`/`code_chunk` 不是源码，而是
-`reference_content()` 生成的单行"路径+行号+token 估计+降级原因"引用。报告与 API
-行为一致，但报告会照常渲染该行并跳过标注（`annotation skipped: reference ...`）。
+`reference_content()` 生成的自闭合 XML 引用标签（path/lines/reason/tokens 全部
+编码为属性）。报告与 API 行为一致，但报告会照常渲染该标签并跳过标注
+（`annotation skipped: reference ...`）。
 
 ## 三、小结
 
@@ -105,15 +106,18 @@ API 响应反过来有、报告中没有的顶层字段：`success`、`relation_
 - content 差异要点：生产 API 在启用标注时把标注文本就地写回 `code_chunk` 且不带
   扩展单元；报告则始终并列展示"原始 body"与"带扩展标记的标注文本"两份内容。
 
-## 四、标注内容中的位置信息与注释标记形式分析
+## 四、标注内容中的位置信息与标记形式分析（历史设计讨论，已落地为 XML）
+
+> 本节为迁移前的设计讨论记录，保留作为决策依据。讨论中的 `// [...]` comment
+> 形态已被替换，现行为见本节末尾与第 2 节的 XML 形态描述。
 
 针对标注内容（`#### Annotated content` 及生产链路写回 `code_chunk` 的标注文本）中
 的关系引用片段，讨论两个设计问题：文件路径 / 行范围是否应前置于片段，
 以及 `// [...]` 注释形式是否应改为 XML 包围。
 
-### 1. 现状回顾
+### 1. 迁移前现状（comment 形态，已被替换）
 
-每个扩展片段当前由三部分拼接（`concatenator.rs` 的 `render_segment`）：
+迁移前每个扩展片段由三部分拼接：
 
 ```text
 // [file] src/flask/app.py
@@ -123,15 +127,27 @@ API 响应反过来有、报告中没有的顶层字段：`success`、`relation_
         """Handle an exception that did not have an error handler
 ```
 
-- 文件标记 `// [file] <path>`：仅在同一文件首个片段前渲染一次（跨文件切换时重复）；
-- 关系标记 `// [<direction>:<relation_type>] <name> (<file>:<start>-<end>)`：携带
-  完整路径与 1-based 行范围；
-- 片段 body：来自 `reference_window` 截取的 3 行窗口（报告）或完整 body（生产）。
+迁移后形态（`concatenator.rs` 的 `render_segment`）：
 
-行范围存在一处语义断层：片段 body 的行号坐标系是"文件绝对行号"，但窗口被裁剪后
-（如 `handle_exception` 只保留前 2 行，标 `896-898`），**标记声称的范围与实际
-渲染内容不对应**——898 行之后的内容被省略，却没有任何提示。主单元同理，
-`omit_primary_body(true)` 下主 body 不渲染，其位置信息只存在于 hit 元数据中。
+```text
+<annotation>
+<file path="src/flask/app.py">
+<unit rel="calls:call.method" name="handle_exception" lines="896-898" excerpt="true">
+    def handle_exception(self, ctx: AppContext, e: Exception) -> Response:
+        """Handle an exception that did not have an error handler
+</unit>
+</file>
+</annotation>
+```
+
+- `<file path>`：仅跨文件结果输出，同一文件的片段共用一个分组标签；
+- `<unit rel name lines>`：携带关系方向与类型、符号名、1-based 行范围；
+- 片段 body：来自 `reference_window` 截取的 3 行窗口（报告，带 `excerpt="true"`）
+  或完整 body（生产）。
+
+行范围语义断层已修正：报告侧窗口片段标记中的起止行是窗口的真实渲染行
+（`window_start+1` / `window_end+1`），且携带 `excerpt="true"` 属性标明裁剪语义，
+模型不会把该范围误当作完整定义范围。
 
 ### 2. 路径 / 行范围是否应直接填充到片段前方
 
@@ -172,31 +188,34 @@ API 响应反过来有、报告中没有的顶层字段：`success`、`relation_
    `// [called by] ...` 行（提示注入面）。XML 标签包围同样不能根治注入
    （内容里也能写 `</code>`），但配合转义可以显著收窄。
 
-**建议：分层处理，而非整体切换 XML。**
-
-- **元数据类标记（关系标记、文件标记、引用行、omitted 统计）建议改为 XML 风格**，
-  例如：
+**元数据类标记（关系标记、文件标记、引用行、omitted 统计）已完整迁移为 XML 风格**
+（无配置开关，`comment` 风格已移除），实际形态：
 
   ```text
-  <cce:file path="src/flask/app.py">
-  <cce:unit rel="calls:call.method" name="handle_exception" loc="src/flask/app.py:896-898">
+  <annotation>
+  <file path="src/flask/app.py">
+  <unit rel="calls:call.method" name="handle_exception" lines="896-898" excerpt="true">
   ...片段代码原样...
-  </cce:unit>
-  </cce:file>
+  </unit>
+  </file>
+  </annotation>
   ```
 
   XML 优势：a) 标签语法与所有主流编程语言的代码正交，任何语言下都不会被误读为
   注释或代码；b) 开闭标签给出显式边界，截断/降级状态可以放进属性
-  （`state="reference"` / `excerpt="true"`）；c) 与项目已有的 MCP/结构化输出生态
-  天然对齐，便于下游解析。
+  （`<reference path="..." lines="..." reason="..." tokens="..."/>` /
+  `excerpt="true"`）；c) 与项目已有的 MCP/结构化输出生态
+  天然对齐，便于下游解析。单文件结果省略 `<file>` 层；截断说明渲染为自闭合
+  `<omitted units="N" tokens="~T"/>`；主段合并的行间隙在 XML 风格下渲染为
+  `<gap lines="N" range="s-e"/>`。
 - **代码内容本身不要 XML 转义**：转义会破坏可读性与 token 效率，且代码不是
   文本字段，直接原样置于开闭标签之间即可；边界防混淆靠闭合标签而非转义。
 - **结构建议三层包围**：整个标注结果一层（对应 `AnnotatedResult`）、每个文件一层、
   每个片段（含扩展片段与降级引用）一层。这同时解决了"主单元与扩展单元边界"
   和"多文件分组"两个当前的隐性约定。
-- **迁移注意**：标记格式是提示词契约，改动会影响所有依赖标注文本的消费方
-  （含 e2e 断言与插件输出）；`RelationAnnotationConfig` 应新增标记风格开关
-  （`marker_style: comment | xml`），默认逐步切换，两个风格并存过渡。
+- **迁移注意**：标记格式是提示词契约。`RelationAnnotationConfig` 曾提供
+  `marker_style: comment | xml` 开关做双轨过渡，现已完成完整迁移并移除该开关，
+  全部输出统一为 XML 形态。
 
 ### 4. 小结
 

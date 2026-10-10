@@ -574,7 +574,8 @@ fn snippet_unit(
         .with_entity_id(entity_id)
         .with_relation_type(relation.relation_type)
         .with_external(relation.is_external)
-        .with_stdlib(relation.is_stdlib()),
+        .with_stdlib(relation.is_stdlib())
+        .with_excerpt(true),
     )
 }
 
