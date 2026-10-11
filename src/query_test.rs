@@ -400,6 +400,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             include_patterns: Vec::new(),
             with_source: true,
             enable_rerank: self.enable_rerank,
+            neighbour_resolver: None,
         };
 
         // Initialize query coordinator if not already done
@@ -506,6 +507,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             include_patterns: Vec::new(),
             with_source: true,
             enable_rerank: None,
+            neighbour_resolver: None,
         };
 
         if self.query_coordinator.is_none() {

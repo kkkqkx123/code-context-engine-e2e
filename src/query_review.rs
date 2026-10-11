@@ -231,6 +231,7 @@ where
         include_patterns: Vec::new(),
         enable_rerank: None,
         query_intent: None,
+        neighbour_resolver: None,
     };
     let mut result = query_test
         .coordinator()
