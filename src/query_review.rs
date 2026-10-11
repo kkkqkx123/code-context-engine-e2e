@@ -120,12 +120,14 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
         .with_config(search_config.clone());
     let index_result = query_test.index().await.context("index fixture")?.clone();
 
+    let fixture_root = query_test.fixture().root_path().to_path_buf();
     let annotator = RelationAnnotator::new(
         RelationAnnotationConfig::new()
             .enable(true)
             .with_expansion(true)
             .with_max_expanded_units(6)
             .with_caller_expansion(true)
+            .with_workspace_root(fixture_root.clone())
             .omit_primary_body(true),
     );
 
@@ -136,7 +138,6 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
             .await
             .with_context(|| format!("query {}", judgment.id))?
             .clone();
-        let fixture_root = query_test.fixture().root_path().to_path_buf();
         let page = render_query_page(QueryPageInput {
             judgment,
             result: &result,
@@ -169,7 +170,6 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
         manager.write("aggregated_demo.md", &page)?;
     }
 
-    let fixture_root = query_test.fixture().root_path().to_path_buf();
     manager.write(
         "run_manifest.txt",
         &render_manifest(
