@@ -3,9 +3,9 @@
 //! Indexes `fixtures/rust/review/once_cell`, runs every judgment query from
 //! `src/judgments/once_cell.rs` through the real query pipeline, and renders
 //! per-query complete results plus an aggregated-search demo for manual
-//! review. Uses the deterministic mock embedder; hybrid search runs when
-//! Qdrant is reachable, otherwise BM25-only into the `once_cell_bm25`
-//! directory (recorded in the manifest).
+//! review. Uses the deterministic mock embedder with the embedded local
+//! vector engine, so hybrid output needs no external service and always lands
+//! in the default `once_cell` directory (recorded in the manifest).
 //!
 //! Output:
 //!   outputs/scenarios/rust/query_review/once_cell/

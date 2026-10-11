@@ -13,7 +13,8 @@ use cce_orchestrator::{
     SearchConfig, SearchSources,
 };
 use cce_storage_bm25::Bm25Config;
-use cce_storage_vector_qdrant::QdrantConfig;
+use cce_storage_common::{VectorStorage, generate_project_group_id};
+use cce_storage_vector_local::LocalVectorStore;
 
 use super::EmbeddingConfig;
 use crate::fixture::FixtureAccess;
@@ -47,8 +48,18 @@ pub struct QueryWorkflowTest<F: FixtureAccess> {
     search_config: SearchConfig,
     /// Shared BM25 client (index + query use same instance)
     bm25_client: Option<Arc<cce_storage_bm25::Bm25Client>>,
-    /// Shared Qdrant client (index + query use same instance)
+    /// Shared local vector store (index + query use same instance).
+    ///
+    /// This is the default vector backend: zero external services, data rooted
+    /// at a per-run temp directory dropped with the test.
+    local_vector: Option<Arc<LocalVectorStore>>,
+    /// Shared Qdrant client, only present when the remote backend is opted in
+    /// via [`Self::with_qdrant_url`] (remote-branch verification). The default
+    /// local path never sets this.
     qdrant_client: Option<Arc<cce_storage_vector_qdrant::QdrantClient>>,
+    /// Remote Qdrant endpoint overriding the default local backend.
+    /// `None` (default) means embedded simvec; `Some(url)` selects Qdrant.
+    qdrant_url: Option<String>,
     /// Shared SQLite database (index + query use same instance)
     sqlite_db: Option<Arc<cce_storage_metadb_sqlite::SqliteClient>>,
     /// Shared embedder for vector index and query (optional; without it,
@@ -64,6 +75,9 @@ pub struct QueryWorkflowTest<F: FixtureAccess> {
     extensions: Option<Vec<String>>,
     /// BM25 index temp directory, dropped after test completes
     _bm25_temp_dir: Option<TempDir>,
+    /// Local vector data directory, dropped after test completes. Per-run so
+    /// no stale vectors leak across runs.
+    _vector_temp_dir: Option<TempDir>,
     /// Project group id shared by the index fingerprint and the query scope
     project_group_id: Option<String>,
     /// Optional stable scenario key. When set, the Qdrant group id derives
@@ -87,7 +101,9 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             search_sources: SearchSources::default(),
             search_config: SearchConfig::default(),
             bm25_client: None,
+            local_vector: None,
             qdrant_client: None,
+            qdrant_url: None,
             sqlite_db: None,
             embedder: None,
             metrics_registry: None,
@@ -95,6 +111,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             enable_rerank: None,
             extensions: None,
             _bm25_temp_dir: None,
+            _vector_temp_dir: None,
             project_group_id: None,
             scenario_name: None,
         }
@@ -162,19 +179,28 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         self
     }
 
-    /// Bind a stable scenario key used to derive the Qdrant group id.
+    /// Bind a stable scenario key used to derive the project group id.
     ///
-    /// Without it the group id is hashed from the per-run temp directory, so
-    /// every run writes a fresh partition that is never reused. With a stable
-    /// key repeated runs of the same scenario share one partition of the
-    /// shared `cce_vectors` collection, keeping storage bounded.
+    /// Without it the group id is hashed from the per-run fixture path. With a
+    /// stable key repeated runs of the same scenario share one group partition,
+    /// keeping storage bounded on backends with a shared collection. The local
+    /// default backend rebuilds its data dir per run, so the key only changes
+    /// the group string there, not storage reuse.
     #[allow(dead_code)]
     pub fn with_scenario_name(mut self, scenario: impl Into<String>) -> Self {
         self.scenario_name = Some(scenario.into());
         self
     }
 
-    /// The Qdrant group id this test indexes into (if an index has run).
+    /// Opt into the remote Qdrant backend for this test (remote-branch
+    /// verification only). The default is the embedded local engine.
+    #[allow(dead_code)]
+    pub fn with_qdrant_url(mut self, url: impl Into<String>) -> Self {
+        self.qdrant_url = Some(url.into());
+        self
+    }
+
+    /// The project group id this test indexes into (if an index has run).
     #[allow(dead_code)]
     pub fn project_group_id(&self) -> Option<&str> {
         self.project_group_id.as_deref()
@@ -192,8 +218,10 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
 
     /// Execute indexing
     ///
-    /// Configures shared BM25 and Qdrant clients for both indexing and subsequent queries.
+    /// Configures shared BM25 and vector clients for both indexing and subsequent queries.
     /// Uses a unique per-instance BM25 index path to prevent cross-test data pollution.
+    /// The vector backend defaults to the embedded local engine rooted at a
+    /// per-run temp directory; opt into Qdrant with [`Self::with_qdrant_url`].
     pub async fn index(&mut self) -> Result<&IndexResult> {
         use cce_orchestrator::CheckpointManager;
         use cce_storage_metadb_sqlite::SqliteClient;
@@ -202,18 +230,16 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             IndexOrchestrator::new(self.project_id).expect("failed to create IndexOrchestrator");
 
         // The project group id must be shared by the index and query sides so
-        // stored payloads and the query scope reference the same partition.
-        // Mirror the production wiring (crates/cce_server/src/engine.rs):
-        // `generate_project_group_id(project_id, root_path)` is used both for
-        // `with_project_fingerprint` (index) and `ProjectScope` (query).
-        // A stable scenario name (when set) replaces the per-run temp path as
-        // the workspace key so repeated runs reuse one partition.
+        // stored payloads and the query scope reference the same partition,
+        // mirroring the production wiring where `generate_project_group_id`
+        // feeds both `with_project_fingerprint` (index) and `ProjectScope`
+        // (query). A stable scenario name (when set) replaces the per-run
+        // fixture path as the workspace key so repeated runs share one group.
         let workspace_key = self
             .scenario_name
             .clone()
             .unwrap_or_else(|| self.fixture.root_path().to_string_lossy().to_string());
-        let project_group_id =
-            cce_storage_vector_qdrant::generate_project_group_id(self.project_id, &workspace_key);
+        let project_group_id = generate_project_group_id(self.project_id, &workspace_key);
         self.project_group_id = Some(project_group_id.clone());
         orchestrator = orchestrator.with_project_fingerprint(project_group_id);
 
@@ -259,28 +285,48 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         orchestrator = orchestrator.with_bm25_client(bm25);
 
         if self.search_sources.vector {
-            // Match the collection dimension to the configured embedder.
-            let mut qdrant_config = QdrantConfig::with_url("http://localhost:6333");
-            qdrant_config.vector_size = self.embedding_config.dimension;
-            let qdrant = Arc::new(cce_storage_vector_qdrant::QdrantClient::new(
-                qdrant_config,
-                "test",
-            )?);
+            if let Some(ref url) = self.qdrant_url.clone() {
+                // Remote-branch verification: match the collection dimension
+                // to the configured embedder.
+                let mut qdrant_config =
+                    cce_storage_vector_qdrant::QdrantConfig::with_url(url.as_str());
+                qdrant_config.vector_size = self.embedding_config.dimension;
+                let qdrant = Arc::new(cce_storage_vector_qdrant::QdrantClient::new(
+                    qdrant_config,
+                    "test",
+                )?);
 
-            // Verify Qdrant is reachable before starting the index.
-            // Vector search requires a running Qdrant service on localhost:6333.
-            qdrant.initialize().await.map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to connect to Qdrant at localhost:6333. \
-                     Vector search is enabled but Qdrant is not running. \
-                     Please start the Qdrant service or disable vector search. \
-                     Underlying error: {}",
-                    e
-                )
-            })?;
+                // Verify the service is reachable before starting the index.
+                qdrant.initialize().await.map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to connect to Qdrant at {}. \
+                         The remote vector backend is enabled but unreachable. \
+                         Please start the Qdrant service or drop with_qdrant_url \
+                         to use the default local backend. \
+                         Underlying error: {}",
+                        url,
+                        e
+                    )
+                })?;
 
-            self.qdrant_client = Some(qdrant.clone());
-            orchestrator = orchestrator.with_qdrant_client(qdrant);
+                self.qdrant_client = Some(qdrant.clone());
+                orchestrator = orchestrator.with_qdrant_client(qdrant);
+            } else {
+                // Default: embedded local engine. Collection dimension comes
+                // explicitly from the configured (mock) embedder; HNSW tuning
+                // stays at engine defaults since fixtures are far below the
+                // exact-scan promotion threshold.
+                let vector_temp_dir = TempDir::new()?;
+                let local_config = cce_config::modules::LocalVectorConfig {
+                    vector_size: self.embedding_config.dimension,
+                    ..Default::default()
+                };
+                let store = LocalVectorStore::open_at(vector_temp_dir.path(), &local_config)?;
+                let store = Arc::new(store);
+                self.local_vector = Some(store.clone());
+                self._vector_temp_dir = Some(vector_temp_dir);
+                orchestrator = orchestrator.with_local(store);
+            }
         }
         if let Some(ref embedder) = self.embedder {
             orchestrator = orchestrator.with_embedder(embedder.clone());
@@ -393,20 +439,26 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         Ok(())
     }
 
-    /// Best-effort removal of this test's Qdrant points.
+    /// Best-effort removal of this test's vector points.
     ///
-    /// All tests share the single `cce_vectors` collection; logical isolation
-    /// comes from the `group_id` payload field. Deleting the group's points at
-    /// teardown keeps the collection from growing without bound across test
-    /// runs. BM25 (Tantivy) state lives in a per-instance `TempDir` that is
-    /// removed on drop, so no explicit cleanup is needed there.
+    /// Logical isolation comes from the `group_id` payload field on both
+    /// backends. Deleting the group's points at teardown keeps shared
+    /// collections from growing without bound across test runs. BM25 (Tantivy)
+    /// and local vector state live in per-instance `TempDir`s removed on drop,
+    /// so no explicit cleanup is needed there.
     ///
     /// Callers should invoke this in their teardown path; failures are logged
-    /// and swallowed so a missing Qdrant cannot fail an otherwise-passing test.
+    /// and swallowed so a missing backend cannot fail an otherwise-passing test.
     pub async fn cleanup(&mut self) {
         let Some(group_id) = self.project_group_id.clone() else {
             return;
         };
+        if let Some(store) = self.local_vector.clone() {
+            if let Err(e) = store.delete_by_group(&group_id).await {
+                tracing::warn!("Local vector cleanup for group '{}' failed: {e}", group_id);
+            }
+            return;
+        }
         let Some(client) = self.qdrant_client.clone() else {
             return;
         };
@@ -498,13 +550,38 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         use cce_storage_vector_qdrant::QdrantClient;
         use std::sync::Arc;
 
-        // Create in-memory storage clients for testing
-        let qdrant = if let Some(client) = self.qdrant_client.clone() {
-            client
-        } else {
-            let mut qdrant_config = QdrantConfig::with_url("http://localhost:6333");
+        // Vector backend mirrors the index side: reuse the indexed store when
+        // present, otherwise fall back to a fresh instance of the selected
+        // backend so the builder always has a store. The local fallback keeps
+        // its temp dir alive on `self`; the Qdrant fallback is only reachable
+        // on the remote opt-in path. Capability bits below are snapshotted
+        // before the fallback so an empty fallback store never poses as
+        // indexed vectors (a BM25-only index reports no vectors, matching the
+        // previous Qdrant-fallback semantics).
+        let has_vectors = self.local_vector.is_some() || self.qdrant_client.is_some();
+        let vector_store = if let Some(store) = self.local_vector.clone() {
+            cce_orchestrator::index::VectorStore::local(store)
+        } else if let Some(client) = self.qdrant_client.clone() {
+            cce_orchestrator::index::VectorStore::Qdrant(client)
+        } else if let Some(url) = self.qdrant_url.clone() {
+            let mut qdrant_config = cce_storage_vector_qdrant::QdrantConfig::with_url(url);
             qdrant_config.vector_size = self.embedding_config.dimension;
-            Arc::new(QdrantClient::new(qdrant_config, "test")?)
+            let client = Arc::new(QdrantClient::new(qdrant_config, "test")?);
+            self.qdrant_client = Some(client.clone());
+            cce_orchestrator::index::VectorStore::Qdrant(client)
+        } else {
+            let vector_temp_dir = TempDir::new()?;
+            let local_config = cce_config::modules::LocalVectorConfig {
+                vector_size: self.embedding_config.dimension,
+                ..Default::default()
+            };
+            let store = Arc::new(LocalVectorStore::open_at(
+                vector_temp_dir.path(),
+                &local_config,
+            )?);
+            self.local_vector = Some(store.clone());
+            self._vector_temp_dir = Some(vector_temp_dir);
+            cce_orchestrator::index::VectorStore::local(store)
         };
 
         let bm25 = if let Some(client) = self.bm25_client.clone() {
@@ -577,7 +654,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
                 .scenario_name
                 .clone()
                 .unwrap_or_else(|| self.fixture.root_path().to_string_lossy().to_string());
-            cce_storage_vector_qdrant::generate_project_group_id(self.project_id, &workspace_key)
+            generate_project_group_id(self.project_id, &workspace_key)
         });
         let scope =
             ProjectScope::new(self.project_id, project_group_id).expect("valid project scope");
@@ -613,13 +690,13 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         // coordinator, matching production where all indexed sources stay
         // available regardless of the per-query source mix.
         let capabilities = IndexCapabilities::new()
-            .with_vectors(self.qdrant_client.is_some())
+            .with_vectors(has_vectors)
             .with_bm25(self.bm25_client.is_some())
             .with_relations(has_relations);
 
         // Create query coordinator using builder pattern
         let mut coordinator_builder = QueryCoordinator::builder(
-            cce_orchestrator::index::VectorStore::Qdrant(qdrant.clone()),
+            vector_store,
             embedder,
             cce_orchestrator::index::FulltextStore::local(bm25.clone()),
             call_chain_query,
@@ -668,11 +745,11 @@ pub fn add(a: i32, b: i32) -> i32 {
             QueryWorkflowTest::new(fixture.into_test_fixture(), EmbeddingConfig::mock())
                 .with_sources(SearchSources::none().with_bm25());
 
-        // Index (BM25 only, no Qdrant dependency)
+        // Index (BM25 only, no vector dependency)
         let index_result = query_test.index().await.expect("Index failed");
         assert!(index_result.total_entities >= 1);
 
-        // Use BM25-only search (no Qdrant dependency)
+        // Use BM25-only search (no vector dependency)
         let _query_result = query_test
             .search_bm25("add numbers", 10)
             .await

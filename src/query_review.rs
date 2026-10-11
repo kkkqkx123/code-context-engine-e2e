@@ -22,9 +22,10 @@
 //! the same judgment set, with the same production post-pass applied.
 //! Outputs are for manual review only and never participate in assertions.
 //!
-//! A run without a reachable Qdrant degrades to BM25-only and writes to
-//! `query_review/{project}_bm25/` instead, so the default directory always
-//! carries hybrid output.
+//! The vector backend is the embedded local engine, so hybrid output needs no
+//! external service and the default scenario directory always carries hybrid
+//! output. Explicit single-source comparison runs must use `scenario_suffix`
+//! so they never overwrite the default directory.
 
 use std::sync::Arc;
 
@@ -41,9 +42,7 @@ use cce_orchestrator::{
 use crate::bench_data::{QueryType, RelevanceJudgment, RelevanceLevel};
 use crate::embedding::EmbeddingConfig;
 use crate::fixture::{FixtureSpec, TestFixture};
-use crate::mock_embedding_server::{
-    MOCK_EMBEDDING_DIMENSION, MockEmbeddingServer, mock_embedding_config,
-};
+use crate::mock_embedding_server::{MockEmbeddingServer, mock_embedding_config};
 use crate::output_manager::{OutputBuilder, OutputCategory};
 use crate::query_test::QueryWorkflowTest;
 
@@ -59,7 +58,10 @@ pub struct QueryReviewConfig {
     pub judgments: Vec<RelevanceJudgment>,
     /// Number of hits rendered per query.
     pub top_k: usize,
-    /// Optional output directory suffix for single-source comparison runs.
+    /// Optional output directory suffix for explicit single-source comparison
+    /// runs. `None` (default) writes the hybrid output to the scenario
+    /// directory; any comparison run must set a suffix so it never overwrites
+    /// the default directory.
     pub scenario_suffix: Option<&'static str>,
 }
 
@@ -75,16 +77,7 @@ struct QueryOutcome {
 
 /// Run the full query-review export.
 pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
-    // Hybrid requires a reachable Qdrant; without it the run degrades to
-    // BM25-only and must not pose as the default hybrid output, so an unset
-    // suffix becomes the explicit bm25 marker.
-    let hybrid_available = probe_qdrant().await.is_ok();
-    let effective_suffix = match config.scenario_suffix {
-        Some(suffix) => Some(suffix),
-        None if hybrid_available => None,
-        None => Some("bm25"),
-    };
-    let scenario = match effective_suffix {
+    let scenario = match config.scenario_suffix {
         Some(suffix) => format!("query_review/{}_{}", config.project, suffix),
         None => format!("query_review/{}", config.project),
     };
@@ -101,11 +94,7 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
             .context("mock embedder")?,
     );
 
-    let sources = if hybrid_available {
-        SearchSources::default()
-    } else {
-        SearchSources::none().with_bm25()
-    };
+    let sources = SearchSources::default();
 
     let mut search_config = SearchConfig::default();
     search_config.result.limit = config.top_k;
@@ -147,7 +136,6 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
             result: &result,
             sources,
             search_config: &search_config,
-            hybrid_available,
         });
         manager.write(&format!("{}.md", judgment.id), &page)?;
         outcomes.push(QueryOutcome {
@@ -181,16 +169,12 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
         &render_manifest(
             &config,
             sources,
-            hybrid_available,
             &search_config,
             &index_result,
             &fixture_root,
         ),
     )?;
-    manager.write(
-        "index.md",
-        &render_index(&config, &outcomes, hybrid_available),
-    )?;
+    manager.write("index.md", &render_index(&config, &outcomes))?;
 
     println!("Query review written to {}", manager.output_dir().display());
     query_test.cleanup().await;
@@ -285,7 +269,6 @@ struct QueryPageInput<'a> {
     result: &'a QueryResult,
     sources: SearchSources,
     search_config: &'a SearchConfig,
-    hybrid_available: bool,
 }
 
 /// Render one self-contained per-query markdown page.
@@ -295,7 +278,6 @@ fn render_query_page(input: QueryPageInput<'_>) -> String {
         result,
         sources,
         search_config,
-        hybrid_available,
     } = input;
     let strategy = ExecutionStrategy::from_sources(&sources, search_config);
     let mut page = format!("# Query: {}\n\n", judgment.id);
@@ -316,13 +298,7 @@ fn render_query_page(input: QueryPageInput<'_>) -> String {
         search_config.fusion.bm25_weight,
         search_config.fusion.algorithm,
     ));
-    if hybrid_available {
-        page.push_str("- Capability: hybrid (vector+bm25)\n");
-    } else {
-        page.push_str(
-            "- Capability: BM25-only fallback; semantic (G2), fuzzy (FZ), and cross-language (G4) conclusions are not representative without vectors\n",
-        );
-    }
+    page.push_str("- Capability: hybrid local (vector+bm25, embedded simvec)\n");
     page.push_str(&format!(
         "- Total: {} | elapsed: {}ms | executed as: {} | cache: {}\n",
         result.total,
@@ -365,7 +341,7 @@ fn render_query_page(input: QueryPageInput<'_>) -> String {
     page.push_str(&format!("\n{}\n", coverage_summary(judgment, result)));
 
     if result.items.is_empty() {
-        page.push_str(&format!("{}\n", zero_hit_note(judgment, hybrid_available)));
+        page.push_str(&format!("{}\n", zero_hit_note(judgment)));
     }
 
     page.push_str("\n## Hits (top-K)\n\n");
@@ -476,10 +452,10 @@ fn coverage_summary(judgment: &RelevanceJudgment, result: &QueryResult) -> Strin
 }
 
 /// Mechanism note for zero-hit pages so reviewers do not misread them as index gaps.
-fn zero_hit_note(judgment: &RelevanceJudgment, hybrid_available: bool) -> String {
-    if judgment.query_type == QueryType::CrossLang && !hybrid_available {
+fn zero_hit_note(judgment: &RelevanceJudgment) -> String {
+    if judgment.query_type == QueryType::CrossLang {
         return String::from(
-            "- Note: zero hits are expected here: a non-English query cannot match the English BM25 index without vectors (BM25-only fallback).",
+            "- Note: zero hits here mean the hybrid recall found no overlap; check the mock-embedding lexical signal when triaging.",
         );
     }
     String::from(
@@ -659,7 +635,6 @@ fn render_hit_detail(rank: usize, item: &SearchResult) -> String {
 fn render_manifest(
     config: &QueryReviewConfig,
     sources: SearchSources,
-    hybrid_available: bool,
     search_config: &SearchConfig,
     index_result: &cce_orchestrator::IndexResult,
     fixture_root: &std::path::Path,
@@ -674,10 +649,7 @@ fn render_manifest(
         fixture_root.display()
     ));
     manifest.push_str("scope note: structured/chunks reports exclude tests; entity and relation counts are not comparable across jobs\n");
-    manifest.push_str(&format!(
-        "qdrant_available: {}\n",
-        if hybrid_available { "yes" } else { "no" }
-    ));
+    manifest.push_str("vector_backend: local (embedded simvec, per-run temp data dir)\n");
     manifest.push_str("embedder: deterministic mock (no LLM service)\n");
     manifest.push_str("rerank: disabled (request-level override unset)\n");
     manifest.push_str(&format!(
@@ -722,13 +694,7 @@ fn render_manifest(
             ));
         }
     }
-    if hybrid_available {
-        manifest.push_str("capability: hybrid default (vector+bm25)\n");
-    } else {
-        manifest.push_str(
-            "capability: bm25-only fallback; semantic (G2), fuzzy (FZ), and cross-language (G4) conclusions are not representative without vectors\n",
-        );
-    }
+    manifest.push_str("capability: hybrid local (vector+bm25)\n");
     manifest.push_str(&format!(
         "expectations: src/judgments/{}.rs relevant_ranges\n",
         config.project
@@ -737,19 +703,9 @@ fn render_manifest(
 }
 
 /// Entry page linking every query file with its top-1 hit.
-fn render_index(
-    config: &QueryReviewConfig,
-    outcomes: &[QueryOutcome],
-    hybrid_available: bool,
-) -> String {
+fn render_index(config: &QueryReviewConfig, outcomes: &[QueryOutcome]) -> String {
     let mut page = format!("# Query Review: {}\n\n", config.project);
-    if hybrid_available {
-        page.push_str("Capability: hybrid (vector+bm25).\n\n");
-    } else {
-        page.push_str(
-            "Capability: BM25-only fallback; semantic (G2), fuzzy (FZ), and cross-language (G4) conclusions are not representative without vectors.\n\n",
-        );
-    }
+    page.push_str("Capability: hybrid local (vector+bm25, embedded simvec).\n\n");
     page.push_str(&format!("{} queries, top-{}. Expected ranges come from the judgment set; open each file to compare hits against them.\n\n", outcomes.len(), config.top_k));
     page.push_str("Scope: this job indexes the full fixture tree (tests included); structured/chunks reports exclude tests, so their counts differ by design.\n\n");
     page.push_str("| query | type | total | elapsed_ms | top score | top hit |\n|---|---|---:|---:|---:|---|\n");
@@ -787,14 +743,4 @@ fn cell(text: &str) -> String {
 /// Keep hit content inside fenced blocks.
 fn fenced(text: &str) -> String {
     text.replace("```", "~~~")
-}
-
-/// Probe Qdrant availability without touching the index.
-async fn probe_qdrant() -> Result<(), String> {
-    let mut config = cce_storage_vector_qdrant::QdrantConfig::with_url("http://localhost:6333");
-    config.vector_size = MOCK_EMBEDDING_DIMENSION;
-    let client =
-        cce_storage_vector_qdrant::QdrantClient::new(config, "test").map_err(|e| e.to_string())?;
-    client.initialize().await.map_err(|e| e.to_string())?;
-    Ok(())
 }

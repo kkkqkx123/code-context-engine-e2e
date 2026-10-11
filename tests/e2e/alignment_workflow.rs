@@ -16,13 +16,19 @@
 //! exercises the real grouper/chunker boundary behaviour that hard-coded
 //! integration cases cannot.
 //!
-//! ## B-class: pipeline smoke (Qdrant optional)
+//! ## B-class: pipeline smoke (local backend by default)
 //!
 //! Exercises index → query → fusion wiring without asserting alignment math.
-//! The deterministic mock embedding server provides vectors; Qdrant on
-//! `localhost:6333` is the only external dependency. The hybrid fixtures write
-//! the vector score threshold off (`min_score = 0`) because the mock embedder
-//! produces only weak lexical similarity (0.1~0.45).
+//! The deterministic mock embedding server provides vectors and the embedded
+//! local engine provides vector search, so no external service is needed. The
+//! hybrid fixtures write the vector score threshold off (`min_score = 0`)
+//! because the mock embedder produces only weak lexical similarity (0.1~0.45).
+//!
+//! ## C-class: remote Qdrant verification (service optional)
+//!
+//! `test_empty_data_point_pipeline_smoke` is the only test in this file that
+//! talks to a real Qdrant service. It probes `localhost:6333` first and skips
+//! (passes without asserting) when the service is unreachable.
 
 use cce_storage_common::FulltextDocument;
 use std::collections::HashMap;
@@ -149,8 +155,10 @@ async fn test_a_code_chunks_carry_segment_and_entity_keys() {
     }
 }
 
-/// Pure document chunks (txt/log/md) carry a segment key but no entity ids,
-/// and their title falls back to a heading or the file stem.
+/// Non-code chunks (txt/log/md) carry a segment key but no entity ids, and
+/// their title falls back to a heading or the file stem. Generic text
+/// (txt/log) uses the `PlainText` payload, markdown the `Document` one; both
+/// are non-code, which is the invariant asserted here.
 #[tokio::test]
 async fn test_a_document_chunks_carry_segment_without_entities() {
     init_minimal_logging();
@@ -162,8 +170,8 @@ async fn test_a_document_chunks_carry_segment_without_entities() {
         assert!(!chunks.is_empty(), "{} must produce chunks", relative);
         for chunk in &chunks {
             assert!(
-                chunk.metadata.is_document() || chunk.metadata.is_config(),
-                "{} chunk '{}' must be a document/config chunk, got {:?}",
+                !chunk.metadata.is_code(),
+                "{} chunk '{}' must be a non-code (document/config/plaintext) chunk, got {:?}",
                 relative,
                 chunk.chunk_id,
                 chunk.metadata.content_type
@@ -518,7 +526,7 @@ fn setup_hybrid_query_test(
         .with_scenario_name(scenario)
 }
 
-/// Shared setup for hybrid tests (requires Qdrant on localhost:6333).
+/// Shared setup for hybrid tests (embedded local backend, no service needed).
 async fn hybrid_harness(
     with_metrics: bool,
     scenario: &str,
@@ -656,10 +664,11 @@ fn mock_vector(dim: usize, seed: u32) -> Vec<f32> {
     v
 }
 
-/// B2: empty-data-point pipeline smoke. Fake chunks carrying only alignment
-/// keys are written straight to Qdrant + BM25 (no parse/embedding), then the
-/// QueryCoordinator must recall them: vector path returns results (F0 fix),
-/// fusion keys land in the known key set, and epoch/group filters apply.
+/// B2 (remote Qdrant verification): empty-data-point pipeline smoke. Fake
+/// chunks carrying only alignment keys are written straight to Qdrant + BM25
+/// (no parse/embedding), then the QueryCoordinator must recall them: vector
+/// path returns results (F0 fix), fusion keys land in the known key set, and
+/// epoch/group filters apply. Skips when no Qdrant service is reachable.
 #[tokio::test]
 async fn test_empty_data_point_pipeline_smoke() {
     init_minimal_logging();
@@ -675,10 +684,11 @@ async fn test_empty_data_point_pipeline_smoke() {
     let mut qdrant_config = QdrantConfig::with_url("http://localhost:6333");
     qdrant_config.vector_size = MOCK_EMBEDDING_DIMENSION;
     let qdrant = Arc::new(QdrantClient::new(qdrant_config, "test").expect("qdrant client"));
-    qdrant
-        .initialize()
-        .await
-        .expect("connect to Qdrant at localhost:6333");
+    if let Err(e) = qdrant.initialize().await {
+        eprintln!("skipping remote Qdrant verification (localhost:6333 unreachable): {e}");
+        server.stop().await;
+        return;
+    }
     qdrant.delete_by_group(&group_id).await.ok();
 
     use cce_storage_vector_qdrant::{Payload, VectorPoint};

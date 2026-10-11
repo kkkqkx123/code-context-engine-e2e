@@ -2,8 +2,9 @@
 //!
 //! Same pipeline as `query_review_oncecell`, over
 //! `fixtures/python/review/flask` with `src/judgments/flask.rs` queries.
-//! Without a reachable Qdrant the run is BM25-only and lands in the
-//! `flask_bm25` directory (recorded in the manifest).
+//! Hybrid output uses the embedded local vector engine, so no external
+//! service is needed and the run always lands in the default `flask`
+//! directory (recorded in the manifest).
 //!
 //! Output:
 //!   outputs/scenarios/python/query_review/flask/

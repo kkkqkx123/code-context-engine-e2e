@@ -3,15 +3,15 @@
 //! Generates a human-review alignment report under
 //! `outputs/scenarios/rust/alignment/`:
 //!
-//! - `run_manifest.txt`: fixture, queries, Qdrant availability, alignment key
+//! - `run_manifest.txt`: fixture, queries, vector backend, alignment key
 //!   convention.
 //! - `alignment_summary.md`: per-query key counts, cross-path matched keys,
 //!   and the resulting alignment ratio.
 //! - `per_query_alignment.md`: per-query vector/BM25/hybrid key lists.
 //!
 //! Uses the deterministic mock embedding server, so no LLM service is needed.
-//! Hybrid queries run only when Qdrant is reachable at localhost:6333; the
-//! manifest records which mode ran.
+//! Hybrid queries run on the embedded local vector engine; no external
+//! service is required and the manifest records the local backend.
 //!
 //! Run: `cargo run --example alignment_report -p cce-e2e-tests`
 
@@ -22,7 +22,6 @@ use cce_e2e_tests::mock_embedding_server::MockEmbeddingServer;
 use cce_e2e_tests::output_manager::{OutputBuilder, OutputCategory};
 use cce_e2e_tests::query_test::QueryWorkflowTest;
 use cce_llm_client::OpenAICompatibleProvider;
-use cce_orchestrator::SearchSources;
 use cce_orchestrator::query::searcher::expand_multi_entity_results;
 use cce_orchestrator::query::types::SearchResult;
 
@@ -83,25 +82,11 @@ fn main() {
         .with_embedder(embedder)
         .with_config(no_threshold_config());
 
-    // Probe Qdrant availability: hybrid indexing fails fast with a clear
-    // message when the service is absent; fall back to BM25-only then.
-    let hybrid_available = rt
-        .block_on(probe_qdrant())
-        .map_err(|e| eprintln!("Qdrant unavailable, BM25-only mode: {e}"))
-        .is_ok();
-
-    if !hybrid_available {
-        query_test = query_test.with_sources(SearchSources::none().with_bm25());
-    }
-
     rt.block_on(query_test.index()).expect("index failed");
 
     let mut manifest = String::new();
     manifest.push_str(&format!("fixture: {FIXTURE}\n"));
-    manifest.push_str(&format!(
-        "qdrant_available: {}\n",
-        if hybrid_available { "yes" } else { "no" }
-    ));
+    manifest.push_str("vector_backend: local (embedded simvec, per-run temp data dir)\n");
     manifest.push_str("embedder: deterministic mock (no LLM service)\n");
     manifest.push_str("alignment_key: e:<entity_id> | s:<segment_id> | c:<chunk_id>\n");
     manifest.push_str(&format!(
@@ -117,27 +102,21 @@ fn main() {
     let mut per_query = String::from("# Per-Query Alignment Detail\n\n");
 
     for query in QUERIES {
-        let vector_items: Vec<SearchResult> = if hybrid_available {
-            rt.block_on(query_test.search_vector(query, 20))
-                .expect("vector search")
-                .items
-                .clone()
-        } else {
-            Vec::new()
-        };
+        let vector_items: Vec<SearchResult> = rt
+            .block_on(query_test.search_vector(query, 20))
+            .expect("vector search")
+            .items
+            .clone();
         let bm25_items: Vec<SearchResult> = rt
             .block_on(query_test.search_bm25(query, 20))
             .expect("bm25 search")
             .items
             .clone();
-        let hybrid_items: Vec<SearchResult> = if hybrid_available {
-            rt.block_on(query_test.search_hybrid(query, 20))
-                .expect("hybrid search")
-                .items
-                .clone()
-        } else {
-            Vec::new()
-        };
+        let hybrid_items: Vec<SearchResult> = rt
+            .block_on(query_test.search_hybrid(query, 20))
+            .expect("hybrid search")
+            .items
+            .clone();
 
         let vector_items = expand_multi_entity_results(vector_items);
         let bm25_items = expand_multi_entity_results(bm25_items);
@@ -198,15 +177,6 @@ fn main() {
         manager.output_dir().display()
     );
 
+    rt.block_on(query_test.cleanup());
     rt.block_on(server.stop());
-}
-
-/// Probe Qdrant availability without touching the index.
-async fn probe_qdrant() -> Result<(), String> {
-    let mut config = cce_storage_vector_qdrant::QdrantConfig::with_url("http://localhost:6333");
-    config.vector_size = cce_e2e_tests::mock_embedding_server::MOCK_EMBEDDING_DIMENSION;
-    let client =
-        cce_storage_vector_qdrant::QdrantClient::new(config, "test").map_err(|e| e.to_string())?;
-    client.initialize().await.map_err(|e| e.to_string())?;
-    Ok(())
 }
