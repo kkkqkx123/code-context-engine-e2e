@@ -227,6 +227,7 @@ where
         exclude_patterns: Vec::new(),
         include_patterns: Vec::new(),
         enable_rerank: None,
+        query_intent: None,
     };
     let result = query_test
         .coordinator()
