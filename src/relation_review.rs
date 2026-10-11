@@ -106,7 +106,7 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
         .await
         .context("init query coordinator")?;
 
-    let seeds = resolve_seeds(&query_test, &config);
+    let (seeds, unprocessed_hubs) = resolve_seeds(&query_test, &config);
     let relation_options = RelationQueryOptions {
         max_depth: config.depth,
         limit: config.limit,
@@ -132,7 +132,7 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
             .graph_ego(seed.id, config.depth, GraphDirection::Both)
             .unwrap_or_default();
 
-        let slug = seed_slug(&seed_name, seed.id);
+        let slug = seed_slug(&seed_name, seed.stable_id.as_deref());
         let page = render_seed_page(
             &seed, &describe, &callees, &callers, &forward, &backward, &ego,
         );
@@ -155,7 +155,12 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
         });
     }
     for hub in &config.hub_names {
-        if !hub_resolved(&query_test, hub, &outcomes) {
+        if unprocessed_hubs.iter().any(|name| name == hub) {
+            skipped.push(format!(
+                "hub `{hub}`: unprocessed (seed budget of {} exhausted)",
+                config.max_seeds
+            ));
+        } else if !hub_resolved(&outcomes, hub) {
             skipped.push(format!("hub `{hub}`: no entity matched"));
         }
     }
@@ -187,12 +192,20 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
 }
 
 /// Resolve seed entities from judgment ranges first, then hub names.
-fn resolve_seeds<F>(query_test: &QueryWorkflowTest<F>, config: &RelationReviewConfig) -> Vec<Seed>
+///
+/// Returns the seeds plus the hub names never attempted because the seed
+/// budget was already exhausted, so callers can tell `unprocessed` apart
+/// from `no entity matched`.
+fn resolve_seeds<F>(
+    query_test: &QueryWorkflowTest<F>,
+    config: &RelationReviewConfig,
+) -> (Vec<Seed>, Vec<String>)
 where
     F: FixtureAccess,
 {
     let mut seeds = Vec::new();
     let mut seen = HashSet::new();
+    let mut unprocessed_hubs = Vec::new();
 
     let snapshot = query_test.coordinator().relation_searcher().query().index();
     for judgment in &config.judgments {
@@ -231,11 +244,15 @@ where
 
     for hub in &config.hub_names {
         if seeds.len() >= config.max_seeds {
-            break;
+            unprocessed_hubs.push(hub.to_string());
+            continue;
         }
         let mut ids = snapshot.get_function_ids_by_name(hub);
         ids.sort_by_key(|id| id.0);
         for id in ids.into_iter().take(2) {
+            if seeds.len() >= config.max_seeds {
+                break;
+            }
             let name = snapshot
                 .get_function_by_entity_id(id)
                 .map(|entity| entity.name.clone())
@@ -250,7 +267,7 @@ where
             );
         }
     }
-    seeds
+    (seeds, unprocessed_hubs)
 }
 
 /// Insert a seed unless its entity was already selected.
@@ -283,22 +300,12 @@ fn stable_id_of(
 }
 
 /// Whether a hub name contributed at least one rendered seed.
-fn hub_resolved<F>(query_test: &QueryWorkflowTest<F>, hub: &str, outcomes: &[SeedOutcome]) -> bool
-where
-    F: FixtureAccess,
-{
-    let snapshot = query_test.coordinator().relation_searcher().query().index();
-    let ids: HashSet<u64> = snapshot
-        .get_function_ids_by_name(hub)
-        .into_iter()
-        .map(|id| id.0)
-        .collect();
-    outcomes.iter().any(|outcome| {
-        outcome.provenance == format!("hub `{hub}`")
-            && ids
-                .iter()
-                .any(|id| outcome.slug.ends_with(&format!("-{id:x}")))
-    })
+///
+/// Provenance is recorded at seed time, so the check reads it directly
+/// instead of reverse-looking-up the slug suffix.
+fn hub_resolved(outcomes: &[SeedOutcome], hub: &str) -> bool {
+    let wanted = format!("hub `{hub}`");
+    outcomes.iter().any(|outcome| outcome.provenance == wanted)
 }
 
 /// One-line human description of an entity id for neighbor tables.
@@ -342,10 +349,13 @@ fn render_seed_page(
 ) -> String {
     let (name, kind, location) = describe(seed.id);
     let mut page = format!("# Seed: {name} (`{kind}`)\n\n");
-    page.push_str(&format!("- Entity id: `{}`\n", seed.id.0));
     page.push_str(&format!(
         "- Stable id: `{}`\n",
         seed.stable_id.as_deref().unwrap_or("(none)")
+    ));
+    page.push_str(&format!(
+        "- Epoch entity id: `{}` (parse-order ordinal, run-local; not a cross-run identity)\n",
+        seed.id.0
     ));
     page.push_str(&format!("- Location: `{location}`\n"));
     page.push_str(&format!("- Provenance: {}\n", seed.provenance));
@@ -497,12 +507,15 @@ fn render_manifest(
     manifest.push_str(&format!("hubs: {}\n", config.hub_names.join(", ")));
     manifest.push_str("backend: embedded snapshot (no vector service needed)\n");
     manifest.push_str(&format!(
-        "index: files={} entities={} relations={}\n",
+        "index: files={} entities={} relations={} (relations: per-callsite edges; call-class edges carry their span, non-call edges collapse per entity pair)\n",
         index_result.total_files, index_result.total_entities, index_result.total_relations,
     ));
     manifest.push_str(&format!(
-        "project_graph: nodes={export_nodes} edges={export_edges} (capped at 500 nodes)\n",
+        "project_graph: nodes={export_nodes} edges={export_edges} (callsite-deduped edges over the hub set, capped at 500 nodes)\n",
     ));
+    manifest.push_str(
+        "caliber: ego `nodes/edges` counts callsite-deduped graph edges, not index relations; compare only within one caliber\n",
+    );
     if skipped.is_empty() {
         manifest.push_str("skipped: none\n");
     } else {
@@ -552,7 +565,12 @@ fn render_index(
 }
 
 /// Filesystem-safe slug for a seed entity.
-fn seed_slug(name: &str, id: EntityId) -> String {
+///
+/// Anchored on the stable symbol id's short prefix, not the run-local entity
+/// ordinal: parse-order ids shift whenever the file set changes, which used to
+/// rename every artifact between runs and made outputs un-diffable. Seeds
+/// without a symbol key fall back to a fixed marker.
+fn seed_slug(name: &str, stable_id: Option<&str>) -> String {
     let safe: String = name
         .chars()
         .map(|char| {
@@ -569,7 +587,12 @@ fn seed_slug(name: &str, id: EntityId) -> String {
     } else {
         trimmed
     };
-    format!("{stem}-{:x}", id.0)
+    let suffix = stable_id
+        .and_then(|id| id.strip_prefix("sym_"))
+        .filter(|hex| hex.len() >= 8)
+        .map(|hex| hex[..8].to_string())
+        .unwrap_or_else(|| "nosym".to_string());
+    format!("{stem}-{suffix}")
 }
 
 /// Keep markdown table cells on one line.
