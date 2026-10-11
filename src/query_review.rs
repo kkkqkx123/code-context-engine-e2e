@@ -26,6 +26,13 @@
 //! external service and the default scenario directory always carries hybrid
 //! output. Explicit single-source comparison runs must use `scenario_suffix`
 //! so they never overwrite the default directory.
+//!
+//! Review scope is dense+BM25: the summary source flag stays off, which gates
+//! both summary recall and summary boost in the production query path, so
+//! summary vectors are never consumed by any reviewed query. Indexing
+//! therefore skips summary embedding (summary text/BM25 are still stored);
+//! this keeps mock item-budget shortfalls out of the manifest and the
+//! `outcome` flag truthful about the reviewed scope.
 
 use std::sync::Arc;
 
@@ -103,7 +110,12 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
     let mut query_test = QueryWorkflowTest::new(fixture, EmbeddingConfig::mock())
         .with_embedder(embedder)
         .with_sources(sources)
-        .with_config(search_config.clone());
+        .with_config(search_config.clone())
+        // Review scope is dense+BM25: no reviewed query enables the summary
+        // source, so summary vectors are never consumed. Skipping their
+        // embedding keeps the manifest free of mock item-budget shortfalls
+        // that say nothing about the reviewed queries.
+        .with_embed_summaries(false);
     let index_result = query_test.index().await.context("index fixture")?.clone();
 
     let fixture_root = query_test.fixture().root_path().to_path_buf();
@@ -650,6 +662,9 @@ fn render_manifest(
     ));
     manifest.push_str("scope note: structured/chunks reports exclude tests; entity and relation counts are not comparable across jobs\n");
     manifest.push_str("vector_backend: local (embedded simvec, per-run temp data dir)\n");
+    manifest.push_str(
+        "summaries: text-only (vectors skipped: review scope is dense+bm25, summary source disabled)\n",
+    );
     manifest.push_str("embedder: deterministic mock (no LLM service)\n");
     manifest.push_str("rerank: disabled (request-level override unset)\n");
     manifest.push_str(&format!(
