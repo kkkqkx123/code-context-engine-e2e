@@ -14,12 +14,13 @@
 //! ```
 //!
 //! Each `{query_id}.md` carries the judgment expectation (relevant ranges),
-//! the top-K score table, every hit with complete metadata and full content,
-//! and a raw-vs-annotated comparison produced by the production
-//! [`RelationAnnotator`]. The aggregated demo exercises
+//! the top-K score table, and every hit with complete metadata and the exact
+//! response body an `expand=true` API call would return: hits run through the
+//! production expansion post-pass, so expanded hits show the full annotated
+//! document and unexpanded hits stay raw. The aggregated demo exercises
 //! [`QueryCoordinator::search_aggregated`] with two sub-queries derived from
-//! the same judgment set. Outputs are for manual review only and never
-//! participate in assertions.
+//! the same judgment set, with the same production post-pass applied.
+//! Outputs are for manual review only and never participate in assertions.
 //!
 //! A run without a reachable Qdrant degrades to BM25-only and writes to
 //! `query_review/{project}_bm25/` instead, so the default directory always
@@ -28,17 +29,13 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use cce_codegraph::index::SnapshotEntityQueryOps;
 use cce_llm_client::OpenAICompatibleProvider;
-use cce_orchestrator::query::annotation::{
-    AnnotatedResult, ExpandedUnit, ExpansionOrigin, RelationAnnotationConfig, RelationAnnotator,
-    SearchResultInput,
-};
-use cce_orchestrator::query::relation_searcher::RelationQueryOptions;
+use cce_orchestrator::query::annotation::RelationAnnotationConfig;
+use cce_orchestrator::query::expansion::annotate_hits_with_expansion;
 use cce_orchestrator::query::types::ExecutionStrategy;
 use cce_orchestrator::query::types::SearchResult;
 use cce_orchestrator::{
-    AggregatedQueryOptions, QueryCoordinator, QueryResult, SearchConfig, SearchSources, SubQuery,
+    AggregatedQueryOptions, QueryResult, SearchConfig, SearchSources, SubQuery,
 };
 
 use crate::bench_data::{QueryType, RelevanceJudgment, RelevanceLevel};
@@ -121,34 +118,37 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
     let index_result = query_test.index().await.context("index fixture")?.clone();
 
     let fixture_root = query_test.fixture().root_path().to_path_buf();
-    let annotator = RelationAnnotator::new(
-        RelationAnnotationConfig::new()
-            .enable(true)
-            .with_expansion(true)
-            .with_max_expanded_units(6)
-            .with_caller_expansion(true)
-            .with_workspace_root(fixture_root.clone())
-            .omit_primary_body(true),
-    );
+    // Production post-pass configuration: same defaults the API handlers use
+    // (primary body kept, full neighbour spans). The workspace root is filled
+    // in per call by the post-pass itself.
+    let annotation_config = RelationAnnotationConfig::new()
+        .enable(true)
+        .with_expansion(true);
 
     let mut outcomes = Vec::new();
     for judgment in &config.judgments {
-        let result = query_test
+        let mut result = query_test
             .query(&judgment.query_text)
             .await
             .with_context(|| format!("query {}", judgment.id))?
             .clone();
+        // Wrap hits exactly like an expand=true API response so the rendered
+        // bodies are verbatim what callers receive: expanded hits carry the
+        // full annotated document, the rest stay raw.
+        annotate_hits_with_expansion(
+            query_test.coordinator().relation_searcher(),
+            &fixture_root,
+            &mut result.items,
+            &annotation_config,
+        )
+        .await;
         let page = render_query_page(QueryPageInput {
             judgment,
             result: &result,
             sources,
             search_config: &search_config,
             hybrid_available,
-            annotator: &annotator,
-            coordinator: query_test.coordinator(),
-            fixture_root: &fixture_root,
-        })
-        .await;
+        });
         manager.write(&format!("{}.md", judgment.id), &page)?;
         outcomes.push(QueryOutcome {
             id: judgment.id.clone(),
@@ -164,8 +164,14 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
         });
     }
 
-    let aggregated_note =
-        render_aggregated_demo(&mut query_test, &config, sources, &search_config).await?;
+    let aggregated_note = render_aggregated_demo(
+        &mut query_test,
+        &config,
+        sources,
+        &search_config,
+        &annotation_config,
+    )
+    .await?;
     if let Some(page) = aggregated_note {
         manager.write("aggregated_demo.md", &page)?;
     }
@@ -198,6 +204,7 @@ async fn render_aggregated_demo<F>(
     config: &QueryReviewConfig,
     sources: SearchSources,
     search_config: &SearchConfig,
+    annotation_config: &RelationAnnotationConfig,
 ) -> anyhow::Result<Option<String>>
 where
     F: crate::fixture::FixtureAccess,
@@ -229,11 +236,22 @@ where
         enable_rerank: None,
         query_intent: None,
     };
-    let result = query_test
+    let mut result = query_test
         .coordinator()
         .search_aggregated(&agg)
         .await
         .context("aggregated search")?;
+
+    // The aggregated API handler applies the same opt-in post-pass; mirror it
+    // so demo bodies match aggregated responses.
+    let fixture_root = query_test.fixture().root_path().to_path_buf();
+    annotate_hits_with_expansion(
+        query_test.coordinator().relation_searcher(),
+        &fixture_root,
+        &mut result.items,
+        annotation_config,
+    )
+    .await;
 
     let mut page = String::from("# Aggregated Search Demo\n\n");
     page.push_str(&format!(
@@ -253,41 +271,31 @@ where
     ));
     page.push_str(&render_hit_table_aggregated(&result, &[first, second]));
     for (rank, item) in result.items.iter().enumerate() {
-        page.push_str(&render_hit_detail(
-            rank,
-            item,
-            AnnotationOutcome::Skipped("aggregated demo omits annotation comparison"),
-        ));
+        page.push_str(&render_hit_detail(rank, item));
     }
     Ok(Some(page))
 }
 
 /// Borrowed inputs for rendering one per-query review page.
 ///
-/// Groups the judgment, its search result, the run-level search context, and
-/// the annotation dependencies so the renderer takes a single argument.
+/// Groups the judgment, its (already expansion-wrapped) search result, and the
+/// run-level search context so the renderer takes a single argument.
 struct QueryPageInput<'a> {
     judgment: &'a RelevanceJudgment,
     result: &'a QueryResult,
     sources: SearchSources,
     search_config: &'a SearchConfig,
     hybrid_available: bool,
-    annotator: &'a RelationAnnotator,
-    coordinator: &'a QueryCoordinator,
-    fixture_root: &'a std::path::Path,
 }
 
 /// Render one self-contained per-query markdown page.
-async fn render_query_page(input: QueryPageInput<'_>) -> String {
+fn render_query_page(input: QueryPageInput<'_>) -> String {
     let QueryPageInput {
         judgment,
         result,
         sources,
         search_config,
         hybrid_available,
-        annotator,
-        coordinator,
-        fixture_root,
     } = input;
     let strategy = ExecutionStrategy::from_sources(&sources, search_config);
     let mut page = format!("# Query: {}\n\n", judgment.id);
@@ -299,6 +307,9 @@ async fn render_query_page(input: QueryPageInput<'_>) -> String {
     page.push_str(&format!("- Request sources: {sources}\n"));
     page.push_str(&format!("- Execution strategy: {strategy}\n"));
     page.push_str("- Intent: default hybrid (no per-query override)\n");
+    page.push_str(
+        "- Expansion: production post-pass applied (mirrors expand=true API responses; top-N hits wrapped, rest raw)\n",
+    );
     page.push_str(&format!(
         "- Fusion: vector_weight={:.2} bm25_weight={:.2} algorithm={:?}\n",
         search_config.fusion.vector_weight,
@@ -361,223 +372,9 @@ async fn render_query_page(input: QueryPageInput<'_>) -> String {
     page.push_str(&render_hit_table(result, judgment));
 
     for (rank, item) in result.items.iter().enumerate() {
-        let annotation = annotate_hit(item, coordinator, fixture_root, annotator).await;
-        page.push_str(&render_hit_detail(rank, item, annotation));
+        page.push_str(&render_hit_detail(rank, item));
     }
     page
-}
-
-/// Annotation outcome for one hit, kept distinct so disabled expansion and
-/// genuine failures read differently in review output.
-enum AnnotationOutcome {
-    Annotated(Box<AnnotatedResult>),
-    Skipped(&'static str),
-    Failed,
-}
-
-/// Annotate one hit with real relation expansion.
-///
-/// The primary unit uses the identity range over the enriched body (matching
-/// production), while forward/backward units resolve the hit's first entity
-/// through the relation searcher and read snippets from the fixture sources.
-async fn annotate_hit(
-    item: &SearchResult,
-    coordinator: &QueryCoordinator,
-    fixture_root: &std::path::Path,
-    annotator: &RelationAnnotator,
-) -> AnnotationOutcome {
-    if item.content_state.is_reference() {
-        return AnnotationOutcome::Skipped("reference content carries no annotatable body");
-    }
-    if item.content.trim().is_empty() {
-        return AnnotationOutcome::Skipped("empty body carries no annotatable unit");
-    }
-    if item.entity_ids.is_empty() {
-        return AnnotationOutcome::Skipped("hit carries no entity for expansion lookup");
-    };
-    let (forward, backward) = expansion_units(
-        coordinator,
-        fixture_root,
-        &item.file_path,
-        item.start_line,
-        item.end_line,
-    );
-    match annotator
-        .annotate_single(search_result_input(item), forward, backward)
-        .await
-    {
-        Ok(annotated) => AnnotationOutcome::Annotated(Box::new(annotated)),
-        Err(_) => AnnotationOutcome::Failed,
-    }
-}
-
-/// Resolve up to three call-domain callees and three call-domain callers
-/// into annotator units.
-///
-/// Seeds resolve through the snapshot line-range lookup (the relation index
-/// ID space), not the hit's retrieval entity IDs (the SQLite row space), so
-/// method groups represented by their impl block still surface member call
-/// edges instead of reading empty. Hit line numbers are one-based
-/// presentation values while the snapshot index compares zero-based
-/// tree-sitter rows, so the range is translated back before the lookup.
-///
-/// Both directions read the production paginated path with a call-domain
-/// filter (`relation_domains=["call"]`, `include_external=false`), so
-/// structural edges (impl association, trait bound, inheritance) and
-/// dependency edges (import/use) are never rendered as calls. The producer
-/// returns the edge behind each caller, so the labels `calls` / `called by`
-/// carry real call semantics and the units carry the real relation type.
-fn expansion_units(
-    coordinator: &QueryCoordinator,
-    fixture_root: &std::path::Path,
-    file_path: &str,
-    start_line: u32,
-    end_line: u32,
-) -> (Vec<ExpandedUnit>, Vec<ExpandedUnit>) {
-    const PER_DIRECTION_LIMIT: usize = 3;
-    let snapshot = coordinator.relation_searcher().query().index();
-    let options = RelationQueryOptions {
-        relation_domains: vec!["call".to_string()],
-        include_external: false,
-        limit: PER_DIRECTION_LIMIT,
-        ..RelationQueryOptions::default()
-    };
-
-    // Snapshot spans are zero-based rows; hit lines are one-based.
-    let first_row = start_line.min(end_line).saturating_sub(1) as usize;
-    let last_row = start_line.max(end_line).saturating_sub(1) as usize;
-    let (first_row, last_row) = (first_row.min(last_row), first_row.max(last_row));
-    let mut seeds = snapshot.get_entities_in_line_range(file_path, first_row, last_row);
-    seeds.sort_by_key(|id| id.0);
-    seeds.truncate(4);
-    let seed_set: std::collections::HashSet<cce_types::EntityId> = seeds.iter().copied().collect();
-    let mut forward = Vec::new();
-    let mut seen_forward = std::collections::HashSet::new();
-    for entity_id in &seeds {
-        if forward.len() >= PER_DIRECTION_LIMIT {
-            break;
-        }
-        for relation in coordinator
-            .get_callees_paginated(*entity_id, &options)
-            .unwrap_or_default()
-        {
-            let Some(callee) = relation.callee_id else {
-                continue;
-            };
-            if seed_set.contains(&callee) {
-                continue;
-            }
-            if forward.len() >= PER_DIRECTION_LIMIT || !seen_forward.insert(callee.0) {
-                continue;
-            }
-            if let Some(unit) = snippet_unit(
-                snapshot,
-                fixture_root,
-                callee,
-                ExpansionOrigin::Forward,
-                "calls",
-                &relation,
-            ) {
-                forward.push(unit);
-            }
-        }
-    }
-
-    let mut backward = Vec::new();
-    let mut seen_backward = std::collections::HashSet::new();
-    for entity_id in &seeds {
-        if backward.len() >= PER_DIRECTION_LIMIT {
-            break;
-        }
-        for relation in coordinator
-            .get_callers_paginated(*entity_id, &options)
-            .unwrap_or_default()
-        {
-            let caller = relation.caller;
-            if seed_set.contains(&caller) {
-                continue;
-            }
-            if backward.len() >= PER_DIRECTION_LIMIT || !seen_backward.insert(caller.0) {
-                continue;
-            }
-            // Constructor edges describe construction, not ordinary calls.
-            let edge_label = if relation.relation_type.is_constructor_call() {
-                "constructed by"
-            } else {
-                "called by"
-            };
-            if let Some(unit) = snippet_unit(
-                snapshot,
-                fixture_root,
-                caller,
-                ExpansionOrigin::Backward,
-                edge_label,
-                &relation,
-            ) {
-                backward.push(unit);
-            }
-        }
-    }
-    (forward, backward)
-}
-
-/// Minimal reference window around a 0-based definition row.
-///
-/// Review expansions only need to identify the referenced symbol, so the
-/// window covers the definition line plus one line of context on each side
-/// (clamped to the file). Full bodies stay in `#### Content`.
-fn reference_window(def_row: usize, total_lines: usize) -> (usize, usize) {
-    if total_lines == 0 {
-        return (0, 0);
-    }
-    let last = total_lines - 1;
-    let capped = def_row.min(last);
-    (capped.saturating_sub(1), (capped + 1).min(last))
-}
-
-/// Read one entity's minimal source reference from the fixture tree as an
-/// annotator unit, tagged with the edge that produced it.
-///
-/// Only the definition line plus one line of context on each side is kept;
-/// the full body is already shown in the hit's `#### Content` section.
-fn snippet_unit(
-    snapshot: &cce_codegraph::index::LayeredSnapshotIndex,
-    fixture_root: &std::path::Path,
-    entity_id: cce_types::EntityId,
-    origin: ExpansionOrigin,
-    edge_label: &str,
-    relation: &cce_types::ResolvedRelation,
-) -> Option<ExpandedUnit> {
-    let entity = snapshot.get_function_by_entity_id(entity_id)?;
-    let file_path = snapshot.get_file_path_by_entity(entity_id)?;
-    let text = std::fs::read_to_string(fixture_root.join(&file_path)).ok()?;
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.is_empty() {
-        return None;
-    }
-    let def_row = entity.span.start_position.row;
-    let (window_start, window_end) = reference_window(def_row, lines.len());
-    let start = window_start + 1;
-    let end = window_end + 1;
-    let code = lines[window_start..=window_end].join("\n");
-    if code.trim().is_empty() {
-        return None;
-    }
-    Some(
-        ExpandedUnit::new(
-            code,
-            file_path,
-            start as u32,
-            end as u32,
-            entity.name.clone(),
-        )
-        .with_expansion(origin, edge_label)
-        .with_entity_id(entity_id)
-        .with_relation_type(relation.relation_type)
-        .with_external(relation.is_external)
-        .with_stdlib(relation.is_stdlib())
-        .with_excerpt(true),
-    )
 }
 
 /// Highest judgment level overlapped by one hit, if any.
@@ -779,8 +576,13 @@ fn render_hit_table_aggregated(result: &QueryResult, judgments: &[&RelevanceJudg
     table
 }
 
-/// Complete metadata plus full content and the annotation comparison for one hit.
-fn render_hit_detail(rank: usize, item: &SearchResult, annotation: AnnotationOutcome) -> String {
+/// Complete metadata plus the verbatim API response body for one hit.
+///
+/// The body is whatever an `expand=true` API call returns for this hit: the
+/// full annotated document when the production post-pass wrapped it, otherwise
+/// the raw recall body. The expansion summary (when present) comes from the
+/// counts the post-pass records on the hit itself.
+fn render_hit_detail(rank: usize, item: &SearchResult) -> String {
     let mut out = format!(
         "### {}. {} `{}`\n\n",
         rank + 1,
@@ -836,38 +638,18 @@ fn render_hit_detail(rank: usize, item: &SearchResult, annotation: AnnotationOut
         out.push_str(&format!("- pattern_info: `{}`\n", cell(pattern)));
     }
 
-    out.push_str("\n#### Content\n\n```text\n");
+    out.push_str("\n#### Content (API response body)\n\n```text\n");
     out.push_str(&fenced(&item.content));
     out.push_str("\n```\n");
-
-    match annotation {
-        AnnotationOutcome::Annotated(result) => {
-            out.push_str("\n#### Annotated content\n\n");
-            out.push_str(&format!(
-                "- expanded: {} | expanded_nodes: {} (forward {}, backward {}) | files: {} | truncated: {}\n",
-                result.metadata.expanded,
-                result.metadata.expanded_nodes,
-                result.metadata.forward_nodes,
-                result.metadata.backward_nodes,
-                result.metadata.file_count,
-                result.metadata.truncated,
-            ));
-            if result.annotated_content.trim().is_empty() {
-                out.push_str("\n(no expansion units; see Content above)\n");
-            } else {
-                out.push_str("```text\n");
-                out.push_str(&fenced(&result.annotated_content));
-                out.push_str("\n```\n");
-            }
-        }
-        AnnotationOutcome::Skipped(reason) => {
-            out.push_str(&format!(
-                "\n#### Annotated content\n\n(annotation skipped: {reason}; see raw content above)\n"
-            ));
-        }
-        AnnotationOutcome::Failed => {
-            out.push_str("\n#### Annotated content\n\n(annotation failed; see raw content above)\n")
-        }
+    if item.metadata.get("expanded").map(String::as_str) == Some("true") {
+        let count = |key: &str| item.metadata.get(key).map(String::as_str).unwrap_or("0");
+        out.push_str(&format!(
+            "\n- expansion: {} nodes (forward {}, backward {}, self-evident omitted {}) — body above is the annotated document\n",
+            count("expanded_nodes"),
+            count("forward_nodes"),
+            count("backward_nodes"),
+            count("omitted_self_evident"),
+        ));
     }
     out.push('\n');
     out
@@ -997,24 +779,6 @@ fn alignment_key_of(item: &SearchResult) -> String {
         .unwrap_or_else(|| format!("c:{}", item.id))
 }
 
-/// Adapt a search hit to the annotator input shape.
-///
-/// The body is already the exact unit and the span is its file-absolute
-/// range; extraction records both as-is in a single coordinate system.
-fn search_result_input(item: &SearchResult) -> SearchResultInput {
-    SearchResultInput {
-        id: item.id.clone(),
-        entity_id: item.entity_ids.first().copied(),
-        name: item.name.clone(),
-        kind: item.kind.clone(),
-        file_path: item.file_path.clone(),
-        start_line: item.start_line,
-        end_line: item.end_line,
-        content: item.content.clone(),
-        score: item.score,
-    }
-}
-
 /// Keep markdown table cells on one line.
 fn cell(text: &str) -> String {
     text.replace('|', "/").replace('\n', " ")
@@ -1033,18 +797,4 @@ async fn probe_qdrant() -> Result<(), String> {
         cce_storage_vector_qdrant::QdrantClient::new(config, "test").map_err(|e| e.to_string())?;
     client.initialize().await.map_err(|e| e.to_string())?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reference_window_keeps_definition_line_plus_one_context_line() {
-        assert_eq!(reference_window(5, 20), (4, 6));
-        assert_eq!(reference_window(0, 20), (0, 1));
-        assert_eq!(reference_window(19, 20), (18, 19));
-        assert_eq!(reference_window(0, 1), (0, 0));
-        assert_eq!(reference_window(7, 0), (0, 0));
-    }
 }
