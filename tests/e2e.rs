@@ -1,3 +1,5 @@
+#[path = "e2e/alignment_workflow.rs"]
+pub mod alignment_workflow;
 #[path = "e2e/complex_query_workflow.rs"]
 pub mod complex_query_workflow;
 #[path = "e2e/export_workflow.rs"]
@@ -22,5 +24,7 @@ pub mod query_workflow;
 pub mod rerank_benchmark;
 #[path = "e2e/rerank_workflow.rs"]
 pub mod rerank_workflow;
+#[path = "e2e/retrieval_method_alignment.rs"]
+pub mod retrieval_method_alignment;
 #[path = "e2e/tools_workflow.rs"]
 pub mod tools_workflow;

@@ -1,8 +1,9 @@
 //! Workflow test entry point.
 //!
-//! The alignment workflow tests live under `tests/e2e/` and are included
-//! here. The remaining e2e modules are not yet wired in (the suite drifted
-//! while orphaned).
+//! Smoke subset of the e2e suite: alignment, plugin, rerank, retrieval
+//! method alignment, hot update and index workflows only. This entry stays
+//! intentionally small for fast feedback. The full suite lives in
+//! `tests/e2e.rs`; new workflow modules must be mounted there, not here.
 
 #[path = "e2e/alignment_workflow.rs"]
 pub mod alignment_workflow;
