@@ -69,7 +69,7 @@ impl RelationSnapshotPublisher for TestRelationPublisher {
         project_id: i64,
         operation_id: &str,
         snapshot: CanonicalRelationSnapshot,
-        _index: &cce_codegraph::index::RelationIndex,
+        index: &cce_codegraph::index::RelationIndex,
     ) -> Result<RelationPublication, StorageError> {
         self.ensure_project(project_id)?;
         let relation_epoch =
@@ -79,7 +79,15 @@ impl RelationSnapshotPublisher for TestRelationPublisher {
         // ready epoch and records `active_relation_epoch` in project_meta, so
         // downstream delta flows have a CAS base.
         self.pipeline.activate(project_id, relation_epoch)?;
-        Ok(RelationPublication { relation_epoch })
+        // Share the same deep-copied product the production publisher hands
+        // to export enhancement so workflow tests exercise the shared path.
+        let base = Arc::new(cce_codegraph::index::RelationSnapshotIndex::from_index(
+            index,
+        ));
+        Ok(RelationPublication {
+            relation_epoch,
+            snapshot: Arc::new(cce_codegraph::index::LayeredSnapshotIndex::new(base)),
+        })
     }
 
     async fn publish_delta(
@@ -87,7 +95,7 @@ impl RelationSnapshotPublisher for TestRelationPublisher {
         project_id: i64,
         operation_id: &str,
         delta: SnapshotDelta,
-        _base: Option<cce_codegraph::index::LayeredSnapshotIndex>,
+        base: Option<cce_codegraph::index::LayeredSnapshotIndex>,
     ) -> Result<RelationPublication, StorageError> {
         self.ensure_project(project_id)?;
 
@@ -119,8 +127,28 @@ impl RelationSnapshotPublisher for TestRelationPublisher {
                 StorageError::Validation(format!("failed to persist relation delta: {error}"))
             })?;
 
+        let snapshot = match base {
+            Some(view) => {
+                let delta_arc = Arc::new(delta);
+                if view.deltas.is_empty() {
+                    Arc::new(cce_codegraph::index::LayeredSnapshotIndex::with_delta(
+                        Arc::clone(&view.base),
+                        delta_arc,
+                    ))
+                } else {
+                    let mut deltas = view.deltas.clone();
+                    deltas.push(delta_arc);
+                    Arc::new(cce_codegraph::index::LayeredSnapshotIndex::with_deltas(
+                        Arc::clone(&view.base),
+                        deltas,
+                    ))
+                }
+            }
+            None => Arc::new(cce_codegraph::index::LayeredSnapshotIndex::empty()),
+        };
         Ok(RelationPublication {
             relation_epoch: epoch,
+            snapshot,
         })
     }
 }
