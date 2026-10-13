@@ -43,7 +43,7 @@ impl EntityChunker {
         let result = self.grouper.process(&parsed);
         let conversions = build_group_conversions(&result.groups, file_path, content);
 
-        let mut chunker = self.chunker.lock().unwrap();
+        let chunker = self.chunker.lock().unwrap();
         match chunker.chunk_groups(&conversions, file_path) {
             Ok(output) => output.chunks,
             Err(e) => {
