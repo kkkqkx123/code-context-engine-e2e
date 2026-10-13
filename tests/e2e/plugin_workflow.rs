@@ -7,6 +7,7 @@
 use crate::helper::{
     EmptyFixture, ExpectedIndexResult, IndexWorkflowTest, assert_index_result, init_minimal_logging,
 };
+use cce_codegraph::index::snapshot_query::TransitiveFileQueryOps;
 use cce_plugin::PluginRegistry;
 use cce_plugin_runtime::{FilePluginSource, LuaPlugin};
 use cce_types::grouper::EntityGroup;
@@ -1103,18 +1104,19 @@ async fn test_plugin_symbol_extract_relation_index() {
             .any(|i| i.source == "io.zig")
     );
 
-    // Cross-file dependency graph: main → math → io.
-    let builder = orchestrator
-        .get_relation_builder()
-        .expect("relation builder available");
-    let deps = builder.dependency_graph();
+    // Cross-file dependency graph: main → math → io (via published snapshot).
+    let snapshot = orchestrator
+        .get_published_relation_snapshot()
+        .expect("published snapshot available");
+    let main_deps = snapshot.transitive_dependencies_of("src/main.zig");
     assert!(
-        deps.has_dependency("src/main.zig", "math.zig"),
-        "main.zig must depend on math.zig"
+        main_deps.iter().any(|dep| dep.ends_with("math.zig")),
+        "main.zig must depend on math.zig, got {main_deps:?}"
     );
+    let math_deps = snapshot.transitive_dependencies_of("src/math.zig");
     assert!(
-        deps.has_dependency("src/math.zig", "io.zig"),
-        "math.zig must depend on io.zig"
+        math_deps.iter().any(|dep| dep.ends_with("io.zig")),
+        "math.zig must depend on io.zig, got {math_deps:?}"
     );
 }
 
