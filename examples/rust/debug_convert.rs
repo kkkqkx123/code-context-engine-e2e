@@ -64,7 +64,7 @@ async fn main() {
             );
         }
         let config = ChunkingConfig::default();
-        let mut chunker = GroupChunker::new(config);
+        let chunker = GroupChunker::new(config);
         for gc in &gcs {
             if gc.group.group_id == "merged_group_11"
                 || gc.group.group_id == "merged_group_16"
