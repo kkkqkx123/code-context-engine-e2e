@@ -109,14 +109,14 @@ pub fn helper_b() -> String { bar() }
     // --- Verify BM25 search isolation ---
     let retrieval = cce_storage_bm25::Bm25Retrieval::new();
 
-    // Clone IndexManager and Schema out of the shared client
-    let (index_mgr, schema) = {
-        (
-            bm25.index_manager()
-                .expect("BM25 index manager not available")
-                .clone(),
-            bm25.schema().clone(),
-        )
+    // Clone IndexManager out of the shared client and snapshot the schema.
+    let index_mgr = bm25
+        .index_manager()
+        .expect("BM25 index manager not available")
+        .clone();
+    let schema = {
+        let guard = index_mgr.read().await;
+        guard.schema().clone()
     };
 
     // Search "foo" in project A → should find results

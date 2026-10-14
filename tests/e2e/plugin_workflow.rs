@@ -318,7 +318,7 @@ def get_user(user_id):
     let search_results = cce_storage_bm25::Bm25Retrieval::new()
         .search(
             &manager_guard,
-            bm25.schema(),
+            manager_guard.schema(),
             "route handler function",
             &cce_storage_common::FulltextSearchOptions {
                 limit: 10,

@@ -958,8 +958,8 @@ impl HotUpdateHarness {
         use cce_storage_common::FulltextSearchOptions;
         let client = &self.bm25;
         let manager = client.index_manager().expect("bm25 index manager").clone();
-        let schema = client.schema().clone();
         let manager = manager.read().await;
+        let schema = manager.schema().clone();
         let options = FulltextSearchOptions {
             limit: 10,
             offset: 0,
