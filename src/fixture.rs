@@ -669,6 +669,11 @@ impl FixtureSpec {
         Self::cpp_review("templates")
     }
 
+    /// C++ media-server review fixture (multi-protocol streaming: FLV/MOV/RTSP/RTP/RTMP/HLS/MPEG/SIP)
+    pub fn cpp_media_server() -> Self {
+        Self::cpp_review("media-server")
+    }
+
     /// C++ type inference declarations fixture
     pub fn cpp_type_inference_declarations() -> Self {
         Self::new(FixtureCategory::Cpp, "type_inference/declarations")

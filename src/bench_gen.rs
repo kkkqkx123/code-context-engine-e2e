@@ -92,60 +92,71 @@ pub fn collect_files_by_ext(
 }
 
 pub fn load_fixture_files(spec: FixtureSpec) -> io::Result<Vec<(String, String)>> {
-    let extension = match spec.category {
-        crate::FixtureCategory::Rust => "rs",
-        crate::FixtureCategory::Python => "py",
-        crate::FixtureCategory::Java => "java",
-        crate::FixtureCategory::TypeScript => "ts",
-        crate::FixtureCategory::CSharp => "cs",
-        crate::FixtureCategory::C => "c",
-        crate::FixtureCategory::Cpp => "cpp",
-        crate::FixtureCategory::Go => "go",
-        crate::FixtureCategory::Kotlin => "kt",
-        crate::FixtureCategory::Scala => "scala",
-        crate::FixtureCategory::Php => "php",
-        crate::FixtureCategory::Ruby => "rb",
-        crate::FixtureCategory::Dart => "dart",
-        crate::FixtureCategory::JavaScript => "js",
-        crate::FixtureCategory::Bash => "sh",
-        crate::FixtureCategory::Lua => "lua",
-        crate::FixtureCategory::MultiLanguage => "*",
-        crate::FixtureCategory::Documents => "*",
-        crate::FixtureCategory::Tools => "*",
+    // C/C++ fixtures mix implementation and header files (e.g. the
+    // media-server tree under `cpp/review` is mostly `.c`/`.h`); all native
+    // extensions must be collected so range judgments over `.c` sources can
+    // match indexed chunks.
+    let extensions: &[&str] = match spec.category {
+        crate::FixtureCategory::Rust => &["rs"],
+        crate::FixtureCategory::Python => &["py"],
+        crate::FixtureCategory::Java => &["java"],
+        crate::FixtureCategory::TypeScript => &["ts"],
+        crate::FixtureCategory::CSharp => &["cs"],
+        crate::FixtureCategory::C => &["c", "h"],
+        crate::FixtureCategory::Cpp => &["cpp", "c", "h", "hpp"],
+        crate::FixtureCategory::Go => &["go"],
+        crate::FixtureCategory::Kotlin => &["kt"],
+        crate::FixtureCategory::Scala => &["scala"],
+        crate::FixtureCategory::Php => &["php"],
+        crate::FixtureCategory::Ruby => &["rb"],
+        crate::FixtureCategory::Dart => &["dart"],
+        crate::FixtureCategory::JavaScript => &["js"],
+        crate::FixtureCategory::Bash => &["sh"],
+        crate::FixtureCategory::Lua => &["lua"],
+        crate::FixtureCategory::MultiLanguage => &["*"],
+        crate::FixtureCategory::Documents => &["*"],
+        crate::FixtureCategory::Tools => &["*"],
     };
     let source_path = fixture_source_path(spec);
     let mut files = Vec::new();
-    collect_files_by_ext(&source_path, &source_path, &mut files, extension)?;
+    for extension in extensions {
+        collect_files_by_ext(&source_path, &source_path, &mut files, extension)?;
+    }
     Ok(files)
 }
 
 pub fn scan_fixture(spec: FixtureSpec) -> anyhow::Result<Vec<cce_scanner::FileEntry>> {
-    let include_pattern = match spec.category {
-        crate::FixtureCategory::Rust => "*.rs",
-        crate::FixtureCategory::Python => "*.py",
-        crate::FixtureCategory::Java => "*.java",
-        crate::FixtureCategory::TypeScript => "*.ts",
-        crate::FixtureCategory::CSharp => "*.cs",
-        crate::FixtureCategory::C => "*.c",
-        crate::FixtureCategory::Cpp => "*.cpp",
-        crate::FixtureCategory::Go => "*.go",
-        crate::FixtureCategory::Kotlin => "*.kt",
-        crate::FixtureCategory::Scala => "*.scala",
-        crate::FixtureCategory::Php => "*.php",
-        crate::FixtureCategory::Ruby => "*.rb",
-        crate::FixtureCategory::Dart => "*.dart",
-        crate::FixtureCategory::JavaScript => "*.js",
-        crate::FixtureCategory::Bash => "*.sh",
-        crate::FixtureCategory::Lua => "*.lua",
-        crate::FixtureCategory::MultiLanguage => "*",
-        crate::FixtureCategory::Documents => "*",
-        crate::FixtureCategory::Tools => "*",
+    let include_patterns: Vec<String> = match spec.category {
+        crate::FixtureCategory::Rust => vec!["*.rs".to_string()],
+        crate::FixtureCategory::Python => vec!["*.py".to_string()],
+        crate::FixtureCategory::Java => vec!["*.java".to_string()],
+        crate::FixtureCategory::TypeScript => vec!["*.ts".to_string()],
+        crate::FixtureCategory::CSharp => vec!["*.cs".to_string()],
+        crate::FixtureCategory::C => vec!["*.c".to_string(), "*.h".to_string()],
+        crate::FixtureCategory::Cpp => vec![
+            "*.cpp".to_string(),
+            "*.c".to_string(),
+            "*.h".to_string(),
+            "*.hpp".to_string(),
+        ],
+        crate::FixtureCategory::Go => vec!["*.go".to_string()],
+        crate::FixtureCategory::Kotlin => vec!["*.kt".to_string()],
+        crate::FixtureCategory::Scala => vec!["*.scala".to_string()],
+        crate::FixtureCategory::Php => vec!["*.php".to_string()],
+        crate::FixtureCategory::Ruby => vec!["*.rb".to_string()],
+        crate::FixtureCategory::Dart => vec!["*.dart".to_string()],
+        crate::FixtureCategory::JavaScript => vec!["*.js".to_string()],
+        crate::FixtureCategory::Bash => vec!["*.sh".to_string()],
+        crate::FixtureCategory::Lua => vec!["*.lua".to_string()],
+        crate::FixtureCategory::MultiLanguage => vec!["*".to_string()],
+        crate::FixtureCategory::Documents => vec!["*".to_string()],
+        crate::FixtureCategory::Tools => vec!["*".to_string()],
     };
     let root = fixture_source_path(spec);
     let mut scanner = FSScanner::new();
     let opts = ScanOptions {
         root_path: root.to_string_lossy().to_string(),
-        include_patterns: vec![include_pattern.to_string()],
+        include_patterns,
         ..Default::default()
     };
     Ok(scanner.scan(&opts)?)

@@ -114,7 +114,9 @@ pub struct RangeBasedPerQueryScore {
 ///
 /// Precision is unweighted per-chunk. Recall is unweighted per-target and
 /// reported separately for the Strong and Related layers plus the combined
-/// `any` layer.
+/// `any` layer. Chunk counters are disjoint (`strong + related == any`);
+/// Related precision is measured over non-Strong retrieval slots so the
+/// Related layer excludes Strong hits instead of duplicating `any`.
 pub fn evaluate_query_range_based(
     judgment: &RelevanceJudgment,
     chunks: &[ChunkData],
@@ -256,9 +258,21 @@ fn finalize_range_score(
             matches as f64 / denominator as f64
         }
     };
+    // Related precision excludes Strong-matching chunks from the denominator:
+    // a Strong hit is neither a Related success nor a Related miss, so the
+    // Related layer is measured over the non-Strong retrieval slots only.
+    // This keeps the `_r` columns independent of Strong ranking instead of
+    // duplicating the `_a` (any) columns.
+    let precision_related = {
+        let related_denominator = denominator.saturating_sub(counts.strong_matches);
+        if related_denominator == 0 {
+            0.0
+        } else {
+            counts.related_matches as f64 / related_denominator as f64
+        }
+    };
 
     let precision_strong = precision(counts.strong_matches);
-    let precision_related = precision(counts.related_matches);
     let precision_any = precision(counts.any_matches);
     let recall_strong = exact_recall(RelevanceLevel::Strong);
     let recall_related = exact_recall(RelevanceLevel::Related);
@@ -504,6 +518,80 @@ mod tests {
         assert_eq!(score.recall_any, 1.0);
         assert_eq!(score.recall_strong, 1.0);
         assert_eq!(score.recall_related, 1.0);
+    }
+
+    fn ranged_chunk(start_line: usize, end_line: usize) -> ChunkData {
+        chunk(
+            "exact_entities",
+            vec![ChunkSourceRange {
+                start_line,
+                end_line,
+            }],
+        )
+    }
+
+    fn empty_chunk() -> ChunkData {
+        chunk("exact_entities", Vec::new())
+    }
+
+    #[test]
+    fn strong_only_query_keeps_related_layer_at_zero() {
+        let judgment = RelevanceJudgment {
+            id: "strong-only".to_string(),
+            query_text: "strong-only".to_string(),
+            query_type: QueryType::Qualified,
+            fuzzy_subtype: None,
+            relevant_ranges: vec![range(5, 10, RelevanceLevel::Strong)],
+        };
+        let chunks = vec![ranged_chunk(5, 10)];
+        let score = evaluate_query_range_based(&judgment, &chunks, &[1.0], 5);
+        assert_eq!(score.strong_matches, 1);
+        assert_eq!(score.related_matches, 0);
+        assert_eq!(score.any_matches, 1);
+        assert_eq!(score.recall_strong, 1.0);
+        assert_eq!(score.recall_related, 0.0);
+        assert_eq!(score.recall_any, 1.0);
+        assert_eq!(score.precision_related, 0.0);
+        assert!(score.precision_any > 0.0);
+    }
+
+    #[test]
+    fn related_precision_excludes_strong_slots() {
+        let judgment = RelevanceJudgment {
+            id: "mixed".to_string(),
+            query_text: "mixed".to_string(),
+            query_type: QueryType::Semantic,
+            fuzzy_subtype: None,
+            relevant_ranges: vec![
+                range(5, 10, RelevanceLevel::Strong),
+                range(30, 35, RelevanceLevel::Related),
+            ],
+        };
+        let chunks = vec![
+            ranged_chunk(5, 10),
+            ranged_chunk(30, 35),
+            empty_chunk(),
+            empty_chunk(),
+            empty_chunk(),
+        ];
+        let scores = vec![5.0, 4.0, 3.0, 2.0, 1.0];
+        let score = evaluate_query_range_based(&judgment, &chunks, &scores, 5);
+        assert_eq!(score.strong_matches, 1);
+        assert_eq!(score.related_matches, 1);
+        assert_eq!(score.any_matches, 2);
+        assert_eq!(score.precision_strong, 1.0 / 5.0);
+        assert_eq!(score.precision_related, 1.0 / 4.0);
+        assert_eq!(score.precision_any, 2.0 / 5.0);
+        assert_ne!(score.precision_related, score.precision_any);
+
+        // Dropping the Related hit separates Related recall from any recall.
+        let strong_only = vec![ranged_chunk(5, 10), empty_chunk()];
+        let strong_scores = vec![2.0, 1.0];
+        let partial = evaluate_query_range_based(&judgment, &strong_only, &strong_scores, 2);
+        assert_eq!(partial.recall_strong, 1.0);
+        assert_eq!(partial.recall_related, 0.0);
+        assert_eq!(partial.recall_any, 0.5);
+        assert_ne!(partial.recall_related, partial.recall_any);
     }
 
     #[test]
