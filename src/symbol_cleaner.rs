@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use cce_utils::text::floor_char_boundary;
 use cce_utils::token_estimation::TokenEstimator;
 
 const _DEFAULT_MAX_TOKENS: usize = 512;
@@ -238,21 +239,4 @@ impl SymbolCleaner {
         }
         all
     }
-}
-
-fn floor_char_boundary(s: &str, byte_index: usize) -> usize {
-    if byte_index >= s.len() {
-        return s.len();
-    }
-    if s.is_char_boundary(byte_index) {
-        return byte_index;
-    }
-    let mut i = byte_index;
-    while i > 0 {
-        i -= 1;
-        if s.is_char_boundary(i) {
-            return i;
-        }
-    }
-    0
 }
