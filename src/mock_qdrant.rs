@@ -98,6 +98,13 @@ async fn serve_connection(
         body.len()
     );
     let response = [header.as_bytes(), body].concat();
+    // Count endpoints must answer with an actual count, not a write ack.
+    let count_body = br#"{"result":{"count":0}}"#;
+    let count_header = format!(
+        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\ncontent-type: application/json\r\n\r\n",
+        count_body.len()
+    );
+    let count_response = [count_header.as_bytes(), count_body.as_slice()].concat();
     let mut pending: Vec<u8> = Vec::new();
     loop {
         // Accumulate until the full header block is buffered.
@@ -166,7 +173,13 @@ async fn serve_connection(
                 .extend(batch);
         }
 
-        if socket.write_all(&response).await.is_err() {
+        // `POST …/points/count` reads a count; everything else is a write.
+        let is_count = head.contains("/points/count");
+        if socket
+            .write_all(if is_count { &count_response } else { &response })
+            .await
+            .is_err()
+        {
             return;
         }
     }
