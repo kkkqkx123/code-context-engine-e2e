@@ -200,6 +200,78 @@ pub async fn run_flask_bm25_parameter_sweep(output_dir: &Path) -> Result<Vec<Que
     .await
 }
 
+pub async fn run_express_bm25_parameter_sweep(output_dir: &Path) -> Result<Vec<QueryObservation>> {
+    run_bm25_parameter_sweep(
+        "express + javascript_basic distractor",
+        FixtureSpec::javascript_express(),
+        FixtureSpec::javascript_basic(),
+        crate::judgments::express::express_relevance_judgments(),
+        output_dir,
+    )
+    .await
+}
+
+pub async fn run_gin_bm25_parameter_sweep(output_dir: &Path) -> Result<Vec<QueryObservation>> {
+    run_bm25_parameter_sweep(
+        "gin + go_basic distractor",
+        FixtureSpec::go_gin(),
+        FixtureSpec::go_basic(),
+        crate::judgments::gin::gin_relevance_judgments(),
+        output_dir,
+    )
+    .await
+}
+
+pub async fn run_spring_boot_bm25_parameter_sweep(
+    output_dir: &Path,
+) -> Result<Vec<QueryObservation>> {
+    run_bm25_parameter_sweep(
+        "spring_boot + java_basic distractor",
+        FixtureSpec::java_spring_boot(),
+        FixtureSpec::java_basic(),
+        crate::judgments::spring_boot::spring_boot_relevance_judgments(),
+        output_dir,
+    )
+    .await
+}
+
+pub async fn run_jackson_core_bm25_parameter_sweep(
+    output_dir: &Path,
+) -> Result<Vec<QueryObservation>> {
+    run_bm25_parameter_sweep(
+        "jackson_core + java_basic distractor",
+        FixtureSpec::java_jackson_core(),
+        FixtureSpec::java_basic(),
+        crate::judgments::jackson_core::jackson_core_relevance_judgments(),
+        output_dir,
+    )
+    .await
+}
+
+pub async fn run_mediatr_bm25_parameter_sweep(output_dir: &Path) -> Result<Vec<QueryObservation>> {
+    run_bm25_parameter_sweep(
+        "mediatr + csharp_basic distractor",
+        FixtureSpec::csharp_mediatr(),
+        FixtureSpec::csharp_basic(),
+        crate::judgments::mediatr::mediatr_relevance_judgments(),
+        output_dir,
+    )
+    .await
+}
+
+pub async fn run_media_server_bm25_parameter_sweep(
+    output_dir: &Path,
+) -> Result<Vec<QueryObservation>> {
+    run_bm25_parameter_sweep(
+        "media_server + cpp_basic distractor",
+        FixtureSpec::cpp_media_server(),
+        FixtureSpec::cpp_basic(),
+        crate::judgments::media_server::media_server_relevance_judgments(),
+        output_dir,
+    )
+    .await
+}
+
 async fn run_bm25_parameter_sweep(
     fixture_name: &str,
     target_spec: FixtureSpec,

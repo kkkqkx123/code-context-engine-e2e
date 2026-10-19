@@ -93,6 +93,30 @@ name = "bm25_para_flask"
 path = "examples/python/bm25_para_flask.rs"
 
 [[example]]
+name = "bm25_para_express"
+path = "examples/javascript/bm25_para_express.rs"
+
+[[example]]
+name = "bm25_para_gin"
+path = "examples/go/bm25_para_gin.rs"
+
+[[example]]
+name = "bm25_para_spring_boot"
+path = "examples/java/bm25_para_spring_boot.rs"
+
+[[example]]
+name = "bm25_para_jackson_core"
+path = "examples/java/bm25_para_jackson_core.rs"
+
+[[example]]
+name = "bm25_para_mediatr"
+path = "examples/csharp/bm25_para_mediatr.rs"
+
+[[example]]
+name = "bm25_para_media_server"
+path = "examples/cpp/bm25_para_media_server.rs"
+
+[[example]]
 name = "gen_bench_flask"
 path = "examples/python/gen_bench_flask.rs"
 
@@ -309,9 +333,65 @@ name = "query_review_flask"
 path = "examples/python/query_review_flask.rs"
 
 [[example]]
+name = "query_review_ripgrep"
+path = "examples/rust/query_review_ripgrep.rs"
+
+[[example]]
+name = "query_review_express"
+path = "examples/javascript/query_review_express.rs"
+
+[[example]]
+name = "query_review_gin"
+path = "examples/go/query_review_gin.rs"
+
+[[example]]
+name = "query_review_spring_boot"
+path = "examples/java/query_review_spring_boot.rs"
+
+[[example]]
+name = "query_review_jackson_core"
+path = "examples/java/query_review_jackson_core.rs"
+
+[[example]]
+name = "query_review_mediatr"
+path = "examples/csharp/query_review_mediatr.rs"
+
+[[example]]
+name = "query_review_media_server"
+path = "examples/cpp/query_review_media_server.rs"
+
+[[example]]
 name = "relation_review_oncecell"
 path = "examples/rust/relation_review_oncecell.rs"
 
 [[example]]
 name = "relation_review_flask"
 path = "examples/python/relation_review_flask.rs"
+
+[[example]]
+name = "relation_review_ripgrep"
+path = "examples/rust/relation_review_ripgrep.rs"
+
+[[example]]
+name = "relation_review_express"
+path = "examples/javascript/relation_review_express.rs"
+
+[[example]]
+name = "relation_review_gin"
+path = "examples/go/relation_review_gin.rs"
+
+[[example]]
+name = "relation_review_spring_boot"
+path = "examples/java/relation_review_spring_boot.rs"
+
+[[example]]
+name = "relation_review_jackson_core"
+path = "examples/java/relation_review_jackson_core.rs"
+
+[[example]]
+name = "relation_review_mediatr"
+path = "examples/csharp/relation_review_mediatr.rs"
+
+[[example]]
+name = "relation_review_media_server"
+path = "examples/cpp/relation_review_media_server.rs"
