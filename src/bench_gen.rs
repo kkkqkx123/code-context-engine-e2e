@@ -78,7 +78,19 @@ pub fn collect_files_by_ext(
             if path.is_dir() {
                 collect_files_by_ext(root_path, &path, files, extension)?;
             } else if path.extension().is_some_and(|e| e == extension) {
-                let content = std::fs::read_to_string(&path)?;
+                // Production decoding handles non-UTF8 sources (for example
+                // GBK punctuation in media-server C files). Files that even
+                // production decoding rejects (low-confidence detection) are
+                // skipped like the full-pipeline baseline skips failed
+                // `process_file_complete` results, instead of aborting the
+                // whole collection on one file.
+                let content = match cce_utils::file::read_file_to_utf8(&path) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        eprintln!("  Skipping undecodable file {}: {e}", path.display());
+                        continue;
+                    }
+                };
                 let rel = path
                     .strip_prefix(root_path)
                     .unwrap_or(&path)
@@ -533,4 +545,53 @@ pub async fn run_bench_gen(config: ProjectConfig) -> anyhow::Result<()> {
 
 fn get_chunk_entity_name(chunk: &cce_parser::ast_to_nl::chunker::ChunkedResult) -> &str {
     chunk.bm25_title.as_deref().unwrap_or("unknown")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collect_files_by_ext_decodes_non_utf8_c_source() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let mut raw = Vec::new();
+        raw.extend_from_slice(b"int add(int a, int b) {\n    return a + b;\n}\n");
+        raw.extend_from_slice(b"// a \xa1\xae1\xa1\xaf bit\n");
+        std::fs::write(dir.path().join("mov-chnl.c"), &raw).expect("write gbk file");
+        std::fs::write(dir.path().join("clean.h"), b"int add(int a, int b);\n")
+            .expect("write header");
+
+        assert!(
+            std::fs::read_to_string(dir.path().join("mov-chnl.c")).is_err(),
+            "fixture must be non-UTF8 so plain read_to_string fails"
+        );
+
+        let mut files = Vec::new();
+        collect_files_by_ext(dir.path(), dir.path(), &mut files, "c").expect("gbk c file");
+        assert_eq!(files.len(), 1, "only the .c file matches extension c");
+        assert_eq!(files[0].0, "mov-chnl.c");
+        assert!(files[0].1.contains("int add"));
+    }
+
+    #[test]
+    fn collect_files_by_ext_skips_undecodable_file() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let mut raw = vec![b'a'; 9000];
+        raw.extend_from_slice(b"\n// \xa1\xaa undecodable tail\n");
+        std::fs::write(dir.path().join("late.c"), &raw).expect("write file");
+        std::fs::write(dir.path().join("ok.c"), b"int ok(void) { return 0; }\n")
+            .expect("write file");
+
+        let mut files = Vec::new();
+        collect_files_by_ext(dir.path(), dir.path(), &mut files, "c")
+            .expect("undecodable files must be skipped, not abort collection");
+        assert!(
+            files.iter().any(|(name, _)| name == "ok.c"),
+            "decodable file must be collected, got {files:?}"
+        );
+        assert!(
+            files.iter().all(|(name, _)| name != "late.c") || files.len() == 2,
+            "undecodable file must either be skipped or decoded, never abort, got {files:?}"
+        );
+    }
 }

@@ -33,13 +33,6 @@ pub async fn gen_full_pipeline_raw_source_chunks(
     let dist_entries = scan_fixture(distractor_spec)?;
 
     let mut source_map: HashMap<String, String> = HashMap::new();
-    for entry in target_entries.iter().chain(dist_entries.iter()) {
-        let path_str = normalize_file_path(&entry.relative_path.to_string_lossy());
-        if let Ok(content) = std::fs::read_to_string(&entry.path) {
-            source_map.entry(path_str).or_insert(content);
-        }
-    }
-
     let mut processor = FileProcessor::new();
 
     let mut emb_results: Vec<cce_parser::ast_to_nl::chunker::ChunkedResult> = Vec::new();
@@ -50,6 +43,19 @@ pub async fn gen_full_pipeline_raw_source_chunks(
             .process_file_complete(entry, OutputMode::Both)
             .await
         {
+            // The raw baseline slices decoded source lines by chunk
+            // source_ranges, so the map must hold exactly the decoded text
+            // the processor indexed. A separate read_to_string pass would
+            // silently drop non-UTF8 files (for example GBK-encoded
+            // punctuation in media-server C sources) that production
+            // decoding handles, leaving chunks without a map entry.
+            let decoded = result.parsed_file.source.to_string();
+            let entry_key = normalize_file_path(&entry.relative_path.to_string_lossy());
+            let parsed_key = normalize_file_path(&result.parsed_file.path);
+            source_map
+                .entry(entry_key)
+                .or_insert_with(|| decoded.clone());
+            source_map.entry(parsed_key).or_insert(decoded);
             let (emb, bm25) = split_by_path(result.chunks);
             emb_results.extend(emb);
             bm25_results.extend(bm25);
@@ -150,4 +156,83 @@ fn extract_raw_source(
         );
     }
     result.text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gbk_c_bytes() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"#include <stdio.h>\n");
+        bytes.extend_from_slice(
+            b"// a \xa1\xae1\xa1\xaf bit indicates \xa1\xaenot in this track\xa1\xaf\n",
+        );
+        bytes.extend_from_slice(b"int add(int a, int b) {\n    return a + b;\n}\n");
+        bytes
+    }
+
+    #[tokio::test]
+    async fn raw_source_map_covers_non_utf8_file() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let path = dir.path().join("mov-chnl.c");
+        let raw = gbk_c_bytes();
+        std::fs::write(&path, &raw).expect("write gbk file");
+
+        assert!(
+            std::fs::read_to_string(&path).is_err(),
+            "fixture must reproduce the non-UTF8 case plain read_to_string skips"
+        );
+        let decoded = cce_utils::file::read_file_to_utf8(&path).expect("production decoding");
+        assert!(decoded.contains("int add"));
+
+        let metadata = std::fs::metadata(&path).expect("stat file");
+        let entry = cce_scanner::FileEntry::new(
+            path.clone(),
+            std::path::PathBuf::from("libmov/source/mov-chnl.c"),
+            metadata.len(),
+            metadata.modified().expect("mtime").into(),
+        )
+        .with_hash(cce_utils::hash::calculate_hash(&raw))
+        .with_language_info(cce_types::LanguageInfo::detect_from_path(
+            "libmov/source/mov-chnl.c",
+        ));
+
+        let mut processor = FileProcessor::new();
+        let result = processor
+            .process_file_complete(&entry, OutputMode::Both)
+            .await
+            .expect("non-UTF8 C file must process via production decoding");
+
+        let mut source_map: HashMap<String, String> = HashMap::new();
+        let decoded_from_result = result.parsed_file.source.to_string();
+        assert_eq!(
+            decoded_from_result, decoded,
+            "map content must equal the indexed source so line numbers align"
+        );
+        source_map
+            .entry(normalize_file_path(&entry.relative_path.to_string_lossy()))
+            .or_insert_with(|| decoded_from_result.clone());
+        source_map
+            .entry(normalize_file_path(&result.parsed_file.path))
+            .or_insert(decoded_from_result);
+
+        let (emb, bm25) = split_by_path(result.chunks);
+        assert!(
+            !emb.is_empty() || !bm25.is_empty(),
+            "gbk fixture must yield chunks"
+        );
+        for chunk in emb
+            .iter()
+            .chain(bm25.iter())
+            .filter(|chunk| chunk.group_type != cce_parser::grouper::GroupType::FileDocumentation)
+        {
+            let raw_text = extract_raw_source(chunk, &source_map);
+            assert!(
+                !raw_text.trim().is_empty(),
+                "chunk {} must extract raw source",
+                chunk.chunk_id
+            );
+        }
+    }
 }
