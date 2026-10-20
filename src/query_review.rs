@@ -46,12 +46,13 @@ use cce_orchestrator::{
     AggregatedQueryOptions, QueryResult, SearchConfig, SearchSources, SubQuery,
 };
 
-use crate::bench_data::{QueryType, RelevanceJudgment, RelevanceLevel};
+use crate::bench_data::{ChunkSourceRange, QueryType, RelevanceJudgment, RelevanceLevel};
 use crate::embedding::EmbeddingConfig;
 use crate::fixture::{FixtureSpec, TestFixture};
 use crate::mock_embedding_server::{MockEmbeddingServer, mock_embedding_config};
 use crate::output_manager::{OutputBuilder, OutputCategory};
 use crate::query_test::QueryWorkflowTest;
+use crate::range_evaluator::{RetrievedCoverage, coverage_over_retrieved};
 
 /// One query-review export job over a single fixture and judgment set.
 pub struct QueryReviewConfig {
@@ -366,40 +367,36 @@ fn render_query_page(input: QueryPageInput<'_>) -> String {
     page
 }
 
-/// Highest judgment level overlapped by one hit, if any.
+/// The retrieved items' claimed source coverage.
+fn retrieved_coverage(items: &[SearchResult]) -> Vec<RetrievedCoverage> {
+    items
+        .iter()
+        .map(|item| RetrievedCoverage {
+            file: crate::bench_data::normalize_path(&item.file_path),
+            ranges: vec![ChunkSourceRange {
+                start_line: item.start_line.min(item.end_line) as usize,
+                end_line: item.start_line.max(item.end_line) as usize,
+            }],
+        })
+        .collect()
+}
+
+/// Judgment level each retrieved item contributes to.
 ///
-/// Overlap uses normalized file paths and inclusive 1-based line ranges, the
-/// same semantics as the range evaluator. Strong outranks related.
-fn hit_match_level(
+/// The labeled targets are covered by the whole result set: the retrieval may
+/// split a target across several items, and the items carrying the missing
+/// parts are the ones that contribute to the recovery. This is the relation
+/// the range evaluator scores, so the review pages and the metrics agree.
+fn hit_match_levels(
     judgment: &RelevanceJudgment,
-    file_path: &str,
-    start_line: u32,
-    end_line: u32,
-) -> Option<RelevanceLevel> {
-    let hit_file = crate::bench_data::normalize_path(file_path);
-    let hit_start = start_line.min(end_line) as usize;
-    let hit_end = start_line.max(end_line) as usize;
-    let mut best: Option<RelevanceLevel> = None;
-    for (range, level) in &judgment.relevant_ranges {
-        if crate::bench_data::normalize_path(&range.file) != hit_file {
-            continue;
-        }
-        if hit_start <= range.end_line && hit_end >= range.start_line {
-            best = Some(match (best, *level) {
-                (Some(RelevanceLevel::Strong), _) | (_, RelevanceLevel::Strong) => {
-                    RelevanceLevel::Strong
-                }
-                (Some(RelevanceLevel::Related), _) | (_, RelevanceLevel::Related) => {
-                    RelevanceLevel::Related
-                }
-                _ => RelevanceLevel::Irrelevant,
-            });
-            if best == Some(RelevanceLevel::Strong) {
-                break;
-            }
-        }
-    }
-    best
+    items: &[SearchResult],
+) -> Vec<Option<RelevanceLevel>> {
+    let coverage = coverage_over_retrieved(judgment, &retrieved_coverage(items));
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, _)| coverage.level_for(index))
+        .collect()
 }
 
 /// One-line expected-vs-hit coverage summary for the page header.
@@ -417,33 +414,34 @@ fn coverage_summary(judgment: &RelevanceJudgment, result: &QueryResult) -> Strin
         .iter()
         .filter(|(_, level)| *level == RelevanceLevel::Related)
         .count();
+    let coverage = coverage_over_retrieved(judgment, &retrieved_coverage(&result.items));
+    // The rank of the first item that contributes to a target.
+    let mut first_contribution: Vec<Option<usize>> = vec![None; judgment.relevant_ranges.len()];
+    for (rank, hits) in coverage.contributions.iter().enumerate() {
+        for (target, _) in hits {
+            if first_contribution[*target].is_none() {
+                first_contribution[*target] = Some(rank + 1);
+            }
+        }
+    }
     let mut strong_covered = 0_usize;
     let mut related_covered = 0_usize;
     let mut covered_targets = std::collections::HashSet::new();
     let mut first_strong_rank: Option<usize> = None;
-    for (index, (range, level)) in judgment.relevant_ranges.iter().enumerate() {
-        let range_file = crate::bench_data::normalize_path(&range.file);
-        for (rank, item) in result.items.iter().enumerate() {
-            if crate::bench_data::normalize_path(&item.file_path) != range_file {
-                continue;
-            }
-            let hit_start = item.start_line.min(item.end_line) as usize;
-            let hit_end = item.start_line.max(item.end_line) as usize;
-            if hit_start <= range.end_line && hit_end >= range.start_line {
-                if covered_targets.insert(index) {
-                    match level {
-                        RelevanceLevel::Strong => {
-                            strong_covered += 1;
-                            if first_strong_rank.is_none() {
-                                first_strong_rank = Some(rank + 1);
-                            }
-                        }
-                        RelevanceLevel::Related => related_covered += 1,
-                        RelevanceLevel::Irrelevant => {}
-                    }
+    for (index, (_, level)) in judgment.relevant_ranges.iter().enumerate() {
+        if !coverage.recovered[index] {
+            continue;
+        }
+        covered_targets.insert(index);
+        match level {
+            RelevanceLevel::Strong => {
+                strong_covered += 1;
+                if first_strong_rank.is_none() {
+                    first_strong_rank = first_contribution[index];
                 }
-                break;
             }
+            RelevanceLevel::Related => related_covered += 1,
+            RelevanceLevel::Irrelevant => {}
         }
     }
     if strong_total + related_total == 0 {
@@ -484,15 +482,15 @@ fn render_hit_table(result: &QueryResult, judgment: &RelevanceJudgment) -> Strin
     let mut table = String::from(
         "| rank | score | original | vector | bm25 | sources | boosted | boost reason | key | file | entity | in_expected |\n|---:|---:|---:|---:|---:|---|---|---|---|---|---|---|\n",
     );
+    let levels = hit_match_levels(judgment, &result.items);
     for (rank, item) in result.items.iter().enumerate() {
         let bm25 = item
             .bm25_score
             .map(|score| format!("{score:.4}"))
             .unwrap_or_else(|| "-".to_string());
-        let in_expected =
-            hit_match_level(judgment, &item.file_path, item.start_line, item.end_line)
-                .map(|level| level.to_string())
-                .unwrap_or_else(|| "-".to_string());
+        let in_expected = levels[rank]
+            .map(|level| level.to_string())
+            .unwrap_or_else(|| "-".to_string());
         table.push_str(&format!(
             "| {} | {:.4} | {:.4} | {:.4} | {} | {} | {} | {} | {} | {}:{}-{} | {} {} | {} |\n",
             rank + 1,
@@ -525,17 +523,16 @@ fn render_hit_table_aggregated(result: &QueryResult, judgments: &[&RelevanceJudg
     let mut table = String::from(
         "| rank | score | original | vector | bm25 | sources | boosted | boost reason | key | file | entity | in_expected |\n|---:|---:|---:|---:|---:|---|---|---|---|---|---|---|\n",
     );
+    let levels: Vec<Vec<Option<RelevanceLevel>>> = judgments
+        .iter()
+        .map(|judgment| hit_match_levels(judgment, &result.items))
+        .collect();
     for (rank, item) in result.items.iter().enumerate() {
         let bm25 = item
             .bm25_score
             .map(|score| format!("{score:.4}"))
             .unwrap_or_else(|| "-".to_string());
-        let level = judgments
-            .iter()
-            .filter_map(|judgment| {
-                hit_match_level(judgment, &item.file_path, item.start_line, item.end_line)
-            })
-            .max();
+        let level = levels.iter().filter_map(|levels| levels[rank]).max();
         let level = match level {
             Some(RelevanceLevel::Strong) => "strong",
             Some(RelevanceLevel::Related) => "related",

@@ -94,6 +94,21 @@ impl FixtureSpec {
         }
     }
 
+    /// Root directory of the fixture's source tree on disk.
+    ///
+    /// Judgment line ranges are anchored to the on-disk fixture, so tooling
+    /// that verifies them needs the original tree rather than the temporary
+    /// copy a test run works on.
+    pub fn source_root(&self) -> PathBuf {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures")
+            .join(self.category.dir_name());
+        if !self.subdirectory.is_empty() {
+            path = path.join(&self.subdirectory);
+        }
+        path
+    }
+
     /// Rust basic project fixture
     pub fn rust_basic() -> Self {
         Self::new(FixtureCategory::Rust, "basic")

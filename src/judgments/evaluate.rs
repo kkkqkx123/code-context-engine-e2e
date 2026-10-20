@@ -10,7 +10,9 @@ use crate::bench_data::{
     BenchmarkData, ChunkData, QueryType, RelevanceJudgment, RelevanceLevel, compute_bm25_scores,
     cosine_similarity,
 };
-use crate::range_evaluator::{RangeBasedPerQueryScore, RankedScan, is_relevant_to_query};
+use crate::range_evaluator::{
+    RangeBasedPerQueryScore, RankedScan, RetrievedCoverage, coverage_over_retrieved,
+};
 use cce_storage_bm25::TermOperator;
 use cce_types::{TestInfo, TestStatus, segments};
 
@@ -603,6 +605,11 @@ pub fn build_relevance_info(
 /// Build top-k relevance detail rows from an already-ranked chunk list.
 ///
 /// `ranked_indices` must be sorted by score descending.
+///
+/// The rows report the same relation the metrics score: a row counts as a
+/// hit when the chunk contributes to a labeled target the top-k set
+/// recovers. A target may be split across several chunks, so the chunks
+/// carrying the missing parts are the ones that count.
 fn build_relevance_info_ranked(
     baseline: &str,
     query_data: &crate::bench_data::QueryData,
@@ -615,20 +622,33 @@ fn build_relevance_info_ranked(
     let mut strong = Vec::new();
     let mut related = Vec::new();
 
-    for (rank, &idx) in ranked_indices.iter().enumerate().take(top_k) {
-        let Some(chunk) = chunks.get(idx) else {
+    let selected: Vec<(usize, &ChunkData)> = ranked_indices
+        .iter()
+        .enumerate()
+        .take(top_k)
+        .filter_map(|(rank, &idx)| chunks.get(idx).map(|chunk| (rank, chunk)))
+        .collect();
+    let retrieved: Vec<RetrievedCoverage> = selected
+        .iter()
+        .map(|(_, chunk)| RetrievedCoverage {
+            file: crate::bench_data::normalize_path(&chunk.file_path),
+            ranges: chunk.source_ranges.clone(),
+        })
+        .collect();
+    let coverage = coverage_over_retrieved(judgment, &retrieved);
+
+    for (index, (rank, chunk)) in selected.iter().enumerate() {
+        let Some(level) = coverage.level_for(index) else {
             continue;
         };
-        if let Some(level) = is_relevant_to_query(chunk, judgment) {
-            let loc = format!(
-                "{}:{}-{}",
-                chunk.file_path, chunk.start_line, chunk.end_line
-            );
-            match level {
-                RelevanceLevel::Strong => strong.push((rank + 1, loc, level)),
-                RelevanceLevel::Related => related.push((rank + 1, loc, level)),
-                _ => {}
-            }
+        let loc = format!(
+            "{}:{}-{}",
+            chunk.file_path, chunk.start_line, chunk.end_line
+        );
+        match level {
+            RelevanceLevel::Strong => strong.push((rank + 1, loc, level)),
+            RelevanceLevel::Related => related.push((rank + 1, loc, level)),
+            _ => {}
         }
     }
 

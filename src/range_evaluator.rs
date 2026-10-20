@@ -1,16 +1,26 @@
 //! Source-range retrieval evaluation.
 //!
-//! Relevance is determined by source-range overlap. `SourceSpanKind` is a
-//! provenance diagnostic only: a fallback group range still represents a
-//! source fragment and is relevant when it overlaps a labeled source range.
+//! A labeled target is *recovered* when the retrieved items cover its whole
+//! range between them: the retrieval may split a target across several
+//! chunks, and taken together those chunks still carry the target's code.
+//! The coverage of a target is therefore the union of the retrieved items'
+//! source ranges, not the range of any single item.
+//!
+//! An item *contributes* to a target when it covers a part of the target
+//! that no other retrieved item covers. An item that merely repeats code
+//! another item already carries adds nothing to the recovery, so it does
+//! not count towards precision.
+//!
+//! Overlap remains available as a per-item relation and is used for the
+//! diagnostics (first-hit rank, redundant coverage).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::bench_data::{
     ChunkData, ChunkSourceRange, RelevanceJudgment, RelevanceLevel, SourceRange,
 };
 
-/// All relevance targets matched by one retrieved chunk.
+/// All relevance targets a retrieved chunk overlaps.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChunkRelevance {
     pub matched_targets: Vec<(usize, RelevanceLevel)>,
@@ -22,17 +32,214 @@ impl ChunkRelevance {
     }
 }
 
-/// Return every judgment target represented by this chunk.
+/// A retrieved item's claimed source coverage.
+#[derive(Debug, Clone)]
+pub struct RetrievedCoverage {
+    /// Normalized file path of the item.
+    pub file: String,
+    /// The source ranges the item claims to cover.
+    pub ranges: Vec<ChunkSourceRange>,
+}
+
+/// How a set of retrieved items covers the judgment's labeled targets.
+#[derive(Debug, Clone, Default)]
+pub struct TargetCoverage {
+    /// Per labeled target: whether the retrieved items recovered it.
+    pub recovered: Vec<bool>,
+    /// Per retrieved item: the targets the item contributes to.
+    pub contributions: Vec<Vec<(usize, RelevanceLevel)>>,
+}
+
+impl TargetCoverage {
+    /// Highest level a retrieved item contributes to.
+    pub fn level_for(&self, item: usize) -> Option<RelevanceLevel> {
+        self.contributions
+            .get(item)
+            .and_then(|targets| targets.iter().map(|(_, level)| *level).max())
+    }
+}
+
+/// An inclusive line interval inside a labeled range.
+type Interval = (usize, usize);
+
+/// Merge overlapping or touching intervals into a sorted, disjoint list.
+fn merge_intervals(mut intervals: Vec<Interval>) -> Vec<Interval> {
+    intervals.sort_unstable();
+    let mut merged: Vec<Interval> = Vec::with_capacity(intervals.len());
+    for (start, end) in intervals {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
+}
+
+/// Whether the merged intervals cover every line of `[start, end]`.
+fn intervals_cover(intervals: &[(usize, usize)], start: usize, end: usize) -> bool {
+    let mut cursor = start;
+    for (from, to) in intervals {
+        if *from > cursor {
+            return false;
+        }
+        cursor = cursor.max(*to + 1);
+        if cursor > end {
+            return true;
+        }
+    }
+    false
+}
+
+/// The parts of `own` that the merged `others` do not cover.
+fn uncovered(own: &[(usize, usize)], others: &[(usize, usize)]) -> Vec<Interval> {
+    let mut remaining = Vec::new();
+    for (start, end) in own {
+        let mut cursor = *start;
+        for (from, to) in others {
+            if *to < cursor {
+                continue;
+            }
+            if *from > *end {
+                break;
+            }
+            if *from > cursor {
+                remaining.push((cursor, (*from - 1).min(*end)));
+            }
+            cursor = cursor.max(*to + 1);
+            if cursor > *end {
+                break;
+            }
+        }
+        if cursor <= *end {
+            remaining.push((cursor, *end));
+        }
+    }
+    remaining
+}
+
+/// Compute how the retrieved items cover the judgment's labeled targets.
+///
+/// A target is recovered when the items' source ranges together span the
+/// whole labeled range, and an item contributes to a target when it covers a
+/// part of the target no other item covers.
+pub fn coverage_over_retrieved(
+    judgment: &RelevanceJudgment,
+    retrieved: &[RetrievedCoverage],
+) -> TargetCoverage {
+    let range_files: Vec<String> = judgment
+        .relevant_ranges
+        .iter()
+        .map(|(range, _)| normalize_path(&range.file))
+        .collect();
+
+    // Per item, the lines it covers inside each labeled target.
+    let mut covered: Vec<Vec<Vec<Interval>>> = Vec::with_capacity(retrieved.len());
+    for item in retrieved {
+        let mut per_target = Vec::with_capacity(judgment.relevant_ranges.len());
+        for ((range, _), range_file) in judgment.relevant_ranges.iter().zip(&range_files) {
+            if item.file != *range_file {
+                per_target.push(Vec::new());
+                continue;
+            }
+            let mut intervals = Vec::new();
+            for source_range in &item.ranges {
+                if source_range.start_line == 0 || source_range.end_line < source_range.start_line {
+                    continue;
+                }
+                let start = source_range.start_line.max(range.start_line);
+                let end = source_range.end_line.min(range.end_line);
+                if start <= end {
+                    intervals.push((start, end));
+                }
+            }
+            per_target.push(intervals);
+        }
+        covered.push(per_target);
+    }
+
+    // Per target, whether the items together cover the whole range.
+    let mut recovered = vec![false; judgment.relevant_ranges.len()];
+    for (index, (range, _)) in judgment.relevant_ranges.iter().enumerate() {
+        let mut intervals = Vec::new();
+        for per_target in &covered {
+            intervals.extend_from_slice(&per_target[index]);
+        }
+        recovered[index] = intervals_cover(
+            &merge_intervals(intervals),
+            range.start_line,
+            range.end_line,
+        );
+    }
+
+    // Per item, the targets it contributes to.
+    let mut contributions = Vec::with_capacity(retrieved.len());
+    for (item_index, per_target) in covered.iter().enumerate() {
+        let mut hits = Vec::new();
+        for (target_index, intervals) in per_target.iter().enumerate() {
+            if !recovered[target_index] || intervals.is_empty() {
+                continue;
+            }
+            let mut others = Vec::new();
+            for (other_index, other_target) in covered.iter().enumerate() {
+                if other_index == item_index {
+                    continue;
+                }
+                others.extend_from_slice(&other_target[target_index]);
+            }
+            if !uncovered(intervals, &merge_intervals(others)).is_empty() {
+                hits.push((target_index, judgment.relevant_ranges[target_index].1));
+            }
+        }
+        contributions.push(hits);
+    }
+
+    TargetCoverage {
+        recovered,
+        contributions,
+    }
+}
+
+/// Compute how the retrieved chunks cover the judgment's labeled targets.
+pub fn coverage_over_chunks(judgment: &RelevanceJudgment, chunks: &[ChunkData]) -> TargetCoverage {
+    let retrieved: Vec<RetrievedCoverage> = chunks
+        .iter()
+        .map(|chunk| RetrievedCoverage {
+            file: normalize_path(&chunk.file_path),
+            ranges: chunk.source_ranges.clone(),
+        })
+        .collect();
+    coverage_over_retrieved(judgment, &retrieved)
+}
+
+/// Return every judgment target whose range the chunk's source ranges overlap.
+///
+/// Overlap is a per-item relation and says nothing about whether the target
+/// was recovered; the coverage of a whole result set does.
 pub fn relevance_for_chunk(chunk: &ChunkData, judgment: &RelevanceJudgment) -> ChunkRelevance {
-    let chunk_file = normalize_path(&chunk.file_path);
+    relevance_for_ranges(
+        &normalize_path(&chunk.file_path),
+        &chunk.source_ranges,
+        judgment,
+    )
+}
+
+/// Return every judgment target whose range the given source ranges overlap.
+///
+/// The chunk file path must already be normalized; the judgment's own paths
+/// are normalized here so that every caller shares one comparison basis.
+pub fn relevance_for_ranges(
+    chunk_file: &str,
+    chunk_ranges: &[ChunkSourceRange],
+    judgment: &RelevanceJudgment,
+) -> ChunkRelevance {
     let normalized_files: Vec<String> = judgment
         .relevant_ranges
         .iter()
         .map(|(range, _)| normalize_path(&range.file))
         .collect();
     relevance_matches(
-        &chunk_file,
-        &chunk.source_ranges,
+        chunk_file,
+        chunk_ranges,
         &judgment.relevant_ranges,
         &normalized_files,
     )
@@ -187,41 +394,37 @@ pub struct CutoffDiagnostics {
     pub redundant_coverage: usize,
 }
 
-/// Monotonic counters accumulated over a ranked prefix.
-#[derive(Default)]
-struct PrefixCounts {
-    strong_matches: usize,
-    related_matches: usize,
-    any_matches: usize,
-    covered_targets: HashSet<usize>,
-}
-
-impl PrefixCounts {
-    fn accumulate(&mut self, relevance: &ChunkRelevance) {
-        let Some(highest) = relevance.highest_level() else {
-            return;
+fn finalize_range_score(
+    target_levels: &[RelevanceLevel],
+    coverage: &TargetCoverage,
+    top_k: usize,
+    total_chunks: usize,
+) -> RangeBasedPerQueryScore {
+    // Precision counters: an item counts once, classified by the highest
+    // level among the targets it contributes to.
+    let mut strong_matches = 0;
+    let mut related_matches = 0;
+    let mut any_matches = 0;
+    for hits in &coverage.contributions {
+        let Some(highest) = hits.iter().map(|(_, level)| *level).max() else {
+            continue;
         };
-        for (target_index, _) in &relevance.matched_targets {
-            self.covered_targets.insert(*target_index);
-        }
-        self.any_matches += 1;
+        any_matches += 1;
         // The three layer counters are disjoint: a chunk whose highest hit is
         // Strong only counts as strong, one whose highest hit is Related
         // counts as related, so `strong + related == any` always holds.
         match highest {
-            RelevanceLevel::Strong => self.strong_matches += 1,
-            RelevanceLevel::Related => self.related_matches += 1,
+            RelevanceLevel::Strong => strong_matches += 1,
+            RelevanceLevel::Related => related_matches += 1,
             RelevanceLevel::Irrelevant => {}
         }
     }
-}
+    let covered_targets = coverage
+        .recovered
+        .iter()
+        .filter(|recovered| **recovered)
+        .count();
 
-fn finalize_range_score(
-    target_levels: &[RelevanceLevel],
-    counts: &PrefixCounts,
-    top_k: usize,
-    total_chunks: usize,
-) -> RangeBasedPerQueryScore {
     // Unweighted recall: each relevant target counts once toward total and
     // toward coverage, and the two relevance layers are measured separately.
     let exact_recall = |wanted: RelevanceLevel| -> f64 {
@@ -232,14 +435,16 @@ fn finalize_range_score(
         if total == 0 {
             return 0.0;
         }
-        let covered = counts
-            .covered_targets
+        let covered = coverage
+            .recovered
             .iter()
-            .filter(|index| {
-                target_levels
-                    .get(**index)
-                    .map(|level| *level == wanted)
-                    .unwrap_or(false)
+            .enumerate()
+            .filter(|(index, recovered)| {
+                **recovered
+                    && target_levels
+                        .get(*index)
+                        .map(|level| *level == wanted)
+                        .unwrap_or(false)
             })
             .count();
         covered as f64 / total as f64
@@ -247,7 +452,7 @@ fn finalize_range_score(
     let any_recall = if target_levels.is_empty() {
         0.0
     } else {
-        counts.covered_targets.len() as f64 / target_levels.len() as f64
+        covered_targets as f64 / target_levels.len() as f64
     };
 
     let denominator = top_k.min(total_chunks);
@@ -264,25 +469,25 @@ fn finalize_range_score(
     // This keeps the `_r` columns independent of Strong ranking instead of
     // duplicating the `_a` (any) columns.
     let precision_related = {
-        let related_denominator = denominator.saturating_sub(counts.strong_matches);
+        let related_denominator = denominator.saturating_sub(strong_matches);
         if related_denominator == 0 {
             0.0
         } else {
-            counts.related_matches as f64 / related_denominator as f64
+            related_matches as f64 / related_denominator as f64
         }
     };
 
-    let precision_strong = precision(counts.strong_matches);
-    let precision_any = precision(counts.any_matches);
+    let precision_strong = precision(strong_matches);
+    let precision_any = precision(any_matches);
     let recall_strong = exact_recall(RelevanceLevel::Strong);
     let recall_related = exact_recall(RelevanceLevel::Related);
     let recall_any = any_recall;
 
     RangeBasedPerQueryScore {
-        strong_matches: counts.strong_matches,
-        related_matches: counts.related_matches,
-        any_matches: counts.any_matches,
-        total_relevant: counts.covered_targets.len(),
+        strong_matches,
+        related_matches,
+        any_matches,
+        total_relevant: covered_targets,
         precision_strong,
         precision_related,
         precision_any,
@@ -298,17 +503,22 @@ fn finalize_range_score(
 
 /// Single-pass evaluator over an already-ranked chunk list.
 ///
-/// Range-based counters, first-hit positions and redundant-coverage counts
-/// all accumulate monotonically as the scan advances, so one pass over the
-/// ranked prefix (up to the largest requested cutoff) yields the results for
-/// every cutoff. Each `advance` returns the chunk's relevance so callers that
-/// build top-k detail rows do not re-evaluate it. Judgment range paths and
-/// each chunk's file path are normalized once per scan.
+/// The retrieved chunks are accumulated as the scan advances, and the
+/// coverage of the labeled targets is recomputed for every cutoff: whether
+/// a target was recovered depends on all chunks retrieved so far, because
+/// the retrieval may split a target across several chunks.
+///
+/// Overlap-based first-hit positions and redundant-coverage counts
+/// accumulate monotonically, so one pass over the ranked prefix (up to the
+/// largest requested cutoff) yields the results for every cutoff. Each
+/// `advance` returns the chunk's overlap relation so callers that build
+/// top-k detail rows do not re-evaluate it. Judgment range paths and each
+/// chunk's file path are normalized once per scan.
 pub struct RankedScan<'j> {
     judgment: &'j RelevanceJudgment,
     target_levels: Vec<RelevanceLevel>,
     normalized_range_files: Vec<String>,
-    counts: PrefixCounts,
+    retrieved: Vec<RetrievedCoverage>,
     first_hit: Vec<Option<usize>>,
     redundant: usize,
     total_chunks: usize,
@@ -340,7 +550,7 @@ impl<'j> RankedScan<'j> {
                 .iter()
                 .map(|(range, _)| normalize_path(&range.file))
                 .collect(),
-            counts: PrefixCounts::default(),
+            retrieved: Vec::new(),
             first_hit: vec![None; judgment.relevant_ranges.len()],
             redundant: 0,
             total_chunks,
@@ -362,7 +572,10 @@ impl<'j> RankedScan<'j> {
             &self.judgment.relevant_ranges,
             &self.normalized_range_files,
         );
-        self.counts.accumulate(&relevance);
+        self.retrieved.push(RetrievedCoverage {
+            file: chunk_file,
+            ranges: chunk.source_ranges.clone(),
+        });
         for (target, _) in &relevance.matched_targets {
             if self.first_hit[*target].is_none() {
                 self.first_hit[*target] = Some(self.position);
@@ -384,8 +597,9 @@ impl<'j> RankedScan<'j> {
     }
 
     fn snapshot_at(&self, top_k: usize) -> (RangeBasedPerQueryScore, CutoffDiagnostics) {
-        let range =
-            finalize_range_score(&self.target_levels, &self.counts, top_k, self.total_chunks);
+        let prefix = top_k.min(self.retrieved.len());
+        let coverage = coverage_over_retrieved(self.judgment, &self.retrieved[..prefix]);
+        let range = finalize_range_score(&self.target_levels, &coverage, top_k, self.total_chunks);
         let hits: Vec<f64> = self
             .first_hit
             .iter()
@@ -429,7 +643,7 @@ impl<'j> RankedScan<'j> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bench_data::{ChunkSourceRange, QueryType, SourceRange};
+    use crate::bench_data::{QueryType, SourceRange};
 
     fn range(
         start_line: usize,
@@ -462,15 +676,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn group_fallback_range_is_a_source_match() {
-        let judgment = RelevanceJudgment {
+    fn judgment_with(ranges: Vec<(SourceRange, RelevanceLevel)>) -> RelevanceJudgment {
+        RelevanceJudgment {
             id: "coverage".to_string(),
             query_text: "coverage".to_string(),
             query_type: QueryType::Semantic,
             fuzzy_subtype: None,
-            relevant_ranges: vec![range(5, 10, RelevanceLevel::Strong)],
-        };
+            relevant_ranges: ranges,
+        }
+    }
+
+    #[test]
+    fn group_fallback_range_is_a_source_match() {
+        let judgment = judgment_with(vec![range(5, 10, RelevanceLevel::Strong)]);
         let chunk = chunk(
             "group_fallback",
             vec![ChunkSourceRange {
@@ -487,16 +705,10 @@ mod tests {
 
     #[test]
     fn all_overlapping_targets_contribute_to_any_recall() {
-        let judgment = RelevanceJudgment {
-            id: "coverage".to_string(),
-            query_text: "coverage".to_string(),
-            query_type: QueryType::Semantic,
-            fuzzy_subtype: None,
-            relevant_ranges: vec![
-                range(5, 10, RelevanceLevel::Strong),
-                range(30, 35, RelevanceLevel::Related),
-            ],
-        };
+        let judgment = judgment_with(vec![
+            range(5, 10, RelevanceLevel::Strong),
+            range(30, 35, RelevanceLevel::Related),
+        ]);
         let chunk = chunk(
             "exact_entities",
             vec![
@@ -536,13 +748,7 @@ mod tests {
 
     #[test]
     fn strong_only_query_keeps_related_layer_at_zero() {
-        let judgment = RelevanceJudgment {
-            id: "strong-only".to_string(),
-            query_text: "strong-only".to_string(),
-            query_type: QueryType::Qualified,
-            fuzzy_subtype: None,
-            relevant_ranges: vec![range(5, 10, RelevanceLevel::Strong)],
-        };
+        let judgment = judgment_with(vec![range(5, 10, RelevanceLevel::Strong)]);
         let chunks = vec![ranged_chunk(5, 10)];
         let score = evaluate_query_range_based(&judgment, &chunks, &[1.0], 5);
         assert_eq!(score.strong_matches, 1);
@@ -557,16 +763,10 @@ mod tests {
 
     #[test]
     fn related_precision_excludes_strong_slots() {
-        let judgment = RelevanceJudgment {
-            id: "mixed".to_string(),
-            query_text: "mixed".to_string(),
-            query_type: QueryType::Semantic,
-            fuzzy_subtype: None,
-            relevant_ranges: vec![
-                range(5, 10, RelevanceLevel::Strong),
-                range(30, 35, RelevanceLevel::Related),
-            ],
-        };
+        let judgment = judgment_with(vec![
+            range(5, 10, RelevanceLevel::Strong),
+            range(30, 35, RelevanceLevel::Related),
+        ]);
         let chunks = vec![
             ranged_chunk(5, 10),
             ranged_chunk(30, 35),
@@ -582,7 +782,9 @@ mod tests {
         assert_eq!(score.precision_strong, 1.0 / 5.0);
         assert_eq!(score.precision_related, 1.0 / 4.0);
         assert_eq!(score.precision_any, 2.0 / 5.0);
-        assert_ne!(score.precision_related, score.precision_any);
+        assert_eq!(score.recall_strong, 1.0);
+        assert_eq!(score.recall_related, 1.0);
+        assert_eq!(score.recall_any, 1.0);
 
         // Dropping the Related hit separates Related recall from any recall.
         let strong_only = vec![ranged_chunk(5, 10), empty_chunk()];
@@ -596,15 +798,79 @@ mod tests {
 
     #[test]
     fn unavailable_ranges_do_not_use_navigation_span() {
-        let judgment = RelevanceJudgment {
-            id: "coverage".to_string(),
-            query_text: "coverage".to_string(),
-            query_type: QueryType::Semantic,
-            fuzzy_subtype: None,
-            relevant_ranges: vec![range(5, 10, RelevanceLevel::Strong)],
-        };
+        let judgment = judgment_with(vec![range(5, 10, RelevanceLevel::Strong)]);
         let chunk = chunk("unavailable", Vec::new());
 
         assert_eq!(is_relevant_to_query(&chunk, &judgment), None);
+    }
+
+    #[test]
+    fn a_grazing_chunk_does_not_recover_the_target() {
+        let judgment = judgment_with(vec![range(25, 44, RelevanceLevel::Strong)]);
+
+        // The chunk carries one line from inside the target, so it overlaps
+        // the target but does not cover it: the target is not recovered.
+        let grazing = vec![ranged_chunk(30, 30)];
+        let score = evaluate_query_range_based(&judgment, &grazing, &[1.0], 1);
+        assert_eq!(score.total_relevant, 0);
+        assert_eq!(score.recall_strong, 0.0);
+        assert_eq!(score.strong_matches, 0);
+
+        // A chunk that covers the target recovers it.
+        let covering = vec![ranged_chunk(20, 50)];
+        let score = evaluate_query_range_based(&judgment, &covering, &[1.0], 1);
+        assert_eq!(score.total_relevant, 1);
+        assert_eq!(score.recall_strong, 1.0);
+        assert_eq!(score.strong_matches, 1);
+    }
+
+    #[test]
+    fn fragments_that_together_cover_the_target_recover_it() {
+        let judgment = judgment_with(vec![range(25, 44, RelevanceLevel::Strong)]);
+
+        // The retrieval split the target: one chunk carries the first half,
+        // the other the second half. Together they recover it.
+        let chunks = vec![ranged_chunk(25, 34), ranged_chunk(35, 44)];
+        let scores = vec![2.0, 1.0];
+        let score = evaluate_query_range_based(&judgment, &chunks, &scores, 2);
+        assert_eq!(score.total_relevant, 1);
+        assert_eq!(score.recall_strong, 1.0);
+        assert_eq!(score.recall_any, 1.0);
+        assert_eq!(
+            score.strong_matches, 2,
+            "both fragments contribute to the recovery"
+        );
+        assert_eq!(score.any_matches, 2);
+    }
+
+    #[test]
+    fn a_chunk_repeating_covered_code_does_not_contribute() {
+        let judgment = judgment_with(vec![range(25, 44, RelevanceLevel::Strong)]);
+
+        // The first chunk covers the whole target; the second repeats a line
+        // of it and adds nothing to the recovery.
+        let chunks = vec![ranged_chunk(25, 44), ranged_chunk(30, 30)];
+        let scores = vec![2.0, 1.0];
+        let score = evaluate_query_range_based(&judgment, &chunks, &scores, 2);
+        assert_eq!(score.total_relevant, 1);
+        assert_eq!(score.recall_strong, 1.0);
+        assert_eq!(
+            score.strong_matches, 1,
+            "the redundant chunk is not counted as a hit"
+        );
+    }
+
+    #[test]
+    fn coverage_counts_only_the_lines_inside_the_target() {
+        let judgment = judgment_with(vec![range(25, 44, RelevanceLevel::Strong)]);
+
+        // The first chunk covers the first half of the target and a line
+        // beyond it; the second covers the rest.
+        let chunks = vec![ranged_chunk(20, 34), ranged_chunk(35, 50)];
+        let scores = vec![2.0, 1.0];
+        let score = evaluate_query_range_based(&judgment, &chunks, &scores, 2);
+        assert_eq!(score.total_relevant, 1);
+        assert_eq!(score.recall_strong, 1.0);
+        assert_eq!(score.strong_matches, 2);
     }
 }

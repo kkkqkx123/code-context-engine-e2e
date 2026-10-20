@@ -7,8 +7,16 @@
 //! - FZ: Fuzzy queries (15) - lexical perturbations of G1 sources
 //!
 //! All line ranges verified against fixtures/cpp/review/media-server/.
-//! Each range is confined to a single function definition to avoid
-//! chunking boundary issues.
+//!
+//! A labeled range is the ground truth for "this code answers the query".
+//! For every query here the answer is a function definition, so a range
+//! covers exactly one definition: it opens at the definition head, closes
+//! at the matching brace, and contains no second definition. The range is
+//! therefore not narrowed to the declaration line - a chunk that carries no
+//! part of the target would then count as a recovery - and not widened past
+//! the definition, which would credit neighbouring code. The invariant is
+//! enforced against the fixture on disk by the test at the end of this
+//! module.
 
 use crate::bench_data::{QueryType, RelevanceJudgment, RelevanceLevel, SourceRange};
 
@@ -926,4 +934,169 @@ pub fn media_server_relevance_judgments() -> Vec<RelevanceJudgment> {
             )],
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixture::FixtureSpec;
+
+    /// Root of the on-disk fixture the judgments are anchored to.
+    fn fixture_root() -> std::path::PathBuf {
+        FixtureSpec::cpp_media_server().source_root()
+    }
+
+    /// Strip a trailing line comment, keeping string literals intact.
+    fn strip_line_comment(line: &str) -> &str {
+        let bytes = line.as_bytes();
+        let mut in_string = false;
+        let mut index = 0;
+        while index < bytes.len() {
+            match bytes[index] {
+                b'\\' if in_string => index += 1,
+                b'"' => in_string = !in_string,
+                b'/' if !in_string && bytes.get(index + 1) == Some(&b'/') => {
+                    return &line[..index];
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        line
+    }
+
+    /// Whether a source line opens a function definition.
+    ///
+    /// A definition head names the function together with its return type and
+    /// parameter list and does not close the statement. A prototype ends with
+    /// `;` and announces a different entity than the definition it precedes,
+    /// and a call site has no return type, so neither may serve as the anchor
+    /// of a labeled range.
+    fn opens_definition(line: &str) -> bool {
+        const STATEMENT_KEYWORDS: [&str; 10] = [
+            "for", "if", "while", "switch", "return", "else", "do", "sizeof", "catch", "case",
+        ];
+        let text = strip_line_comment(line).trim();
+        if text.is_empty() || text.starts_with('#') || text.starts_with('*') {
+            return false;
+        }
+        if text.ends_with(';') || text.ends_with(',') || text.ends_with('(') {
+            return false;
+        }
+        let open = match text.find('(') {
+            Some(open) => open,
+            None => return false,
+        };
+        if !text[open..].contains(')') {
+            return false;
+        }
+        let head = text[..open].trim();
+        // A return type must precede the function name, so a bare call has
+        // no space before the parameter list.
+        if !head.contains(' ') {
+            return false;
+        }
+        if STATEMENT_KEYWORDS.contains(&head.split_whitespace().next().unwrap_or_default()) {
+            return false;
+        }
+        let name: String = head
+            .chars()
+            .rev()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let name = name.chars().rev().collect::<String>();
+        !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+    }
+
+    /// Every labeled range must cover exactly one function definition.
+    ///
+    /// A labeled range is the ground truth for "this code answers the
+    /// query". Shrinking it to the declaration line would let a chunk that
+    /// carries no part of the target count as a recovery, and widening it
+    /// past the definition would credit neighbouring code. The range is
+    /// therefore pinned to the definition itself: it opens at the definition
+    /// head, closes at the matching brace, and contains no second
+    /// definition. The check runs against the fixture on disk, so a range
+    /// that drifts away from the source is caught here.
+    #[test]
+    fn labeled_ranges_cover_exactly_one_function_definition() {
+        let root = fixture_root();
+        for judgment in media_server_relevance_judgments() {
+            for (range, _) in &judgment.relevant_ranges {
+                let path = root.join(&range.file);
+                assert!(
+                    path.exists(),
+                    "{}: labeled file {} is missing under {}",
+                    judgment.id,
+                    range.file,
+                    root.display()
+                );
+                let source = std::fs::read(&path).unwrap_or_else(|e| {
+                    panic!("{}: reading {} failed: {e}", judgment.id, path.display())
+                });
+                // A few fixture files are not UTF-8 (the repository keeps them
+                // in their original encoding). The structural check only
+                // looks at line structure and ASCII punctuation, so a lossy
+                // decode is enough and keeps the line numbering intact.
+                let source = String::from_utf8_lossy(&source);
+                let lines: Vec<&str> = source.lines().collect();
+                assert!(
+                    range.start_line >= 1 && range.end_line <= lines.len(),
+                    "{}: labeled range {}-{} is outside {} ({} lines)",
+                    judgment.id,
+                    range.start_line,
+                    range.end_line,
+                    range.file,
+                    lines.len()
+                );
+                let body = &lines[range.start_line - 1..range.end_line];
+
+                let head = body[0];
+                assert!(
+                    opens_definition(head),
+                    "{}: {}:{} does not open a function definition: {head:?}",
+                    judgment.id,
+                    range.file,
+                    range.start_line
+                );
+                let tail = body[body.len() - 1];
+                assert_eq!(
+                    tail.trim(),
+                    "}",
+                    "{}: {}:{} must end at the closing brace",
+                    judgment.id,
+                    range.file,
+                    range.end_line
+                );
+                let depth: i32 = body
+                    .iter()
+                    .map(|line| line.matches('{').count() as i32 - line.matches('}').count() as i32)
+                    .sum();
+                assert_eq!(
+                    depth, 0,
+                    "{}: {}:{}-{} has unbalanced braces",
+                    judgment.id, range.file, range.start_line, range.end_line
+                );
+                let nested: Vec<usize> = body
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .filter(|(_, line)| opens_definition(line))
+                    .map(|(index, _)| range.start_line + index)
+                    .collect();
+                assert!(
+                    nested.is_empty(),
+                    "{}: {}:{}-{} must cover a single definition, found another head at {nested:?}",
+                    judgment.id,
+                    range.file,
+                    range.start_line,
+                    range.end_line
+                );
+            }
+        }
+    }
 }
