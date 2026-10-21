@@ -534,6 +534,103 @@ async fn test_plugin_format_parse_proto() {
     assert!(combined.contains("User"));
 }
 
+/// Vocabulary — domain terminology reaches the indexed text.
+///
+/// The plugin contributes a table of media abbreviations; the host appends
+/// the matched expansions to the chunk text, so a query for the expansion
+/// finds the file that only ever spells the abbreviation.
+#[tokio::test]
+async fn test_plugin_vocabulary_reaches_the_index() {
+    init_minimal_logging();
+
+    let registry = registry_with_script(
+        r#"
+plugin = {
+    id = "media_vocabulary_plugin",
+    name = "Media Vocabulary Plugin",
+    version = "1.0.0",
+    capabilities = { "vocabulary" },
+    vocabulary = function()
+        return {
+            { token = "stts", expansion = "sync time-to-sample" }
+        }
+    end
+}
+"#,
+    );
+
+    let fixture = EmptyFixture::new().expect("Failed to create fixture");
+    fixture
+        .add_file(
+            "media.c",
+            "int parse_stts(int count) {\n    int stts = count;\n    return stts;\n}\n",
+        )
+        .expect("Failed to write fixture file");
+
+    let bm25_temp = tempfile::TempDir::new().expect("Failed to create BM25 temp dir");
+    let bm25_path = bm25_temp
+        .path()
+        .to_str()
+        .expect("BM25 path is not valid UTF-8")
+        .to_string();
+    let bm25_config = cce_storage_bm25::Bm25Config::default()
+        .enabled()
+        .with_index_name("default")
+        .with_index_path(&bm25_path);
+    let mut bm25 = cce_storage_bm25::Bm25Client::new(bm25_config);
+    bm25.connect().await.expect("Failed to connect BM25 client");
+    let bm25 = std::sync::Arc::new(bm25);
+
+    let mut index_test = IndexWorkflowTest::new(fixture.into_test_fixture())
+        .with_extensions(vec!["c".to_string()])
+        .with_relations(false)
+        .with_vectors(false)
+        .with_bm25(true)
+        .with_plugin_registry(std::sync::Arc::new(registry))
+        .with_bm25_client(bm25.clone());
+
+    let result = index_test.execute().await.expect("Index failed");
+
+    assert_index_result(
+        &result,
+        ExpectedIndexResult {
+            min_files: Some(1),
+            no_errors: true,
+            ..Default::default()
+        },
+    );
+
+    let manager = bm25
+        .index_manager()
+        .cloned()
+        .expect("BM25 index manager must be available");
+    let manager_guard = manager.read().await;
+    let search_results = cce_storage_bm25::Bm25Retrieval::new()
+        .search(
+            &manager_guard,
+            manager_guard.schema(),
+            "sync time-to-sample",
+            &cce_storage_common::FulltextSearchOptions {
+                limit: 10,
+                offset: 0,
+                field_weights: HashMap::new(),
+                project_id: 1,
+                epochs: Vec::new(),
+                excluded_files: None,
+                exclude_test: false,
+                include_categories: Vec::new(),
+                exclude_categories: Vec::new(),
+                term_operator: Default::default(),
+            },
+        )
+        .expect("BM25 search must succeed");
+
+    assert!(
+        !search_results.is_empty(),
+        "the terminology expansion must be searchable in the BM25 index"
+    );
+}
+
 /// Rerank — plugin reranking of candidates
 #[tokio::test]
 async fn test_plugin_rerank() {
