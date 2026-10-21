@@ -281,6 +281,10 @@ name = "export_cpp"
 path = "examples/cpp/export_cpp.rs"
 
 [[example]]
+name = "dump_media_server"
+path = "examples/cpp/dump_media_server.rs"
+
+[[example]]
 name = "gen_bench_media_server"
 path = "examples/cpp/gen_bench_media_server.rs"
 
