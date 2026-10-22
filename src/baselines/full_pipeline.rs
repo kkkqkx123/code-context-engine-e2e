@@ -1,5 +1,4 @@
 use cce_codegraph::IndexBuilder;
-use cce_orchestrator::index::FileProcessor;
 use cce_parser::ast_to_nl::chunker::{ChunkPath, ChunkedResult};
 use cce_parser::grouper::GroupType;
 use cce_types::{OutputMode, ParsedFile};
@@ -39,7 +38,7 @@ pub async fn gen_full_pipeline_chunks(
     let target_entries = scan_fixture(target_spec.clone())?;
     let dist_entries = scan_fixture(distractor_spec)?;
 
-    let mut processor = FileProcessor::new();
+    let mut processor = crate::bench_gen::file_processor_for(&target_spec);
 
     let mut emb_results: Vec<ChunkedResult> = Vec::new();
     let mut bm25_results: Vec<ChunkedResult> = Vec::new();

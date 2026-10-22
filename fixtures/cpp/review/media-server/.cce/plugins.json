@@ -1,0 +1,12 @@
+{
+  "plugins": [
+    {
+      "id": "media-vocabulary",
+      "path": "./plugins/media_vocabulary.lua",
+      "enabled": true,
+      "description": "Domain terminology for ISO base media file format abbreviations",
+      "file_patterns": ["*.c", "*.cpp", "*.h", "*.hpp"],
+      "capabilities": ["vocabulary"]
+    }
+  ]
+}

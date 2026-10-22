@@ -19,12 +19,12 @@ use std::sync::Arc;
 use cce_codegraph::IndexBuilder;
 use cce_codegraph::index::{EntityIndexOps, RelationQueryOps};
 use cce_orchestrator::export::{DirectExporter, ExportConfig};
-use cce_orchestrator::index::FileProcessor;
 use cce_parser::ast_to_nl::ConversionRequest;
 use cce_parser::ast_to_nl::chunker::ChunkedResult;
 use cce_scanner::{FSScanner, ScanOptions};
 use cce_types::{OutputMode, ParsedFile};
 
+use crate::bench_gen::file_processor_for_root;
 use crate::review_filter::ReviewFilterOptions;
 use crate::structured_output::StructuredOutputWriter;
 use crate::{FixtureSpec, OutputCategory, OutputManager, TestFixture};
@@ -92,7 +92,7 @@ pub async fn export_fixture(
         .scan(&scan_opts)
         .expect("Failed to scan fixture directory");
 
-    let mut file_processor = FileProcessor::new();
+    let mut file_processor = file_processor_for_root(&project_root);
     let mut indexed_files = 0;
     let mut emb_by_file: BTreeMap<String, Vec<ChunkedResult>> = BTreeMap::new();
     let mut bm25_by_file: BTreeMap<String, Vec<ChunkedResult>> = BTreeMap::new();

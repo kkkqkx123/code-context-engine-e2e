@@ -13,6 +13,9 @@ use cce_config::{
     modules::{EmbeddingModelConfig, ProviderConfig},
 };
 use cce_llm_client::OpenAICompatibleProvider;
+use cce_orchestrator::index::FileProcessor;
+use cce_plugin::PluginRegistry;
+use cce_plugin_runtime::FilePluginSource;
 use cce_scanner::{FSScanner, ScanOptions};
 
 pub fn data_dir(baseline: &str, project: &str) -> PathBuf {
@@ -58,11 +61,47 @@ pub fn bm25_doc_records(
 
 pub fn fixture_source_path(spec: FixtureSpec) -> PathBuf {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+
     let mut path = base.join(spec.category.dir_name());
     if !spec.subdirectory.is_empty() {
         path = path.join(&spec.subdirectory);
     }
     path
+}
+
+/// A file processor that mirrors production for a given project root.
+///
+/// The production index loads the project's own plugin registry, so a project
+/// that ships plugins — a domain vocabulary, for instance — indexes the same
+/// way the real project does. A project without a registry keeps the plain
+/// processor.
+pub fn file_processor_for_root(root: &Path) -> FileProcessor {
+    let mut processor = FileProcessor::new();
+    let source = FilePluginSource::from_project(root, None);
+    if !source.registry_path().exists() {
+        return processor;
+    }
+    let mut registry = PluginRegistry::new();
+    match registry.load_source(&source) {
+        Ok(count) if count > 0 => {
+            processor = processor.with_plugin_registry(std::sync::Arc::new(registry));
+        }
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("plugin registry of {} not loaded: {e}", root.display());
+        }
+    }
+    processor
+}
+
+/// A file processor that mirrors production for a fixture.
+///
+/// The production index loads the project's own plugin registry, so a fixture
+/// that ships plugins — a domain vocabulary, for instance — indexes the same
+/// way the real project does. A fixture without a registry keeps the plain
+/// processor.
+pub fn file_processor_for(spec: &FixtureSpec) -> FileProcessor {
+    file_processor_for_root(&fixture_source_path(spec.clone()))
 }
 
 pub fn collect_files_by_ext(
