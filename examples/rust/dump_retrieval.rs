@@ -80,7 +80,7 @@ fn format_ranked_output(
 
         let content = chunk_texts[*c_idx].as_str();
         let preview: &str = if content.len() > 200 {
-            &content[..200]
+            cce_utils::truncate_to_byte_len(content, 200)
         } else {
             content
         };

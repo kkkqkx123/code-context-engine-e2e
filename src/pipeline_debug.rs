@@ -76,7 +76,10 @@ impl PipelineDebugExporter {
             .map(|d| {
                 let trimmed = d.trim();
                 if trimmed.len() > 60 {
-                    format!("{}...", &trimmed[..57])
+                    format!(
+                        "{}...",
+                        cce_utils::truncate_to_byte_len(trimmed, 57)
+                    )
                 } else {
                     trimmed.to_string()
                 }
@@ -378,7 +381,10 @@ impl PipelineDebugExporter {
     fn truncate_line(text: &str, max: usize) -> String {
         let line = text.lines().next().unwrap_or(text);
         if line.len() > max {
-            format!("{}...", &line[..max - 3])
+            format!(
+                "{}...",
+                cce_utils::truncate_to_byte_len(line, max.saturating_sub(3))
+            )
         } else {
             line.to_string()
         }
