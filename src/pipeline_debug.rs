@@ -76,10 +76,7 @@ impl PipelineDebugExporter {
             .map(|d| {
                 let trimmed = d.trim();
                 if trimmed.len() > 60 {
-                    format!(
-                        "{}...",
-                        cce_utils::truncate_to_byte_len(trimmed, 57)
-                    )
+                    format!("{}...", cce_utils::truncate_to_byte_len(trimmed, 57))
                 } else {
                     trimmed.to_string()
                 }
