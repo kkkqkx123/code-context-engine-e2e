@@ -608,9 +608,15 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             client
         } else {
             // Fallback: create standalone BM25 (no index data)
-            let bm25_config = Bm25Config::default().enabled().with_index_name("default");
+            let bm25_temp_dir = TempDir::new().expect("bm25 temp dir");
+            let bm25_path = bm25_temp_dir.path().to_string_lossy().to_string();
+            let bm25_config = Bm25Config::default()
+                .enabled()
+                .with_index_name("default")
+                .with_index_path(&bm25_path);
             let mut bm25 = cce_storage_bm25::Bm25Client::new(bm25_config);
             bm25.connect().await.expect("Failed to connect BM25 client");
+            self._bm25_temp_dir = Some(bm25_temp_dir);
             Arc::new(bm25)
         };
 
