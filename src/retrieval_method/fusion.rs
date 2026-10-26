@@ -41,6 +41,13 @@ use cce_types::EntityId;
 /// chunk id. `(file_path, entity_name)` was previously used as an approximate
 /// proxy; this is replaced by the real entity/segment ids from the chunker.
 pub fn alignment_key(chunk: &ChunkData) -> String {
+    // Code chunks that lost entity attribution (empty entity_ids) must not
+    // collapse onto a shared segment key: use the chunk id instead so each
+    // chunk survives as its own alignment entry. Document/plain-text chunks
+    // keep using the segment id.
+    if chunk.entity_ids.is_empty() && chunk.language.is_some() {
+        return format!("c:{}", chunk.chunk_id);
+    }
     let entity_ids: Vec<EntityId> = chunk
         .entity_ids
         .iter()
@@ -117,6 +124,12 @@ pub struct FusedEntry {
 /// top-k — the regression that made single-path rows diverge from the
 /// baseline.)
 pub fn dedup_ranked(ranked: &[(usize, f64)]) -> Vec<(usize, f64)> {
+    // Dedup by chunk index. Within a single path's ranked list each index
+    // maps to exactly one chunk (and thus one chunk id), so index-based
+    // dedup is equivalent to chunk-id-based dedup and avoids needing the
+    // chunks slice here. If the input ever stops being a 1:1 index->chunk
+    // mapping, switch this to a chunk-id key by threading the chunks slice
+    // through the call sites.
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for &(idx, score) in ranked {

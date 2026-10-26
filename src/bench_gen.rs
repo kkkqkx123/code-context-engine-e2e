@@ -76,6 +76,12 @@ pub fn fixture_source_path(spec: FixtureSpec) -> PathBuf {
 /// way the real project does. A project without a registry keeps the plain
 /// processor.
 pub fn file_processor_for_root(root: &Path) -> FileProcessor {
+    // Benchmark/controlled mode: skip fixture plugin auto-loading when
+    // CCE_BENCH_DISABLE_PLUGINS is set, so text distribution stays fixed
+    // across fixtures.
+    if std::env::var("CCE_BENCH_DISABLE_PLUGINS").as_deref() == Ok("1") {
+        return FileProcessor::new();
+    }
     let mut processor = FileProcessor::new();
     let source = FilePluginSource::from_project(root, None);
     if !source.registry_path().exists() {
