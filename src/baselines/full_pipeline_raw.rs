@@ -117,7 +117,16 @@ fn extract_raw_source(
         )
     });
     let lines: Vec<&str> = source.lines().collect();
-    let ranges = chunk.metadata.source_ranges();
+    // GroupFallback chunks carry no *exact* entity ranges, but the merge
+    // pass still records the concrete source spans it combined (see
+    // `merge_source_coverage`). Raw-source extraction needs bytes, not
+    // precision, so those recorded spans are used directly here; only when
+    // nothing was recorded do we fall back to the enclosing span.
+    let ranges: &[cce_types::Span] = if !chunk.metadata.source_ranges.is_empty() {
+        &chunk.metadata.source_ranges
+    } else {
+        std::slice::from_ref(&chunk.metadata.source_span)
+    };
     let mut parts: Vec<String> = Vec::new();
     for span in ranges {
         let (start, end) = match span.line_range_opt() {
@@ -133,9 +142,9 @@ fn extract_raw_source(
     let raw = parts.join("\n");
 
     // The raw baseline must contain only raw source. An empty extraction
-    // means the chunk carries no source coverage (GroupFallback/Unavailable)
-    // — an upstream chunking invariant violation that must fail loudly, never
-    // silently substitute NL text.
+    // means the chunk carries no source span at all (Unavailable with no
+    // recorded ranges) — an upstream chunking invariant violation that must
+    // fail loudly, never silently substitute NL text.
     assert!(
         !raw.trim().is_empty(),
         "raw-source extraction: chunk has no source coverage: file={} chunk_id={} entity={}",
