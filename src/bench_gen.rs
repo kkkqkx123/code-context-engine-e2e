@@ -76,10 +76,11 @@ pub fn fixture_source_path(spec: FixtureSpec) -> PathBuf {
 /// way the real project does. A project without a registry keeps the plain
 /// processor.
 pub fn file_processor_for_root(root: &Path) -> FileProcessor {
-    // Benchmark/controlled mode: skip fixture plugin auto-loading when
-    // CCE_BENCH_DISABLE_PLUGINS is set, so text distribution stays fixed
-    // across fixtures.
-    if std::env::var("CCE_BENCH_DISABLE_PLUGINS").as_deref() == Ok("1") {
+    // Benchmark baselines must reflect the true retrieval level without any
+    // domain vocabulary injection. Plugin auto-loading is therefore disabled
+    // by default; set CCE_BENCH_ENABLE_PLUGINS=1 to opt into the production
+    // plugin registry for a separate vocabulary baseline.
+    if std::env::var("CCE_BENCH_ENABLE_PLUGINS").as_deref() != Ok("1") {
         return FileProcessor::new();
     }
     let mut processor = FileProcessor::new();
