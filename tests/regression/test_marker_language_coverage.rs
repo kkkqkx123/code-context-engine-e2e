@@ -23,7 +23,7 @@ use cce_e2e_tests::bench_data::{
 use cce_e2e_tests::bench_gen::chunk_data_from_result;
 use cce_e2e_tests::direct_chunker::EntityChunker;
 use cce_e2e_tests::judgments::evaluate::{
-    EvalVariant, TestDiagnostics, collect_test_diagnostics, evaluate_bm25,
+    EvalVariant, RangeMode, TestDiagnostics, collect_test_diagnostics, evaluate_bm25,
 };
 use cce_parser::ast_to_nl::chunker::ChunkedResult;
 
@@ -431,6 +431,7 @@ fn test_no_test_variant_filtering_and_diagnostics() {
         &mut no_test_results,
         &mut no_test_relevance,
         EvalVariant::NoTest,
+        RangeMode::Precise,
     );
     assert!(
         !no_test_results.is_empty(),

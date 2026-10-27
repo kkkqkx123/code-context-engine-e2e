@@ -9,6 +9,7 @@ pub mod assertion;
 pub mod baselines;
 pub mod bench_data;
 pub mod bench_gen;
+pub mod benchmark_runner;
 pub mod bm25_parameter_benchmark;
 pub mod cleanup;
 pub mod direct_chunker;

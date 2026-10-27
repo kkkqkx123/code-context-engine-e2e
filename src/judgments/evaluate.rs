@@ -7,9 +7,25 @@
 use std::collections::HashMap;
 
 use crate::bench_data::{
-    BenchmarkData, ChunkData, QueryType, RelevanceJudgment, RelevanceLevel, compute_bm25_scores,
-    cosine_similarity,
+    BenchmarkData, ChunkData, ChunkSourceRange, QueryType, RelevanceJudgment, RelevanceLevel,
+    compute_bm25_scores, cosine_similarity,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangeMode {
+    Precise,
+    GroupFilled,
+}
+
+impl RangeMode {
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Self::Precise => "",
+            Self::GroupFilled => "_group",
+        }
+    }
+}
+
 use crate::range_evaluator::{
     RangeBasedPerQueryScore, RankedScan, RetrievedCoverage, coverage_over_retrieved,
 };
@@ -301,6 +317,7 @@ fn evaluate_variant_query(
     chunks: &[ChunkData],
     scores: &[f64],
     variant: EvalVariant,
+    group_level: bool,
     out: &mut VariantEvaluation,
 ) {
     let mut ranked: Vec<usize> = (0..chunks.len()).collect();
@@ -308,8 +325,12 @@ fn evaluate_variant_query(
 
     let max_cutoff = TOP_K_VALUES.iter().copied().max().unwrap_or(0);
     let mut scan = RankedScan::new(judgment, TOP_K_VALUES, chunks.len());
+    let mut seen_segments = std::collections::HashSet::new();
     for &index in ranked.iter().take(max_cutoff) {
         if let Some(chunk) = chunks.get(index) {
+            if group_level && !chunk.segment_id.is_empty() && !seen_segments.insert(chunk.segment_id.clone()) {
+                continue;
+            }
             scan.advance(chunk);
         }
     }
@@ -339,6 +360,42 @@ fn evaluate_variant_query(
     ));
 }
 
+
+pub fn group_span_map(chunks: &[ChunkData]) -> std::collections::HashMap<String, (usize, usize)> {
+    use std::collections::HashMap;
+    let mut min_map: HashMap<String, usize> = HashMap::new();
+    let mut max_map: HashMap<String, usize> = HashMap::new();
+    for chunk in chunks {
+        if chunk.start_line == 0 {
+            continue;
+        }
+        let min_entry = min_map.entry(chunk.segment_id.clone()).or_insert(chunk.start_line);
+        *min_entry = (*min_entry).min(chunk.start_line);
+        let max_entry = max_map.entry(chunk.segment_id.clone()).or_insert(chunk.end_line);
+        *max_entry = (*max_entry).max(chunk.end_line);
+    }
+    let mut out = HashMap::new();
+    for (seg, &mn) in &min_map {
+        if let Some(&mx) = max_map.get(seg) {
+            if mx >= mn {
+                out.insert(seg.clone(), (mn, mx));
+            }
+        }
+    }
+    out
+}
+
+pub fn group_filled_chunk(chunk: &ChunkData, spans: &std::collections::HashMap<String, (usize, usize)>) -> ChunkData {
+    let mut filled = chunk.clone();
+    if let Some(&(mn, mx)) = spans.get(&chunk.segment_id) {
+        filled.source_ranges = vec![ChunkSourceRange {
+            start_line: mn,
+            end_line: mx,
+        }];
+    }
+    filled
+}
+
 pub fn evaluate_embedding(
     baseline: &str,
     bench: &BenchmarkData,
@@ -346,6 +403,7 @@ pub fn evaluate_embedding(
     results: &mut Vec<BaselineResult>,
     relevance: &mut Vec<RelevanceInfo>,
     variant: EvalVariant,
+    range_mode: RangeMode,
 ) {
     let dim = bench.embedding.dimension as usize;
     if dim == 0 || bench.embedding.vectors.is_empty() {
@@ -354,8 +412,21 @@ pub fn evaluate_embedding(
     let n_chunks = bench.embedding.vectors.len() / dim;
     let n_queries = bench.embedding.query_vectors.len() / dim;
 
-    let (chunk_indices, filtered_chunks) =
-        select_chunks(&bench.embedding.chunks[..n_chunks], variant);
+    let group_level = matches!(range_mode, RangeMode::GroupFilled);
+    let spans = if group_level {
+        group_span_map(&bench.embedding.chunks[..n_chunks])
+    } else {
+        std::collections::HashMap::new()
+    };
+    let source_chunks: Vec<ChunkData> = match range_mode {
+        RangeMode::Precise => bench.embedding.chunks[..n_chunks].to_vec(),
+        RangeMode::GroupFilled => bench.embedding.chunks[..n_chunks]
+            .iter()
+            .map(|c| group_filled_chunk(c, &spans))
+            .collect(),
+    };
+
+    let (chunk_indices, filtered_chunks) = select_chunks(&source_chunks, variant);
     let mut out = VariantEvaluation::default();
 
     for q_idx in 0..bench.queries.len().min(n_queries) {
@@ -374,14 +445,16 @@ pub fn evaluate_embedding(
             })
             .collect();
 
+        let retriever = format!("emb{}", range_mode.suffix());
         evaluate_variant_query(
             baseline,
             query_data,
-            "emb",
+            &retriever,
             judgment,
             &filtered_chunks,
             &scores,
             variant,
+            group_level,
             &mut out,
         );
     }
@@ -398,6 +471,7 @@ pub fn evaluate_embedding_variants(
     baseline: &str,
     bench: &BenchmarkData,
     judgments: &[RelevanceJudgment],
+    range_mode: RangeMode,
 ) -> PathFilterEvaluations {
     let dim = bench.embedding.dimension as usize;
     if dim == 0 || bench.embedding.vectors.is_empty() {
@@ -406,10 +480,24 @@ pub fn evaluate_embedding_variants(
     let n_chunks = bench.embedding.vectors.len() / dim;
     let n_queries = bench.embedding.query_vectors.len() / dim;
 
-    let all_chunks: Vec<ChunkData> = bench.embedding.chunks[..n_chunks].to_vec();
+    let group_level = matches!(range_mode, RangeMode::GroupFilled);
+    let spans = if group_level {
+        group_span_map(&bench.embedding.chunks[..n_chunks])
+    } else {
+        std::collections::HashMap::new()
+    };
+    let all_chunks: Vec<ChunkData> = match range_mode {
+        RangeMode::Precise => bench.embedding.chunks[..n_chunks].to_vec(),
+        RangeMode::GroupFilled => bench.embedding.chunks[..n_chunks]
+            .iter()
+            .map(|c| group_filled_chunk(c, &spans))
+            .collect(),
+    };
     let (no_test_indices, no_test_chunks) = select_chunks(&all_chunks, EvalVariant::NoTest);
     let (impl_only_indices, impl_only_chunks) = select_chunks(&all_chunks, EvalVariant::ImplOnly);
     let mut evaluations = PathFilterEvaluations::default();
+
+    let retriever = format!("emb{}", range_mode.suffix());
 
     for q_idx in 0..bench.queries.len().min(n_queries) {
         let query_data = &bench.queries[q_idx];
@@ -429,33 +517,36 @@ pub fn evaluate_embedding_variants(
         evaluate_variant_query(
             baseline,
             query_data,
-            "emb",
+            &retriever,
             judgment,
             &all_chunks,
             &scores,
             EvalVariant::All,
+            group_level,
             &mut evaluations.all,
         );
         let no_test_scores: Vec<f64> = no_test_indices.iter().map(|&i| scores[i]).collect();
         evaluate_variant_query(
             baseline,
             query_data,
-            "emb",
+            &retriever,
             judgment,
             &no_test_chunks,
             &no_test_scores,
             EvalVariant::NoTest,
+            group_level,
             &mut evaluations.no_test,
         );
         let impl_only_scores: Vec<f64> = impl_only_indices.iter().map(|&i| scores[i]).collect();
         evaluate_variant_query(
             baseline,
             query_data,
-            "emb",
+            &retriever,
             judgment,
             &impl_only_chunks,
             &impl_only_scores,
             EvalVariant::ImplOnly,
+            group_level,
             &mut evaluations.impl_only,
         );
     }
@@ -470,14 +561,31 @@ pub fn evaluate_bm25(
     results: &mut Vec<BaselineResult>,
     relevance: &mut Vec<RelevanceInfo>,
     variant: EvalVariant,
+    range_mode: RangeMode,
 ) {
     if bench.bm25_documents.is_empty() {
         return;
     }
     let bm25_scores = bm25_scores_for_bench(bench);
 
-    let (chunk_indices, filtered_chunks) = select_chunks(&bench.bm25.chunks, variant);
+    let group_level = matches!(range_mode, RangeMode::GroupFilled);
+    let spans = if group_level {
+        group_span_map(&bench.bm25.chunks)
+    } else {
+        std::collections::HashMap::new()
+    };
+    let source_chunks: Vec<ChunkData> = match range_mode {
+        RangeMode::Precise => bench.bm25.chunks.clone(),
+        RangeMode::GroupFilled => bench.bm25.chunks
+            .iter()
+            .map(|c| group_filled_chunk(c, &spans))
+            .collect(),
+    };
+
+    let (chunk_indices, filtered_chunks) = select_chunks(&source_chunks, variant);
     let mut out = VariantEvaluation::default();
+
+    let retriever = format!("BM25{}", range_mode.suffix());
 
     for (q_idx, scores) in bm25_scores
         .iter()
@@ -493,11 +601,12 @@ pub fn evaluate_bm25(
         evaluate_variant_query(
             baseline,
             query_data,
-            "BM25",
+            &retriever,
             judgment,
             &filtered_chunks,
             &filtered_scores,
             variant,
+            group_level,
             &mut out,
         );
     }
@@ -514,17 +623,34 @@ pub fn evaluate_bm25_variants(
     baseline: &str,
     bench: &BenchmarkData,
     judgments: &[RelevanceJudgment],
+    range_mode: RangeMode,
 ) -> PathFilterEvaluations {
     if bench.bm25_documents.is_empty() {
         return PathFilterEvaluations::default();
     }
     let bm25_scores = bm25_scores_for_bench(bench);
 
-    let (_, all_chunks) = select_chunks(&bench.bm25.chunks, EvalVariant::All);
-    let (no_test_indices, no_test_chunks) = select_chunks(&bench.bm25.chunks, EvalVariant::NoTest);
+    let group_level = matches!(range_mode, RangeMode::GroupFilled);
+    let spans = if group_level {
+        group_span_map(&bench.bm25.chunks)
+    } else {
+        std::collections::HashMap::new()
+    };
+    let source_chunks: Vec<ChunkData> = match range_mode {
+        RangeMode::Precise => bench.bm25.chunks.clone(),
+        RangeMode::GroupFilled => bench.bm25.chunks
+            .iter()
+            .map(|c| group_filled_chunk(c, &spans))
+            .collect(),
+    };
+
+    let (_, all_chunks) = select_chunks(&source_chunks, EvalVariant::All);
+    let (no_test_indices, no_test_chunks) = select_chunks(&source_chunks, EvalVariant::NoTest);
     let (impl_only_indices, impl_only_chunks) =
-        select_chunks(&bench.bm25.chunks, EvalVariant::ImplOnly);
+        select_chunks(&source_chunks, EvalVariant::ImplOnly);
     let mut evaluations = PathFilterEvaluations::default();
+
+    let retriever = format!("BM25{}", range_mode.suffix());
 
     for (q_idx, scores) in bm25_scores
         .iter()
@@ -540,33 +666,36 @@ pub fn evaluate_bm25_variants(
         evaluate_variant_query(
             baseline,
             query_data,
-            "BM25",
+            &retriever,
             judgment,
             &all_chunks,
             &all_scores,
             EvalVariant::All,
+            group_level,
             &mut evaluations.all,
         );
         let no_test_scores: Vec<f64> = no_test_indices.iter().map(|&i| scores[i]).collect();
         evaluate_variant_query(
             baseline,
             query_data,
-            "BM25",
+            &retriever,
             judgment,
             &no_test_chunks,
             &no_test_scores,
             EvalVariant::NoTest,
+            group_level,
             &mut evaluations.no_test,
         );
         let impl_only_scores: Vec<f64> = impl_only_indices.iter().map(|&i| scores[i]).collect();
         evaluate_variant_query(
             baseline,
             query_data,
-            "BM25",
+            &retriever,
             judgment,
             &impl_only_chunks,
             &impl_only_scores,
             EvalVariant::ImplOnly,
+            group_level,
             &mut evaluations.impl_only,
         );
     }
