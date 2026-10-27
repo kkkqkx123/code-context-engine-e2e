@@ -399,3 +399,7 @@ path = "examples/csharp/relation_review_mediatr.rs"
 [[example]]
 name = "relation_review_media_server"
 path = "examples/cpp/relation_review_media_server.rs"
+
+[[example]]
+name = "dbg_group_shape"
+path = "examples/python/dbg_group_shape.rs"

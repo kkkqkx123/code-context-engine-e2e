@@ -5,7 +5,8 @@ use cce_e2e_tests::judgments::evaluate::{
 };
 use cce_e2e_tests::judgments::report::{
     generate_evaluation_scope_csv, print_console_summary, write_aggregate_reports,
-    write_relevance_reports, write_run_manifest, write_test_diagnostics,
+    write_chunk_shape_diagnostics, write_relevance_reports, write_run_manifest,
+    write_test_diagnostics,
 };
 use cce_e2e_tests::judgments::ripgrep::ripgrep_relevance_judgments;
 
@@ -92,6 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     write_aggregate_reports(&out, &all_results, &no_test_results, &impl_only_results)?;
     write_test_diagnostics(&out, &all_bench)?;
+    write_chunk_shape_diagnostics(&out, &all_bench)?;
     write_relevance_reports(
         &out,
         &all_relevance,

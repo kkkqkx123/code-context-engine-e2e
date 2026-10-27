@@ -575,6 +575,107 @@ pub fn write_test_diagnostics(
     Ok(())
 }
 
+/// Chunk-shape statistics for one retriever path.
+struct ChunkShape {
+    chunks: usize,
+    empty_ranges: usize,
+    shared_range_chunks: usize,
+    largest_range_group: usize,
+    duplicate_texts: usize,
+}
+
+/// Range signature of a chunk: its file plus its sorted coverage ranges.
+///
+/// Two chunks with the same signature claim exactly the same source lines, so
+/// at most one of them can contribute unique coverage to a query.
+fn range_signature(chunk: &crate::bench_data::ChunkData) -> String {
+    let mut parts: Vec<String> = chunk
+        .source_ranges
+        .iter()
+        .map(|range| format!("{}-{}", range.start_line, range.end_line))
+        .collect();
+    parts.sort();
+    format!("{}|{}", chunk.file_path, parts.join(","))
+}
+
+fn chunk_shape(chunks: &[crate::bench_data::ChunkData], texts: &[String]) -> ChunkShape {
+    let mut signatures: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut empty_ranges = 0;
+    for chunk in chunks {
+        if chunk.source_ranges.is_empty() {
+            empty_ranges += 1;
+            continue;
+        }
+        *signatures.entry(range_signature(chunk)).or_insert(0) += 1;
+    }
+    let shared_range_chunks: usize = signatures.values().filter(|count| **count > 1).sum();
+    let largest_range_group = signatures.values().copied().max().unwrap_or(0);
+
+    let mut text_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for text in texts {
+        *text_counts.entry(text.as_str()).or_insert(0) += 1;
+    }
+    let duplicate_texts: usize = text_counts.values().filter(|count| **count > 1).sum();
+
+    ChunkShape {
+        chunks: chunks.len(),
+        empty_ranges,
+        shared_range_chunks,
+        largest_range_group,
+        duplicate_texts,
+    }
+}
+
+/// Write chunk-shape diagnostics: how many chunks claim a source range no
+/// other chunk claims, and how many repeat another chunk's text.
+///
+/// A range shared by many chunks makes precision collapse even when recall
+/// holds: the chunks cover each other, so none of them contributes unique
+/// coverage. Repeated text is the same problem stated in the retrieval path.
+pub fn write_chunk_shape_diagnostics(
+    base: &Path,
+    all_bench: &[(String, BenchmarkData)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = base.join("chunk_shape_diagnostics.md");
+    let mut f = File::create(&path)?;
+
+    let headers = &[
+        "baseline",
+        "retriever",
+        "chunks",
+        "empty_ranges",
+        "shared_range_chunks",
+        "shared_range_share",
+        "largest_range_group",
+        "duplicate_texts",
+        "duplicate_text_share",
+    ];
+    let mut rows = Vec::new();
+    for (baseline, bench) in all_bench {
+        for (retriever, chunks, texts) in [
+            ("embedding", &bench.embedding.chunks, &bench.embedding.texts),
+            ("bm25", &bench.bm25.chunks, &bench.bm25.texts),
+        ] {
+            let shape = chunk_shape(chunks, texts);
+            let total = shape.chunks.max(1) as f64;
+            rows.push(vec![
+                baseline.clone(),
+                retriever.to_string(),
+                format!("{}", shape.chunks),
+                format!("{}", shape.empty_ranges),
+                format!("{}", shape.shared_range_chunks),
+                format!("{:.3}", shape.shared_range_chunks as f64 / total),
+                format!("{}", shape.largest_range_group),
+                format!("{}", shape.duplicate_texts),
+                format!("{:.3}", shape.duplicate_texts as f64 / total),
+            ]);
+        }
+    }
+
+    write_md_table(&mut f, headers, &rows)?;
+    Ok(())
+}
+
 /// Write top-5 relevance detail rows for every evaluation variant.
 ///
 /// The `impl_only` variant is the primary observability source; `no_test`

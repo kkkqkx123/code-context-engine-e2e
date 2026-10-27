@@ -14,7 +14,7 @@ use crate::range_evaluator::{
     RangeBasedPerQueryScore, RankedScan, RetrievedCoverage, coverage_over_retrieved,
 };
 use cce_storage_bm25::TermOperator;
-use cce_types::{TestInfo, TestStatus, segments};
+use cce_types::{TestStatus, segments};
 
 pub const BASELINES: &[&str] = &[
     "full_pipeline",
@@ -92,12 +92,10 @@ pub struct FileDocumentationMetric {
 /// is `Unknown`, fall back to the per-language path rules derived from the
 /// chunk's language — never default to `Test`.
 pub fn is_test_chunk(chunk: &ChunkData) -> bool {
-    match chunk.test_info.status {
-        TestStatus::Test => true,
-        TestStatus::Unknown => {
-            TestInfo::from_path(chunk.language.as_ref(), &chunk.file_path).is_test()
-        }
-    }
+    // Only chunks explicitly marked as test code (AST or path level) count
+    // as test. An `Unknown` marker means no test signal was found, so the
+    // chunk is treated as non-test rather than re-derived from the path.
+    chunk.test_info.status == TestStatus::Test
 }
 
 const EXAMPLE_DIR_SEGMENTS: [&str; 4] = ["examples", "example", "samples", "sample"];
@@ -845,6 +843,7 @@ impl BenchmarkPaths {
 mod tests {
     use super::*;
     use crate::bench_data::{ChunkSourceRange, QueryData};
+    use cce_types::TestInfo;
 
     fn chunk(chunk_id: &str) -> ChunkData {
         ChunkData {
