@@ -39,10 +39,7 @@ fn report(label: &str, chunks: &GeneratedChunks) {
     }
     let mut histogram: Vec<_> = histogram.into_iter().collect();
     histogram.sort();
-    println!(
-        "groups: {} | size histogram: {histogram:?}",
-        groups.len()
-    );
+    println!("groups: {} | size histogram: {histogram:?}", groups.len());
 
     let mut text_bytes = 0usize;
     let mut covered_lines = 0usize;

@@ -328,7 +328,10 @@ fn evaluate_variant_query(
     let mut seen_segments = std::collections::HashSet::new();
     for &index in ranked.iter().take(max_cutoff) {
         if let Some(chunk) = chunks.get(index) {
-            if group_level && !chunk.segment_id.is_empty() && !seen_segments.insert(chunk.segment_id.clone()) {
+            if group_level
+                && !chunk.segment_id.is_empty()
+                && !seen_segments.insert(chunk.segment_id.clone())
+            {
                 continue;
             }
             scan.advance(chunk);
@@ -360,7 +363,6 @@ fn evaluate_variant_query(
     ));
 }
 
-
 pub fn group_span_map(chunks: &[ChunkData]) -> std::collections::HashMap<String, (usize, usize)> {
     use std::collections::HashMap;
     let mut min_map: HashMap<String, usize> = HashMap::new();
@@ -369,9 +371,13 @@ pub fn group_span_map(chunks: &[ChunkData]) -> std::collections::HashMap<String,
         if chunk.start_line == 0 {
             continue;
         }
-        let min_entry = min_map.entry(chunk.segment_id.clone()).or_insert(chunk.start_line);
+        let min_entry = min_map
+            .entry(chunk.segment_id.clone())
+            .or_insert(chunk.start_line);
         *min_entry = (*min_entry).min(chunk.start_line);
-        let max_entry = max_map.entry(chunk.segment_id.clone()).or_insert(chunk.end_line);
+        let max_entry = max_map
+            .entry(chunk.segment_id.clone())
+            .or_insert(chunk.end_line);
         *max_entry = (*max_entry).max(chunk.end_line);
     }
     let mut out = HashMap::new();
@@ -385,7 +391,10 @@ pub fn group_span_map(chunks: &[ChunkData]) -> std::collections::HashMap<String,
     out
 }
 
-pub fn group_filled_chunk(chunk: &ChunkData, spans: &std::collections::HashMap<String, (usize, usize)>) -> ChunkData {
+pub fn group_filled_chunk(
+    chunk: &ChunkData,
+    spans: &std::collections::HashMap<String, (usize, usize)>,
+) -> ChunkData {
     let mut filled = chunk.clone();
     if let Some(&(mn, mx)) = spans.get(&chunk.segment_id) {
         filled.source_ranges = vec![ChunkSourceRange {
@@ -576,7 +585,9 @@ pub fn evaluate_bm25(
     };
     let source_chunks: Vec<ChunkData> = match range_mode {
         RangeMode::Precise => bench.bm25.chunks.clone(),
-        RangeMode::GroupFilled => bench.bm25.chunks
+        RangeMode::GroupFilled => bench
+            .bm25
+            .chunks
             .iter()
             .map(|c| group_filled_chunk(c, &spans))
             .collect(),
@@ -638,7 +649,9 @@ pub fn evaluate_bm25_variants(
     };
     let source_chunks: Vec<ChunkData> = match range_mode {
         RangeMode::Precise => bench.bm25.chunks.clone(),
-        RangeMode::GroupFilled => bench.bm25.chunks
+        RangeMode::GroupFilled => bench
+            .bm25
+            .chunks
             .iter()
             .map(|c| group_filled_chunk(c, &spans))
             .collect(),

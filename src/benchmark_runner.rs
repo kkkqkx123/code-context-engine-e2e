@@ -3,8 +3,8 @@
 use crate::bench_data::{BenchmarkData, EvaluationScope, RelevanceJudgment, load_benchmark_data};
 use crate::judgments::evaluate::RelevanceInfo;
 use crate::judgments::evaluate::{
-    BASELINES, BaselineResult, BenchmarkPaths, evaluate_bm25_variants, evaluate_embedding_variants,
-    RangeMode,
+    BASELINES, BaselineResult, BenchmarkPaths, RangeMode, evaluate_bm25_variants,
+    evaluate_embedding_variants,
 };
 use crate::judgments::report::{
     generate_evaluation_scope_csv, print_console_summary, write_aggregate_reports,
