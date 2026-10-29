@@ -1013,6 +1013,7 @@ async fn test_plugin_language_remap_lua() {
         &registry,
         cce_config::project::LanguageExtensionConflictPolicy::Allow,
         cce_config::project::GrammarAbiPolicy::Deny,
+        cce_config::project::MissingHeuristicsPolicy::Warn,
     );
     assert_eq!(count, 1, "remap plugin must register");
 
