@@ -643,7 +643,8 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
                 base_url,
                 api_keys: vec![api_key],
                 ..Default::default()
-            },
+            
+},
         );
 
         let mut models = std::collections::HashMap::new();

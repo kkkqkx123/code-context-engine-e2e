@@ -243,7 +243,8 @@ pub fn mock_embedding_config(base_url: &str) -> cce_config::AppConfig {
             base_url: base_url.to_string(),
             api_keys: vec!["test-key".to_string()],
             ..Default::default()
-        },
+        
+},
     );
     let mut models = HashMap::new();
     models.insert(
