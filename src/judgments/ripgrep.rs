@@ -355,8 +355,8 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
                 (
                     SourceRange {
                         file: "crates/searcher/src/searcher/glue.rs".into(),
-                        start_line: 142,
-                        end_line: 164,
+                        start_line: 150,
+                        end_line: 165,
                     },
                     RL::Strong,
                 ),
@@ -497,16 +497,16 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
                 (
                     SourceRange {
                         file: "crates/printer/src/standard.rs".into(),
-                        start_line: 1176,
-                        end_line: 1200,
+                        start_line: 1172,
+                        end_line: 1189,
                     },
                     RL::Strong,
                 ),
                 (
                     SourceRange {
                         file: "crates/printer/src/standard.rs".into(),
-                        start_line: 1681,
-                        end_line: 1695,
+                        start_line: 1679,
+                        end_line: 1688,
                     },
                     RL::Related,
                 ),
@@ -546,8 +546,8 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
             relevant_ranges: vec![(
                 SourceRange {
                     file: "crates/ignore/src/gitignore.rs".into(),
-                    start_line: 360,
-                    end_line: 420,
+                    start_line: 385,
+                    end_line: 421,
                 },
                 RL::Strong,
             )],
@@ -562,16 +562,16 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
                 (
                     SourceRange {
                         file: "crates/searcher/src/searcher/mod.rs".into(),
-                        start_line: 244,
-                        end_line: 266,
+                        start_line: 238,
+                        end_line: 262,
                     },
                     RL::Strong,
                 ),
                 (
                     SourceRange {
                         file: "crates/regex/src/error.rs".into(),
-                        start_line: 7,
-                        end_line: 41,
+                        start_line: 39,
+                        end_line: 61,
                     },
                     RL::Related,
                 ),
@@ -586,8 +586,8 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
             relevant_ranges: vec![(
                 SourceRange {
                     file: "crates/regex/src/literal.rs".into(),
-                    start_line: 40,
-                    end_line: 80,
+                    start_line: 54,
+                    end_line: 70,
                 },
                 RL::Strong,
             )],
@@ -650,9 +650,9 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
             fuzzy_subtype: None,
             relevant_ranges: vec![(
                 SourceRange {
-                    file: "crates/searcher/src/sink.rs".into(),
-                    start_line: 340,
-                    end_line: 362,
+                    file: "crates/printer/src/stats.rs".into(),
+                    start_line: 13,
+                    end_line: 21,
                 },
                 RL::Strong,
             )],

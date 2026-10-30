@@ -63,12 +63,17 @@ impl TargetCoverage {
 type Interval = (usize, usize);
 
 /// Merge overlapping or touching intervals into a sorted, disjoint list.
+///
+/// Touching means abutting (`[25,34]` + `[35,44]` merge to `[25,44]`); a
+/// blank-line gap stays disjoint so judgments spanning unrelated methods do
+/// not falsely recover. Keep single-entity judgment ranges to avoid
+/// boundary gaps.
 fn merge_intervals(mut intervals: Vec<Interval>) -> Vec<Interval> {
     intervals.sort_unstable();
     let mut merged: Vec<Interval> = Vec::with_capacity(intervals.len());
     for (start, end) in intervals {
         match merged.last_mut() {
-            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            Some(last) if start <= last.1 + 1 => last.1 = last.1.max(end),
             _ => merged.push((start, end)),
         }
     }
@@ -841,6 +846,26 @@ mod tests {
             "both fragments contribute to the recovery"
         );
         assert_eq!(score.any_matches, 2);
+    }
+
+    #[test]
+    fn touching_fragments_merge_for_coverage() {
+        let judgment = judgment_with(vec![range(25, 44, RelevanceLevel::Strong)]);
+        let abutting = vec![ranged_chunk(25, 34), ranged_chunk(35, 44)];
+        let scores = vec![2.0, 1.0];
+        let score = evaluate_query_range_based(&judgment, &abutting, &scores, 2);
+        assert_eq!(score.total_relevant, 1);
+        assert_eq!(score.recall_any, 1.0);
+    }
+
+    #[test]
+    fn blank_line_gap_stays_disjoint() {
+        let judgment = judgment_with(vec![range(25, 44, RelevanceLevel::Strong)]);
+        let gapped = vec![ranged_chunk(25, 34), ranged_chunk(36, 44)];
+        let scores = vec![2.0, 1.0];
+        let score = evaluate_query_range_based(&judgment, &gapped, &scores, 2);
+        assert_eq!(score.total_relevant, 0);
+        assert_eq!(score.recall_any, 0.0);
     }
 
     #[test]
