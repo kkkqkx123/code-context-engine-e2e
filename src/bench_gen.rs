@@ -330,8 +330,7 @@ pub fn build_embedder() -> (EmbeddingConfig, AppConfig) {
                 base_url: emb_config.endpoint.clone(),
                 api_keys: vec![emb_config.api_key.clone()],
                 ..Default::default()
-            
-},
+            },
         );
         let mut models = HashMap::new();
         models.insert(

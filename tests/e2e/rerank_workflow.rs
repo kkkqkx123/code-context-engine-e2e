@@ -32,8 +32,7 @@ fn rerank_handler(base_url: &str) -> Arc<ProductionRerankHandler> {
             base_url: base_url.to_string(),
             api_keys: vec!["test-key".to_string()],
             ..ProviderConfig::default()
-        
-},
+        },
     );
     config.llm.rerank_models.insert(
         "mock-rerank".to_string(),
