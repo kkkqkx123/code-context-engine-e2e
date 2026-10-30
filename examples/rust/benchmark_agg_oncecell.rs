@@ -5,11 +5,12 @@
 //! rankings. Reports are written to
 //! `outputs/benchmark/once_cell/aggregation_enhance/`.
 
+use cce_e2e_tests::BenchmarkProject;
 use cce_e2e_tests::bench_data::EvaluationScope;
-use cce_e2e_tests::judgments::once_cell::once_cell_relevance_judgments;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let all_judgments = once_cell_relevance_judgments();
+    let project = BenchmarkProject::OnceCell;
+    let all_judgments = project.judgments();
     let scope = EvaluationScope::All;
     let judgments: Vec<_> = all_judgments
         .iter()
@@ -25,6 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_judgments.len() - judgments.len()
     );
 
-    cce_e2e_tests::aggregation_enhance::run_aggregation_enhance_benchmark("once_cell", &judgments)?;
+    cce_e2e_tests::aggregation_enhance::run_aggregation_enhance_benchmark(
+        project.name(),
+        &judgments,
+    )?;
     Ok(())
 }

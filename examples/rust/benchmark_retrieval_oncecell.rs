@@ -4,11 +4,12 @@
 //! compares emb / bm25 / minmax-* / rrf-* recall methods. Reports are written
 //! to `outputs/benchmark/once_cell/retrieval_method/`.
 
+use cce_e2e_tests::BenchmarkProject;
 use cce_e2e_tests::bench_data::EvaluationScope;
-use cce_e2e_tests::judgments::once_cell::once_cell_relevance_judgments;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let all_judgments = once_cell_relevance_judgments();
+    let project = BenchmarkProject::OnceCell;
+    let all_judgments = project.judgments();
     let scope = EvaluationScope::All;
     let judgments: Vec<_> = all_judgments
         .iter()
@@ -24,6 +25,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_judgments.len() - judgments.len()
     );
 
-    cce_e2e_tests::retrieval_method::run_retrieval_method_benchmark("once_cell", &judgments)?;
+    cce_e2e_tests::retrieval_method::run_retrieval_method_benchmark(project.name(), &judgments)?;
     Ok(())
 }

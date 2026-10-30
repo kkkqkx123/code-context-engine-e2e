@@ -1,15 +1,19 @@
 use std::path::PathBuf;
 
+use cce_e2e_tests::BenchmarkProject;
 use cce_e2e_tests::bm25_parameter_benchmark::{
-    aggregate_by_parameter_set, run_flask_bm25_parameter_sweep,
+    aggregate_by_parameter_set, run_project_bm25_parameter_sweep,
 };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     cce_e2e_tests::init_minimal_logging();
-    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("outputs/benchmark/flask/bm25_parameter_sweep");
-    let observations = run_flask_bm25_parameter_sweep(&output_dir).await?;
+    let project = BenchmarkProject::Flask;
+    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "outputs/benchmark/{}/bm25_parameter_sweep",
+        project.name()
+    ));
+    let observations = run_project_bm25_parameter_sweep(project, &output_dir).await?;
 
     let aggregates = aggregate_by_parameter_set(&observations);
     for aggregate in &aggregates {

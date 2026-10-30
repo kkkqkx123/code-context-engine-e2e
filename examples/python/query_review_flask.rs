@@ -13,19 +13,10 @@
 //!   ├── {query_id}.md         — full hits with scores, content, annotation comparison
 //!   └── aggregated_demo.md    — two-sub-query merge demo
 
-use cce_e2e_tests::FixtureSpec;
-use cce_e2e_tests::judgments::flask::flask_relevance_judgments;
-use cce_e2e_tests::query_review::{QueryReviewConfig, run_query_review};
+use cce_e2e_tests::BenchmarkProject;
+use cce_e2e_tests::query_review::run_query_review;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    run_query_review(QueryReviewConfig {
-        project: "flask",
-        language: "python",
-        spec: FixtureSpec::python_flask(),
-        judgments: flask_relevance_judgments(),
-        top_k: 10,
-        scenario_suffix: None,
-    })
-    .await
+    run_query_review(BenchmarkProject::Flask.query_review_config()).await
 }

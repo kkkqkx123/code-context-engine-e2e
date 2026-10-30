@@ -403,3 +403,7 @@ path = "examples/cpp/relation_review_media_server.rs"
 [[example]]
 name = "dbg_group_shape"
 path = "examples/python/dbg_group_shape.rs"
+
+[[example]]
+name = "judgment_range_check"
+path = "examples/judgment_range_check.rs"

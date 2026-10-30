@@ -342,14 +342,30 @@ pub fn flask_relevance_judgments() -> Vec<RelevanceJudgment> {
             136,
             183,
         ),
-        strong(
-            "G2Q16",
-            "push a request context and match the incoming URL",
-            Semantic,
-            "src/flask/ctx.py",
-            405,
-            444,
-        ),
+        RelevanceJudgment {
+            id: "G2Q16".into(),
+            query_text: "push a request context and match the incoming URL".into(),
+            query_type: Semantic,
+            fuzzy_subtype: None,
+            relevant_ranges: vec![
+                (
+                    SourceRange {
+                        file: "src/flask/ctx.py".into(),
+                        start_line: 405,
+                        end_line: 414,
+                    },
+                    RelevanceLevel::Strong,
+                ),
+                (
+                    SourceRange {
+                        file: "src/flask/ctx.py".into(),
+                        start_line: 416,
+                        end_line: 444,
+                    },
+                    RelevanceLevel::Strong,
+                ),
+            ],
+        },
         strong(
             "G2Q17",
             "serve a trusted file download using conditional response headers",
@@ -372,7 +388,7 @@ pub fn flask_relevance_judgments() -> Vec<RelevanceJudgment> {
             Semantic,
             "src/flask/helpers.py",
             360,
-            400,
+            399,
         ),
         strong(
             "G2Q20",

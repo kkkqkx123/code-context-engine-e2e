@@ -14,19 +14,10 @@
 //!   ├── {query_id}.md         — full hits with scores, content, annotation comparison
 //!   └── aggregated_demo.md    — two-sub-query merge demo
 
-use cce_e2e_tests::FixtureSpec;
-use cce_e2e_tests::judgments::once_cell::once_cell_relevance_judgments;
-use cce_e2e_tests::query_review::{QueryReviewConfig, run_query_review};
+use cce_e2e_tests::BenchmarkProject;
+use cce_e2e_tests::query_review::run_query_review;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    run_query_review(QueryReviewConfig {
-        project: "once_cell",
-        language: "rust",
-        spec: FixtureSpec::rust_once_cell(),
-        judgments: once_cell_relevance_judgments(),
-        top_k: 10,
-        scenario_suffix: None,
-    })
-    .await
+    run_query_review(BenchmarkProject::OnceCell.query_review_config()).await
 }

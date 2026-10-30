@@ -162,7 +162,7 @@ pub fn jackson_core_relevance_judgments() -> Vec<RelevanceJudgment> {
             Qualified,
             rf,
             302,
-            313,
+            312,
         ),
         // G1Q7: WriterBasedJsonGenerator::writeName - object property name writer
         strong(
@@ -332,7 +332,7 @@ pub fn jackson_core_relevance_judgments() -> Vec<RelevanceJudgment> {
             fuzzy_subtype: None,
             relevant_ranges: vec![
                 range(jse, 195, 298, RL::Strong),
-                range(jse, 301, 330, RL::Related),
+                range(jse, 301, 329, RL::Related),
             ],
         },
         // G2Q13: fast int to output buffer
@@ -419,8 +419,8 @@ pub fn jackson_core_relevance_judgments() -> Vec<RelevanceJudgment> {
             query_type: Semantic,
             fuzzy_subtype: None,
             relevant_ranges: vec![
-                range(pmb, 470, 474, RL::Strong),
-                range(pmb, 476, 480, RL::Related),
+                range(pmb, 471, 474, RL::Strong),
+                range(pmb, 476, 479, RL::Related),
             ],
         },
         // ==================== FZ: Fuzzy Queries (15 total) ====================
@@ -458,7 +458,7 @@ pub fn jackson_core_relevance_judgments() -> Vec<RelevanceJudgment> {
             "abbrev_expand",
             rf,
             302,
-            313,
+            312,
         ),
         // FZ-G1Q5: WriterBasedJsonGenerator::writeName
         fuzzy_strong(

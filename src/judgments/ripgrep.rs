@@ -82,7 +82,7 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
                     SourceRange {
                         file: "crates/matcher/src/lib.rs".into(),
                         start_line: 546,
-                        end_line: 560,
+                        end_line: 559,
                     },
                     RL::Strong,
                 ),
@@ -90,7 +90,7 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
                     SourceRange {
                         file: "crates/matcher/src/lib.rs".into(),
                         start_line: 571,
-                        end_line: 576,
+                        end_line: 575,
                     },
                     RL::Strong,
                 ),
@@ -636,7 +636,7 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
                     SourceRange {
                         file: "crates/ignore/src/overrides.rs".into(),
                         start_line: 142,
-                        end_line: 146,
+                        end_line: 145,
                     },
                     RL::Related,
                 ),
@@ -759,7 +759,7 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
                     SourceRange {
                         file: "crates/matcher/src/lib.rs".into(),
                         start_line: 546,
-                        end_line: 560,
+                        end_line: 559,
                     },
                     RL::Strong,
                 ),
@@ -767,7 +767,7 @@ pub fn ripgrep_relevance_judgments() -> Vec<RelevanceJudgment> {
                     SourceRange {
                         file: "crates/matcher/src/lib.rs".into(),
                         start_line: 571,
-                        end_line: 576,
+                        end_line: 575,
                     },
                     RL::Strong,
                 ),

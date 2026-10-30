@@ -9,6 +9,7 @@ pub mod assertion;
 pub mod baselines;
 pub mod bench_data;
 pub mod bench_gen;
+pub mod benchmark_projects;
 pub mod benchmark_runner;
 pub mod bm25_parameter_benchmark;
 pub mod cleanup;
@@ -42,6 +43,7 @@ pub mod type_inference_assert;
 pub mod type_inference_cases;
 
 pub use assertion::{ExpectedIndexResult, assert_index_result};
+pub use benchmark_projects::BenchmarkProject;
 pub use cleanup::init_minimal_logging;
 pub use embedding::{EmbeddingConfig, EmbeddingProviderType};
 pub use fixture::{EmptyFixture, FixtureCategory, FixtureSpec, TestFixture};

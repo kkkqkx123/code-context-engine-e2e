@@ -5,11 +5,12 @@
 //! rankings. Reports are written to
 //! `outputs/benchmark/ripgrep/aggregation_enhance/`.
 
+use cce_e2e_tests::BenchmarkProject;
 use cce_e2e_tests::bench_data::EvaluationScope;
-use cce_e2e_tests::judgments::ripgrep::ripgrep_relevance_judgments;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let all_judgments = ripgrep_relevance_judgments();
+    let project = BenchmarkProject::Ripgrep;
+    let all_judgments = project.judgments();
     let scope = EvaluationScope::All;
     let judgments: Vec<_> = all_judgments
         .iter()
@@ -25,6 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_judgments.len() - judgments.len()
     );
 
-    cce_e2e_tests::aggregation_enhance::run_aggregation_enhance_benchmark("ripgrep", &judgments)?;
+    cce_e2e_tests::aggregation_enhance::run_aggregation_enhance_benchmark(
+        project.name(),
+        &judgments,
+    )?;
     Ok(())
 }
