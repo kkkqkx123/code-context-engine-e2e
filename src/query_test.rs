@@ -80,11 +80,6 @@ pub struct QueryWorkflowTest<F: FixtureAccess> {
     _vector_temp_dir: Option<TempDir>,
     /// Project group id shared by the index fingerprint and the query scope
     project_group_id: Option<String>,
-    /// Summary-vector embedding override. `None` (default) derives it from
-    /// the vector source flag, matching production indexing; `Some(false)`
-    /// keeps summary text/BM25 but skips summary vectors (review scope is
-    /// dense+BM25, which never consumes them).
-    embed_summaries: Option<bool>,
     /// Optional stable scenario key used to derive the project group id.
     /// Without it the group id is hashed from the per-run fixture path; with
     /// a stable key repeated runs share one group partition, keeping storage
@@ -118,7 +113,6 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             _bm25_temp_dir: None,
             _vector_temp_dir: None,
             project_group_id: None,
-            embed_summaries: None,
             scenario_name: None,
         }
     }
@@ -203,16 +197,6 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
     #[allow(dead_code)]
     pub fn with_qdrant_url(mut self, url: impl Into<String>) -> Self {
         self.qdrant_url = Some(url.into());
-        self
-    }
-
-    /// Override summary-vector embedding. `None` (default) follows the vector
-    /// source flag; pass `false` when the run never consumes summary vectors
-    /// (the summary source flag gates both recall and boost), e.g. review
-    /// jobs over the dense+BM25 scope.
-    #[allow(dead_code)]
-    pub fn with_embed_summaries(mut self, embed: bool) -> Self {
-        self.embed_summaries = Some(embed);
         self
     }
 
@@ -359,11 +343,6 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             // Always enable BM25 so search_bm25() queries return results
             store_bm25: true,
             store_vectors: self.search_sources.vector,
-            // Summary vectors need a vector backend; BM25-only runs keep
-            // summary text/BM25 but skip embedding. An explicit override
-            // (e.g. review jobs over the dense+BM25 scope, which never
-            // consumes summary vectors) wins over the derivation.
-            embed_summaries: self.embed_summaries.unwrap_or(self.search_sources.vector),
             ..Default::default()
         };
 

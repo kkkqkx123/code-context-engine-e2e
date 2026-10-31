@@ -262,9 +262,8 @@ async fn test_rc3_adoptable_candidate_skips_completed_modules() {
     assert_eq!(active.operation_id, "rc3-op");
     assert_eq!(harness.files_for_epoch(1), 2);
     assert_eq!(harness.entities_for_epoch(1), 2);
-    assert_eq!(harness.summaries_for_epoch(1), 2);
-    // 2 per-function docs seeded with the candidate + 2 summary docs in BM25.
-    assert_eq!(harness.bm25_documents_for_project().await, 4);
+    // 2 per-function docs seeded with the candidate in BM25.
+    assert_eq!(harness.bm25_documents_for_project().await, 2);
 }
 
 /// Abort voids the candidate but leaves module progress
@@ -366,9 +365,8 @@ async fn test_rc4_aborted_candidate_clears_module_progress_and_redoes_all() {
         "published generation must hold a file row for every file"
     );
     assert_eq!(harness.entities_for_epoch(1), 2);
-    assert_eq!(harness.summaries_for_epoch(1), 2);
-    // 2 per-function docs + 2 summary docs indexed into BM25.
-    assert_eq!(harness.bm25_documents_for_project().await, 4);
+    // 2 per-function docs indexed into BM25.
+    assert_eq!(harness.bm25_documents_for_project().await, 2);
 
     for path in &files {
         let rel = harness.relativize(std::path::Path::new(path));
@@ -597,8 +595,8 @@ async fn test_rcv006_disk_change_forces_reparse() {
     assert_eq!(harness.files_for_epoch(active.data_epoch), 2);
     assert_eq!(harness.entities_for_epoch(active.data_epoch), 3);
     // 1 merged per-function doc for lib.rs (alpha+gamma merge as a small
-    // fragment) + 1 for util.rs + 2 summary docs in BM25.
-    assert_eq!(harness.bm25_documents_for_project().await, 4);
+    // fragment) + 1 for util.rs in BM25.
+    assert_eq!(harness.bm25_documents_for_project().await, 2);
 }
 
 /// A chunking-config change between crash and resume changes
@@ -667,8 +665,8 @@ async fn test_rcv007_config_change_forces_module_redo() {
         .expect("active");
     assert_eq!(harness.files_for_epoch(active.data_epoch), 2);
     assert_eq!(harness.entities_for_epoch(active.data_epoch), 2);
-    // 2 per-function docs + 2 summary docs indexed into BM25.
-    assert_eq!(harness.bm25_documents_for_project().await, 4);
+    // 2 per-function docs indexed into BM25.
+    assert_eq!(harness.bm25_documents_for_project().await, 2);
 }
 
 /// An in_progress FULL-INDEX checkpoint of the same
@@ -846,8 +844,8 @@ async fn test_data007_legacy_checkpoint_redoes_conservatively() {
         .expect("active");
     assert_eq!(harness.files_for_epoch(active.data_epoch), 2);
     assert_eq!(harness.entities_for_epoch(active.data_epoch), 2);
-    // 2 per-function docs + 2 summary docs indexed into BM25.
-    assert_eq!(harness.bm25_documents_for_project().await, 4);
+    // 2 per-function docs indexed into BM25.
+    assert_eq!(harness.bm25_documents_for_project().await, 2);
 }
 
 // ===========================================================================
@@ -1071,7 +1069,6 @@ async fn test_wf001_incremental_update_publishes_and_queries() {
     );
     assert_eq!(harness.files_for_epoch(epoch_after), 2);
     assert_eq!(harness.entities_for_epoch(epoch_after), 3);
-    assert_eq!(harness.summaries_for_epoch(epoch_after), 2);
 
     // BM25 sees the new symbol.
     let query = harness.query_bm25("brand_new_symbol").await;
@@ -1136,10 +1133,9 @@ async fn test_wf002_deletion_removes_all_file_data() {
         "only the kept file remains"
     );
     assert_eq!(harness.entities_for_epoch(epoch), 1);
-    assert_eq!(harness.summaries_for_epoch(epoch), 1);
-    // 1 per-function doc + 1 summary doc indexed into BM25 at the published
+    // 1 per-function doc indexed into BM25 at the published
     // epoch (older retained generations hold gone.rs until GC retires them).
-    assert_eq!(harness.bm25_documents_for_epoch(epoch).await, 2);
+    assert_eq!(harness.bm25_documents_for_epoch(epoch).await, 1);
 
     let gone_entities: i64 = {
         let conn = harness.sqlite.read_connection().expect("connection");
@@ -1237,8 +1233,8 @@ async fn test_wf004_noop_path_is_quick_and_clean() {
         .expect("manifest")
         .expect("active");
     assert_eq!(active.data_epoch, epoch_before, "no new epoch on noop");
-    // 1 per-function doc + 1 summary doc indexed by the full index.
-    assert_eq!(harness.bm25_documents_for_project().await, 2);
+    // 1 per-function doc indexed by the full index.
+    assert_eq!(harness.bm25_documents_for_project().await, 1);
 
     // A second noop run must not be affected by leftover state from the first.
     let second = instance_a

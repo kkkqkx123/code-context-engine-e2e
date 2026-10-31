@@ -111,12 +111,7 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
     let mut query_test = QueryWorkflowTest::new(fixture, EmbeddingConfig::mock())
         .with_embedder(embedder)
         .with_sources(sources)
-        .with_config(search_config.clone())
-        // Review scope is dense+BM25: no reviewed query enables the summary
-        // source, so summary vectors are never consumed. Skipping their
-        // embedding keeps the manifest free of mock item-budget shortfalls
-        // that say nothing about the reviewed queries.
-        .with_embed_summaries(false);
+        .with_config(search_config.clone());
     let index_result = query_test.index().await.context("index fixture")?.clone();
 
     let fixture_root = query_test.fixture().root_path().to_path_buf();

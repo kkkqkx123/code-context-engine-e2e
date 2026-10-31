@@ -200,19 +200,16 @@ fn test_capability_driven_config() {
     let caps = IndexCapabilities::new()
         .with_vectors(false)
         .with_bm25(true)
-        .with_summaries(false)
         .with_relations(true);
 
     assert!(!caps.has_vectors());
     assert!(caps.has_bm25());
-    assert!(!caps.has_summaries());
     assert!(caps.has_relations());
 
     // With all capabilities available
     let caps_all = IndexCapabilities::all();
     assert!(caps_all.has_vectors());
     assert!(caps_all.has_bm25());
-    assert!(caps_all.has_summaries());
     assert!(caps_all.has_relations());
 
     let mut config = SearchConfig::default();

@@ -23,7 +23,26 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cce_config::modules::search::{BoostAggregationConfig, SummaryBoostConfig};
+use cce_config::modules::search::BoostAggregationConfig;
+
+/// Offline-only summary signal parameters.
+///
+/// Mirrors the removed production summary-boost defaults so historical
+/// benchmark reports stay reproducible without depending on shipped config.
+#[derive(Debug, Clone)]
+pub struct SummaryParams {
+    pub top_k: usize,
+    pub min_score: f32,
+}
+
+impl Default for SummaryParams {
+    fn default() -> Self {
+        Self {
+            top_k: 20,
+            min_score: 0.4,
+        }
+    }
+}
 
 use crate::bench_data::{ChunkData, cosine_similarity};
 
@@ -50,7 +69,7 @@ impl Default for RelationParams {
 #[derive(Debug, Clone, Default)]
 pub struct EnhanceParams {
     pub relation: RelationParams,
-    pub summary: SummaryBoostConfig,
+    pub summary: SummaryParams,
     pub agg: BoostAggregationConfig,
 }
 
@@ -446,7 +465,7 @@ mod tests {
         assert_eq!(p.relation.top_n, 5);
         assert_eq!(p.relation.max_hops, 2);
         assert!((p.relation.max_boost - 0.15).abs() < f32::EPSILON);
-        assert!((p.agg.cap_for("summary") - 0.15).abs() < f32::EPSILON);
+        assert!((p.agg.cap_for("summary") - 0.3).abs() < f32::EPSILON);
         assert!((p.agg.max_addition - 0.5).abs() < f32::EPSILON);
         assert_eq!(p.summary.top_k, 20);
         assert!((p.summary.min_score - 0.4).abs() < f32::EPSILON);

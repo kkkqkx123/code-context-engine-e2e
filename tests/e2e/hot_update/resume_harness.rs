@@ -816,44 +816,6 @@ impl HotUpdateHarness {
         total
     }
 
-    /// Count summaries visible from one generation's epoch view.
-    pub fn summaries_for_epoch(&self, epoch: i64) -> i64 {
-        let conn = self
-            .sqlite
-            .read_connection()
-            .expect("read connection for summary count");
-        let (parent, excluded) = Self::generation_view(&conn, self.project_id, epoch);
-        let mut total: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM file_summaries s JOIN files f ON s.file_id = f.id
-                 WHERE f.project_id = ?1 AND s.epoch = ?2",
-                rusqlite::params![self.project_id, epoch],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("count summaries");
-        if let Some(parent) = parent {
-            total += conn
-                .query_row(
-                    "SELECT COUNT(*) FROM file_summaries s JOIN files f ON s.file_id = f.id
-                     WHERE f.project_id = ?1 AND s.epoch = ?2",
-                    rusqlite::params![self.project_id, parent],
-                    |row| row.get::<_, i64>(0),
-                )
-                .expect("count inherited summaries");
-            for path in &excluded {
-                total -= conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM file_summaries s JOIN files f ON s.file_id = f.id
-                         WHERE f.project_id = ?1 AND s.epoch = ?2 AND f.path = ?3",
-                        rusqlite::params![self.project_id, parent, path],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .expect("count overridden summaries");
-            }
-        }
-        total
-    }
-
     /// Count files visible from one generation's epoch view.
     pub fn files_for_epoch(&self, epoch: i64) -> i64 {
         let conn = self
