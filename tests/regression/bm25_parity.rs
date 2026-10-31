@@ -111,6 +111,8 @@ fn search_options(operator: TermOperator, limit: usize) -> FulltextSearchOptions
         epochs: Vec::new(),
         excluded_files: None,
         exclude_test: false,
+        exclude_generated: false,
+        exclude_dependency: false,
         include_categories: vec![],
         exclude_categories: vec![],
         term_operator: operator,

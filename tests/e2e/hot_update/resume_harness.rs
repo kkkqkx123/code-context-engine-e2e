@@ -930,6 +930,8 @@ impl HotUpdateHarness {
             epochs: Vec::new(),
             excluded_files: None,
             exclude_test: false,
+            exclude_generated: false,
+            exclude_dependency: false,
             include_categories: Vec::new(),
             exclude_categories: Vec::new(),
             term_operator: Default::default(),
