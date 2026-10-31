@@ -28,7 +28,7 @@ use cce_codegraph::index::SnapshotEntityQueryOps;
 use cce_codegraph::index::snapshot_query::SnapshotSymbolQueryOps;
 use cce_llm_client::OpenAICompatibleProvider;
 use cce_orchestrator::SearchSources;
-use cce_orchestrator::query::graph::{GraphDirection, SubGraph};
+use cce_orchestrator::query::graph::{GraphDirection, GraphService, SubGraph};
 use cce_orchestrator::query::relation_searcher::RelationQueryOptions;
 use cce_types::{EntityId, ResolvedRelation};
 
@@ -128,8 +128,8 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
         let backward = coordinator
             .query_backward(seed.id, &relation_options)
             .unwrap_or_default();
-        let ego = coordinator
-            .graph_ego(seed.id, config.depth, GraphDirection::Both)
+        let ego = GraphService::new(coordinator.relation_searcher_arc())
+            .ego_graph(seed.id, config.depth, GraphDirection::Both)
             .unwrap_or_default();
 
         let slug = seed_slug(&seed_name, seed.stable_id.as_deref());
@@ -165,9 +165,8 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
         }
     }
 
-    let export = query_test
-        .coordinator()
-        .graph_export(500)
+    let export = GraphService::new(query_test.coordinator().relation_searcher_arc())
+        .export_full(500)
         .unwrap_or_default();
     manager.write(
         "run_manifest.txt",
