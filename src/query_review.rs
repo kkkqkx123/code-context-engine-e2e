@@ -226,6 +226,7 @@ where
         exclude_patterns: Vec::new(),
         include_patterns: Vec::new(),
         enable_rerank: None,
+        enable_result_filter: None,
         query_intent: None,
         neighbour_resolver: None,
     };

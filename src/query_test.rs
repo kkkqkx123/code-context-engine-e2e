@@ -379,6 +379,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             include_patterns: Vec::new(),
             with_source: true,
             enable_rerank: self.enable_rerank,
+            enable_result_filter: None,
             neighbour_resolver: None,
         };
 
@@ -486,6 +487,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             include_patterns: Vec::new(),
             with_source: true,
             enable_rerank: None,
+            enable_result_filter: None,
             neighbour_resolver: None,
         };
 

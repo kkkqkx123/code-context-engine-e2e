@@ -17,13 +17,36 @@
 //! several files bridges them. Graph traversal for production queries lives
 //! on the dedicated graph retrieval path, not in semantic scoring.
 //!
-//! Aggregation (`apply_additive_boosts`) mirrors production `apply_boosts`:
-//! per-source caps, then a global `max_addition` cap, applied as
-//! `score * (1 + capped_addition)`.
+//! Aggregation (`apply_additive_boosts`) keeps the historical production
+//! capping shape: per-source caps, then a global `max_addition` cap,
+//! applied as `score * (1 + capped_addition)`.
 
 use std::collections::{HashMap, HashSet};
 
-use cce_config::modules::search::BoostAggregationConfig;
+/// Offline-only aggregation caps.
+///
+/// Historical mirror of the removed production capping defaults so
+/// benchmark reports stay reproducible without depending on shipped config.
+#[derive(Debug, Clone)]
+pub struct AggCaps {
+    pub max_addition: f32,
+    pub max_source_boost: f32,
+}
+
+impl Default for AggCaps {
+    fn default() -> Self {
+        Self {
+            max_addition: 0.5,
+            max_source_boost: 0.3,
+        }
+    }
+}
+
+impl AggCaps {
+    pub fn cap_for(&self, _source: &str) -> f32 {
+        self.max_source_boost
+    }
+}
 
 /// Offline-only summary signal parameters.
 ///
@@ -64,13 +87,12 @@ impl Default for RelationParams {
     }
 }
 
-/// Boost parameters, always sourced from the production config defaults so
-/// the benchmark tracks the shipped behavior.
+/// Boost parameters for the offline benchmark.
 #[derive(Debug, Clone, Default)]
 pub struct EnhanceParams {
     pub relation: RelationParams,
     pub summary: SummaryParams,
-    pub agg: BoostAggregationConfig,
+    pub agg: AggCaps,
 }
 
 /// Undirected file-cohort entity graph (offline proxy for the call graph).
