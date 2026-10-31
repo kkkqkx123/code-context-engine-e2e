@@ -93,13 +93,15 @@ async fn export_case(case: &TypeInferenceCase, fixture: TestFixture) {
                         let request = ConversionRequest {
                             force_mode: Some(OutputMode::Embedding),
                         };
-                        let conversions = converter.convert_entity_groups(
-                            &processing_result.groups,
-                            &file_path,
-                            Some(&request),
-                            Some(&processing_result),
-                            Some(source),
-                        );
+                        let conversions = converter
+                            .convert_entity_groups(
+                                &processing_result.groups,
+                                &file_path,
+                                Some(&request),
+                                Some(&processing_result),
+                                Some(source),
+                            )
+                            .groups;
                         match direct_exporter
                             .export_groups(&conversions, &file_path)
                             .await

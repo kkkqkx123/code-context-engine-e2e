@@ -42,15 +42,18 @@ async fn main() {
         let parsed = &result.parsed_file;
         let source = &parsed.source;
 
-        let gcs = file_processor.converter().convert_entity_groups(
-            &pr.groups,
-            &parsed.path,
-            Some(&cce_parser::ast_to_nl::ConversionRequest {
-                force_mode: Some(OutputMode::Embedding),
-            }),
-            Some(&pr),
-            Some(source),
-        );
+        let gcs = file_processor
+            .converter()
+            .convert_entity_groups(
+                &pr.groups,
+                &parsed.path,
+                Some(&cce_parser::ast_to_nl::ConversionRequest {
+                    force_mode: Some(OutputMode::Embedding),
+                }),
+                Some(&pr),
+                Some(source),
+            )
+            .groups;
         println!("== GROUPS ==");
         for g in &pr.groups {
             let ids: Vec<String> = g.all_entity_ids().iter().map(|i| i.0.to_string()).collect();
