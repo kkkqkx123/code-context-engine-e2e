@@ -441,11 +441,11 @@ async fn test_a_boundary_cases() {
 
 /// Search configuration with every score threshold disabled. The mock
 /// embedder only yields weak lexical similarity (0.1~0.45), below the default
-/// `vector.min_score` of 0.3; alignment assertions are structural, so the
+/// `vector.similarity_threshold` of 0.3; alignment assertions are structural, so the
 /// vector path must not be silently filtered to zero.
 fn no_threshold_config() -> SearchConfig {
     let mut config = SearchConfig::default();
-    config.vector.min_score = 0.0;
+    config.vector.similarity_threshold = 0.0;
     config.result.min_score = 0.0;
     config
 }

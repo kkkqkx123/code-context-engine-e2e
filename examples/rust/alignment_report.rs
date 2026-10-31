@@ -30,7 +30,7 @@ const QUERIES: &[&str] = &["process", "internal", "process internal result"];
 
 fn no_threshold_config() -> cce_orchestrator::SearchConfig {
     let mut config = cce_orchestrator::SearchConfig::default();
-    config.vector.min_score = 0.0;
+    config.vector.similarity_threshold = 0.0;
     config.result.min_score = 0.0;
     config
 }

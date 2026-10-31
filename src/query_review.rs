@@ -137,6 +137,7 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
             &fixture_root,
             &mut result.items,
             &annotation_config,
+            &judgment.query_text,
         )
         .await;
         let page = render_query_page(QueryPageInput {
@@ -244,6 +245,7 @@ where
         &fixture_root,
         &mut result.items,
         annotation_config,
+        &agg.original_query,
     )
     .await;
 
@@ -317,12 +319,12 @@ fn render_query_page(input: QueryPageInput<'_>) -> String {
         if result.from_cache { "hit" } else { "miss" },
     ));
     page.push_str(&format!(
-        "- Config: limit={} min_score={:.2} vector_top_k={} vector_min_score={:.2} bm25_min_score={:.2} timeout_ms={}\n",
+        "- Config: limit={} min_score={:.2} vector_top_k={} similarity_threshold={:.2} term_weight_threshold={:.2} timeout_ms={}\n",
         search_config.result.limit,
         search_config.result.min_score,
         search_config.vector.top_k,
-        search_config.vector.min_score,
-        search_config.bm25.min_score,
+        search_config.vector.similarity_threshold,
+        search_config.bm25.term_weight_threshold,
         search_config.timeout_ms,
     ));
     if !result.failed_sub_queries.is_empty() {
