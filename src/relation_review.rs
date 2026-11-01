@@ -219,10 +219,14 @@ where
         else {
             continue;
         };
-        let mut ids =
+        let ids =
             snapshot.get_entities_in_line_range(&range.file, range.start_line, range.end_line);
-        ids.sort_by_key(|id| id.0);
-        if let Some(id) = ids.into_iter().next() {
+        if let Some(id) = pick_most_specific_entity(
+            snapshot,
+            &ids,
+            range.start_line,
+            range.end_line,
+        ) {
             let name = snapshot
                 .get_function_by_entity_id(id)
                 .map(|entity| entity.name.clone())
@@ -270,6 +274,52 @@ where
 }
 
 /// Insert a seed unless its entity was already selected.
+fn pick_most_specific_entity(
+    snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
+    ids: &[EntityId],
+    start_line: usize,
+    end_line: usize,
+) -> Option<EntityId> {
+    let first_row = start_line.min(end_line).saturating_sub(1);
+    let last_row = start_line.max(end_line).saturating_sub(1);
+    ids.iter().copied().max_by(|a, b| {
+        overlap_len(*a, first_row, last_row, snapshot)
+            .cmp(&overlap_len(*b, first_row, last_row, snapshot))
+            .then_with(|| span_len(*b, snapshot).cmp(&span_len(*a, snapshot)))
+            .then_with(|| b.0.cmp(&a.0))
+    })
+}
+
+fn overlap_len(
+    entity_id: EntityId,
+    first_row: usize,
+    last_row: usize,
+    snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
+) -> usize {
+    let Some(entity) = snapshot.get_function_by_entity_id(entity_id) else {
+        return 0;
+    };
+    let start = entity.span.start_position.row;
+    let end = entity.span.end_position.row.max(start);
+    let overlap_start = start.max(first_row);
+    let overlap_end = end.min(last_row);
+    if overlap_end >= overlap_start {
+        overlap_end - overlap_start + 1
+    } else {
+        0
+    }
+}
+
+fn span_len(
+    entity_id: EntityId,
+    snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
+) -> u64 {
+    snapshot
+        .get_function_by_entity_id(entity_id)
+        .map(|entity| entity.span.end_byte.saturating_sub(entity.span.start_byte) as u64)
+        .unwrap_or(u64::MAX)
+}
+
 fn push_seed(
     seen: &mut HashSet<u64>,
     seeds: &mut Vec<Seed>,
@@ -399,6 +449,9 @@ fn render_seed_page(
     }
 
     page.push_str(&format!("\n## Forward chain ({})\n\n", forward.len()));
+    page.push_str(
+        "Internal traversal only; external callees appear in Callees and the ego graph.\n",
+    );
     page.push_str(&render_chain(forward, describe));
     page.push_str(&format!("\n## Backward chain ({})\n\n", backward.len()));
     page.push_str(&render_chain(backward, describe));
@@ -420,13 +473,14 @@ fn render_seed_page(
                 cell(&node_source(node)),
             ));
         }
-        page.push_str("\n| from | relation | to |\n|---|---|---|\n");
+        page.push_str("\n| from | relation | to | callsite |\n|---|---|---|---:|\n");
         for edge in &ego.edges {
             page.push_str(&format!(
-                "| {} | {} | {} |\n",
+                "| {} | {} | {} | {} |\n",
                 cell(&edge.source),
                 cell(&edge.relation),
                 cell(&edge.target),
+                cell(edge.callsite.as_deref().unwrap_or("-"))
             ));
         }
         page.push_str("\n```mermaid\n");
