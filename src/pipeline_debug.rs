@@ -169,10 +169,7 @@ impl PipelineDebugExporter {
         let _ = writeln!(
             out,
             "Groups: {} (input_entities={}, output_groups={}, standalone={})",
-            group_count,
-            stats.input_entities,
-            stats.output_groups,
-            stats.standalone_entities
+            group_count, stats.input_entities, stats.output_groups, stats.standalone_entities
         );
         let _ = writeln!(
             out,
