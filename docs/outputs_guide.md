@@ -292,10 +292,16 @@ cargo run --example relation_review_flask -p cce-e2e-tests
 前后向调用链、ego 图）并渲染。关系查询无需向量后端，全程离线。
 
 **输出内容：**
-- `run_manifest.txt` - 运行清单（种子数、索引实体/关系数、项目图节点/边数、未命中 hub）
+- `run_manifest.txt` - 运行清单（种子数、索引实体/关系数、项目图节点/边数、未命中 hub；`scope` 行声明测试路径是否排除）
 - `index.md` - 逐种子汇总表（callee/caller/前后向链/ego 节点边数）
-- `entity/{seed}.md` - 逐种子的调用链与 ego 图明细
+- `entity/{seed}.md` - 逐种子的调用链、非调用引用（Incoming references）与 ego 图明细
 - `graph/{seed}.json` - 机器可读 ego 图快照
+
+**口径说明：**
+- ego 边数为调用点去重后的边，不等于索引关系数；同一调用点的重复捕获（方法/回调、直接/静态）在提取层合并为一条。
+- 前后向链与 ego 默认只含生产文件，测试路径被排除（`CCE_RELATION_REVIEW_INCLUDE_TESTS=1` 可切回含测试视图）。
+- 前后向链只遍历内部实体，外部被调仅出现在 Callees 与 ego 中；`Incoming references` 节展示表驱动分发等非调用引用边，此类边不计入 Callers。
+- Callees 表的 `callsite` 列为调用点文件与 1-based 行号，per-callsite 重复行以此区分。
 
 ### 2. benchmark/ 目录
 

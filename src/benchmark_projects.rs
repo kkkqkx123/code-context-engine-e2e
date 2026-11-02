@@ -157,7 +157,7 @@ impl BenchmarkProject {
             spec: self.target_spec(),
             judgments: self.judgments(),
             hub_names: self.hub_names(),
-            max_seeds: 8,
+            max_seeds: 14,
             depth: 2,
             limit: 20,
         }

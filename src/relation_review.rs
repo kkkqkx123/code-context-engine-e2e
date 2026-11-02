@@ -24,15 +24,17 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Context;
-use cce_codegraph::index::SnapshotEntityQueryOps;
 use cce_codegraph::index::snapshot_query::SnapshotSymbolQueryOps;
+use cce_codegraph::index::{SnapshotEntityQueryOps, SnapshotRelationQueryOps};
 use cce_llm_client::OpenAICompatibleProvider;
 use cce_orchestrator::SearchSources;
+use cce_orchestrator::query::ExcludableContentType;
 use cce_orchestrator::query::graph::{GraphDirection, GraphService, SubGraph};
 use cce_orchestrator::query::relation_searcher::RelationQueryOptions;
+use cce_orchestrator::query::types::query_options::path_excluded_by_types;
 use cce_types::{EntityId, ResolvedRelation};
 
-use crate::bench_data::{RelevanceJudgment, RelevanceLevel};
+use crate::bench_data::{QueryType, RelevanceJudgment, RelevanceLevel};
 use crate::embedding::EmbeddingConfig;
 use crate::fixture::{FixtureAccess, FixtureSpec, TestFixture};
 use crate::mock_embedding_server::{MockEmbeddingServer, mock_embedding_config};
@@ -107,9 +109,16 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
         .context("init query coordinator")?;
 
     let (seeds, unprocessed_hubs) = resolve_seeds(&query_test, &config);
+    let include_tests = std::env::var("CCE_RELATION_REVIEW_INCLUDE_TESTS")
+        .is_ok_and(|value| !value.is_empty() && value != "0");
     let relation_options = RelationQueryOptions {
         max_depth: config.depth,
         limit: config.limit,
+        exclude_content_types: if include_tests {
+            Vec::new()
+        } else {
+            vec![ExcludableContentType::Test]
+        },
         ..RelationQueryOptions::default()
     };
 
@@ -121,7 +130,9 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
         let describe = |id: EntityId| describe_entity(coordinator, id);
 
         let callees = coordinator.get_callees(seed.id).unwrap_or_default();
-        let callers = coordinator.get_callers(seed.id).unwrap_or_default();
+        let caller_relations = coordinator
+            .get_callers_paginated(seed.id, &relation_options)
+            .unwrap_or_default();
         let forward = coordinator
             .query_forward(seed.id, &relation_options)
             .unwrap_or_default();
@@ -131,10 +142,45 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
         let ego = GraphService::new(coordinator.relation_searcher_arc())
             .ego_graph(seed.id, config.depth, GraphDirection::Both)
             .unwrap_or_default();
+        let ego = if include_tests {
+            ego
+        } else {
+            exclude_test_nodes(ego)
+        };
+        let incoming = coordinator
+            .relation_searcher()
+            .query()
+            .index()
+            .get_relations_to_entity(seed.id);
+        let references: Vec<ResolvedRelation> = incoming
+            .into_iter()
+            .filter(|relation| !relation.relation_type.is_call())
+            .collect();
+        let file_referrers = coordinator
+            .relation_searcher()
+            .query()
+            .get_file_callers_of(seed.id);
+        let seed_file = coordinator
+            .relation_searcher()
+            .query()
+            .index()
+            .get_file_path_by_entity(seed.id)
+            .unwrap_or_default();
 
         let slug = seed_slug(&seed_name, seed.stable_id.as_deref());
         let page = render_seed_page(
-            &seed, &describe, &callees, &callers, &forward, &backward, &ego,
+            &seed,
+            &SeedPageData {
+                seed_file: &seed_file,
+                callees: &callees,
+                callers: &caller_relations,
+                references: &references,
+                file_referrers: &file_referrers,
+                forward: &forward,
+                backward: &backward,
+                ego: &ego,
+            },
+            &describe,
         );
         manager.write(&format!("entity/{slug}.md"), &page)?;
         manager.write(
@@ -147,7 +193,7 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
             name: seed_name,
             provenance: seed.provenance.clone(),
             callees: callees.len(),
-            callers: callers.len(),
+            callers: caller_relations.len(),
             forward: forward.len(),
             backward: backward.len(),
             ego_nodes: ego.nodes.len(),
@@ -177,9 +223,13 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
             export.nodes.len(),
             export.edges.len(),
             &index_result,
+            include_tests,
         ),
     )?;
-    manager.write("index.md", &render_index(&config, &outcomes, &skipped))?;
+    manager.write(
+        "index.md",
+        &render_index(&config, &outcomes, &skipped, include_tests),
+    )?;
 
     println!(
         "Relation review written to {}",
@@ -211,38 +261,10 @@ where
         if seeds.len() >= config.max_seeds {
             break;
         }
-        let Some((range, _)) = judgment
-            .relevant_ranges
-            .iter()
-            .find(|(_, level)| *level == RelevanceLevel::Strong)
-            .or_else(|| judgment.relevant_ranges.first())
-        else {
+        if judgment.query_type != QueryType::Qualified {
             continue;
-        };
-        let ids =
-            snapshot.get_entities_in_line_range(&range.file, range.start_line, range.end_line);
-        if let Some(id) = pick_most_specific_entity(
-            snapshot,
-            &ids,
-            range.start_line,
-            range.end_line,
-        ) {
-            let name = snapshot
-                .get_function_by_entity_id(id)
-                .map(|entity| entity.name.clone())
-                .unwrap_or_else(|| format!("entity-{}", id.0));
-            push_seed(
-                &mut seen,
-                &mut seeds,
-                id,
-                name,
-                format!(
-                    "judgment {} range {}:{}-{}",
-                    judgment.id, range.file, range.start_line, range.end_line
-                ),
-                stable_id_of(snapshot, id),
-            );
         }
+        try_seed_judgment(snapshot, judgment, &mut seen, &mut seeds);
     }
 
     for hub in &config.hub_names {
@@ -251,7 +273,11 @@ where
             continue;
         }
         let mut ids = snapshot.get_function_ids_by_name(hub);
-        ids.sort_by_key(|id| id.0);
+        ids.sort_by(|a, b| {
+            hub_degree(snapshot, *b)
+                .cmp(&hub_degree(snapshot, *a))
+                .then_with(|| a.0.cmp(&b.0))
+        });
         for id in ids.into_iter().take(2) {
             if seeds.len() >= config.max_seeds {
                 break;
@@ -270,7 +296,54 @@ where
             );
         }
     }
+    if seeds.len() < config.max_seeds {
+        for judgment in &config.judgments {
+            if seeds.len() >= config.max_seeds {
+                break;
+            }
+            if judgment.query_type == QueryType::Qualified {
+                continue;
+            }
+            try_seed_judgment(snapshot, judgment, &mut seen, &mut seeds);
+        }
+    }
     (seeds, unprocessed_hubs)
+}
+
+fn try_seed_judgment(
+    snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
+    judgment: &RelevanceJudgment,
+    seen: &mut HashSet<u64>,
+    seeds: &mut Vec<Seed>,
+) {
+    let Some((range, _)) = judgment
+        .relevant_ranges
+        .iter()
+        .find(|(_, level)| *level == RelevanceLevel::Strong)
+        .or_else(|| judgment.relevant_ranges.first())
+    else {
+        return;
+    };
+    let query_start = range.start_line.saturating_sub(1);
+    let query_end = range.end_line.saturating_sub(1);
+    let ids = snapshot.get_entities_in_line_range(&range.file, query_start, query_end);
+    if let Some(id) = pick_most_specific_entity(snapshot, &ids, range.start_line, range.end_line) {
+        let name = snapshot
+            .get_function_by_entity_id(id)
+            .map(|entity| entity.name.clone())
+            .unwrap_or_else(|| format!("entity-{}", id.0));
+        push_seed(
+            seen,
+            seeds,
+            id,
+            name,
+            format!(
+                "judgment {} range {}:{}-{}",
+                judgment.id, range.file, range.start_line, range.end_line
+            ),
+            stable_id_of(snapshot, id),
+        );
+    }
 }
 
 /// Insert a seed unless its entity was already selected.
@@ -282,42 +355,67 @@ fn pick_most_specific_entity(
 ) -> Option<EntityId> {
     let first_row = start_line.min(end_line).saturating_sub(1);
     let last_row = start_line.max(end_line).saturating_sub(1);
-    ids.iter().copied().max_by(|a, b| {
-        overlap_len(*a, first_row, last_row, snapshot)
-            .cmp(&overlap_len(*b, first_row, last_row, snapshot))
-            .then_with(|| span_len(*b, snapshot).cmp(&span_len(*a, snapshot)))
-            .then_with(|| b.0.cmp(&a.0))
-    })
-}
-
-fn overlap_len(
-    entity_id: EntityId,
-    first_row: usize,
-    last_row: usize,
-    snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
-) -> usize {
-    let Some(entity) = snapshot.get_function_by_entity_id(entity_id) else {
-        return 0;
-    };
-    let start = entity.span.start_position.row;
-    let end = entity.span.end_position.row.max(start);
-    let overlap_start = start.max(first_row);
-    let overlap_end = end.min(last_row);
-    if overlap_end >= overlap_start {
-        overlap_end - overlap_start + 1
-    } else {
-        0
+    let mut candidates: Vec<(EntityId, usize, usize, u64, bool)> = Vec::new();
+    for id in ids.iter().copied() {
+        let Some(entity) = snapshot.get_function_by_entity_id(id) else {
+            continue;
+        };
+        if !(entity.kind.is_function_like() || entity.kind.is_type_definition()) {
+            continue;
+        }
+        let start = entity.span.start_position.row;
+        let end = entity.span.end_position.row.max(start);
+        let byte_len = entity.span.end_byte.saturating_sub(entity.span.start_byte);
+        candidates.push((
+            id,
+            start,
+            end,
+            byte_len as u64,
+            entity.kind.is_function_like(),
+        ));
     }
-}
-
-fn span_len(
-    entity_id: EntityId,
-    snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
-) -> u64 {
-    snapshot
-        .get_function_by_entity_id(entity_id)
-        .map(|entity| entity.span.end_byte.saturating_sub(entity.span.start_byte) as u64)
-        .unwrap_or(u64::MAX)
+    // Function-like entities win over type definitions at every tier so a
+    // range straddling two overloads still resolves to a method, and a
+    // class is only chosen when no callable candidate exists.
+    for function_like in [true, false] {
+        let mut inside: Vec<(EntityId, u64)> = Vec::new();
+        let mut containing: Vec<(EntityId, u64)> = Vec::new();
+        let mut overlapping: Vec<(EntityId, usize, u64)> = Vec::new();
+        for (id, start, end, byte_len, is_fn) in &candidates {
+            if *is_fn != function_like {
+                continue;
+            }
+            if *start >= first_row && *end <= last_row {
+                inside.push((*id, *byte_len));
+            } else if *start <= first_row && *end >= last_row {
+                containing.push((*id, *byte_len));
+            } else if *start <= last_row && *end >= first_row {
+                let overlap_start = (*start).max(first_row);
+                let overlap_end = (*end).min(last_row);
+                overlapping.push((*id, overlap_end - overlap_start + 1, *byte_len));
+            }
+        }
+        if let Some((id, _)) = inside
+            .into_iter()
+            .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.0.cmp(&b.0.0)))
+        {
+            return Some(id);
+        }
+        if let Some((id, _)) = containing
+            .into_iter()
+            .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.0.cmp(&b.0.0)))
+        {
+            return Some(id);
+        }
+        if let Some((id, _, _)) = overlapping.into_iter().max_by(|a, b| {
+            a.1.cmp(&b.1)
+                .then_with(|| b.2.cmp(&a.2))
+                .then_with(|| b.0.0.cmp(&a.0.0))
+        }) {
+            return Some(id);
+        }
+    }
+    None
 }
 
 fn push_seed(
@@ -336,6 +434,18 @@ fn push_seed(
             stable_id,
         });
     }
+}
+
+/// Hub candidate connectivity used to surface the most-linked entities.
+fn hub_degree(
+    snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
+    id: EntityId,
+) -> usize {
+    let outgoing = snapshot
+        .get_resolved_relations_by_caller(id)
+        .map(|relations| relations.len())
+        .unwrap_or(0);
+    outgoing + snapshot.get_callers_by_callee_entity(id).len()
 }
 
 /// Stable symbol id for cross-run joins, when the entity has one.
@@ -386,16 +496,34 @@ fn describe_entity(
     }
 }
 
+/// Neighbor data rendered on one seed page.
+struct SeedPageData<'a> {
+    seed_file: &'a str,
+    callees: &'a [ResolvedRelation],
+    callers: &'a [ResolvedRelation],
+    references: &'a [ResolvedRelation],
+    file_referrers: &'a [String],
+    forward: &'a [cce_codegraph::CallChainNode],
+    backward: &'a [cce_codegraph::CallChainNode],
+    ego: &'a SubGraph,
+}
+
 /// Render one self-contained per-seed markdown page.
 fn render_seed_page(
     seed: &Seed,
+    data: &SeedPageData<'_>,
     describe: &dyn Fn(EntityId) -> (String, String, String),
-    callees: &[ResolvedRelation],
-    callers: &[EntityId],
-    forward: &[cce_codegraph::CallChainNode],
-    backward: &[cce_codegraph::CallChainNode],
-    ego: &SubGraph,
 ) -> String {
+    let SeedPageData {
+        seed_file,
+        callees,
+        callers,
+        references,
+        file_referrers,
+        forward,
+        backward,
+        ego,
+    } = *data;
     let (name, kind, location) = describe(seed.id);
     let mut page = format!("# Seed: {name} (`{kind}`)\n\n");
     page.push_str(&format!(
@@ -413,7 +541,7 @@ fn render_seed_page(
     if callees.is_empty() {
         page.push_str("(none)\n");
     } else {
-        page.push_str("| callee | relation | location |\n|---|---|---|\n");
+        page.push_str("| callee | relation | location | callsite |\n|---|---|---|---|\n");
         for relation in callees {
             let (target, _, target_location) =
                 relation.callee_id.map(describe).unwrap_or_else(|| {
@@ -424,10 +552,11 @@ fn render_seed_page(
                     )
                 });
             page.push_str(&format!(
-                "| {} | {:?} | `{}` |\n",
+                "| {} | {:?} | `{}` | `{}` |\n",
                 cell(&target),
                 relation.relation_type,
                 cell(&target_location),
+                cell(&callsite_label(seed_file, relation)),
             ));
         }
     }
@@ -436,14 +565,16 @@ fn render_seed_page(
     if callers.is_empty() {
         page.push_str("(none)\n");
     } else {
-        page.push_str("| caller | kind | location |\n|---|---|---|\n");
-        for caller in callers {
-            let (caller_name, caller_kind, caller_location) = describe(*caller);
+        page.push_str("| caller | relation | location | callsite |\n|---|---|---|---|\n");
+        for relation in callers {
+            let (caller_name, _, caller_location) = describe(relation.caller);
+            let caller_file = caller_location.split(':').next().unwrap_or("");
             page.push_str(&format!(
-                "| {} | {} | `{}` |\n",
+                "| {} | {:?} | `{}` | `{}` |\n",
                 cell(&caller_name),
-                cell(&caller_kind),
+                relation.relation_type,
                 cell(&caller_location),
+                cell(&callsite_label(caller_file, relation)),
             ));
         }
     }
@@ -453,6 +584,31 @@ fn render_seed_page(
         "Internal traversal only; external callees appear in Callees and the ego graph.\n",
     );
     page.push_str(&render_chain(forward, describe));
+    page.push_str(&format!(
+        "\n## Incoming references ({})\n\n",
+        references.len() + file_referrers.len()
+    ));
+    page.push_str(
+        "Non-call incoming edges (table entries, assignments, function-pointer passing). Excluded from Callers by design; shown here so table-driven dispatch is not mistaken for dead code.\n",
+    );
+    if references.is_empty() && file_referrers.is_empty() {
+        page.push_str("(none)\n");
+    } else {
+        page.push_str("| source | relation | callsite |\n|---|---|---|\n");
+        for relation in references {
+            let (source, _, source_location) = describe(relation.caller);
+            let caller_file = source_location.split(':').next().unwrap_or("");
+            page.push_str(&format!(
+                "| {} | {:?} | `{}` |\n",
+                cell(&source),
+                relation.relation_type,
+                cell(&callsite_label(caller_file, relation)),
+            ));
+        }
+        for file in file_referrers {
+            page.push_str(&format!("| {} | file_reference | `-` |\n", cell(file)));
+        }
+    }
     page.push_str(&format!("\n## Backward chain ({})\n\n", backward.len()));
     page.push_str(&render_chain(backward, describe));
 
@@ -516,6 +672,39 @@ fn render_chain(
     out
 }
 
+/// Callsite label for a per-callsite edge: caller file plus 1-based line.
+fn callsite_label(caller_file: &str, relation: &ResolvedRelation) -> String {
+    match relation.span.line_range_opt() {
+        Some((line, _)) if !caller_file.is_empty() => format!("{caller_file}:{line}"),
+        _ => "-".to_string(),
+    }
+}
+
+/// Drop ego nodes under excluded test paths plus their incident edges.
+fn exclude_test_nodes(ego: SubGraph) -> SubGraph {
+    let excluded_types = [ExcludableContentType::Test];
+    let kept: HashSet<String> = ego
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.source_file.is_empty()
+                || !path_excluded_by_types(&node.source_file, &excluded_types)
+        })
+        .map(|node| node.id.clone())
+        .collect();
+    let nodes: Vec<_> = ego
+        .nodes
+        .into_iter()
+        .filter(|node| kept.contains(node.id.as_str()))
+        .collect();
+    let edges: Vec<_> = ego
+        .edges
+        .into_iter()
+        .filter(|edge| kept.contains(edge.source.as_str()) && kept.contains(edge.target.as_str()))
+        .collect();
+    SubGraph { nodes, edges }
+}
+
 /// Mermaid flowchart for the ego graph.
 fn render_mermaid(ego: &SubGraph) -> String {
     let mut out = String::from("flowchart TD\n");
@@ -545,6 +734,7 @@ fn render_manifest(
     export_nodes: usize,
     export_edges: usize,
     index_result: &cce_orchestrator::IndexResult,
+    include_tests: bool,
 ) -> String {
     let mut manifest = format!("project: {}\n", config.project);
     manifest.push_str(&format!("language: {}\n", config.language));
@@ -569,6 +759,14 @@ fn render_manifest(
     manifest.push_str(
         "caliber: ego `nodes/edges` counts callsite-deduped graph edges, not index relations; compare only within one caliber\n",
     );
+    manifest.push_str(&format!(
+        "scope: {} (set CCE_RELATION_REVIEW_INCLUDE_TESTS=1 to include test files)\n",
+        if include_tests {
+            "production + test files"
+        } else {
+            "production files only, test paths excluded"
+        }
+    ));
     if skipped.is_empty() {
         manifest.push_str("skipped: none\n");
     } else {
@@ -585,13 +783,20 @@ fn render_index(
     config: &RelationReviewConfig,
     outcomes: &[SeedOutcome],
     skipped: &[String],
+    include_tests: bool,
 ) -> String {
+    let scope_note = if include_tests {
+        "Chains and ego include test files (CCE_RELATION_REVIEW_INCLUDE_TESTS=1)."
+    } else {
+        "Chains and ego default to production files only; test paths are excluded."
+    };
     let mut page = format!("# Relation Review: {}\n\n", config.project);
     page.push_str(&format!(
-        "{} seeds (depth {}, limit {}). Open each file for chains and the ego graph.\n\n",
+        "{} seeds (depth {}, limit {}). {} Open each file for chains and the ego graph.\n\n",
         outcomes.len(),
         config.depth,
-        config.limit
+        config.limit,
+        scope_note
     ));
     page.push_str("| seed | provenance | callees | callers | forward | backward | ego nodes/edges |\n|---|---|---:|---:|---:|---:|---|\n");
     for outcome in outcomes {
