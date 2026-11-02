@@ -20,7 +20,7 @@
 //! offline on BM25-only sources. Outputs are for manual review only and
 //! never participate in assertions.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -29,7 +29,7 @@ use cce_codegraph::index::{SnapshotEntityQueryOps, SnapshotRelationQueryOps};
 use cce_llm_client::OpenAICompatibleProvider;
 use cce_orchestrator::SearchSources;
 use cce_orchestrator::query::ExcludableContentType;
-use cce_orchestrator::query::graph::{GraphDirection, GraphService, SubGraph};
+use cce_orchestrator::query::graph::{GraphDirection, GraphEdge, GraphService, SubGraph};
 use cce_orchestrator::query::relation_searcher::RelationQueryOptions;
 use cce_orchestrator::query::types::query_options::path_excluded_by_types;
 use cce_types::{EntityId, ResolvedRelation};
@@ -182,6 +182,8 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
             .unwrap_or_default();
 
         let slug = seed_slug(&seed_name, seed.stable_id.as_deref());
+        let folded_ego = fold_ego_edges(&ego.edges);
+        let nested = nested_closure_entities(query_test.coordinator(), seed.id, &seed_file);
         let page = render_seed_page(
             &seed,
             &SeedPageData {
@@ -193,6 +195,8 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
                 forward: &forward,
                 backward: &backward,
                 ego: &ego,
+                folded_ego: &folded_ego,
+                nested: &nested,
             },
             &describe,
         );
@@ -211,7 +215,7 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
             forward: forward.len(),
             backward: backward.len(),
             ego_nodes: ego.nodes.len(),
-            ego_edges: ego.edges.len(),
+            ego_edges: folded_ego.len(),
         });
     }
     for hub in &config.hub_names {
@@ -267,7 +271,7 @@ where
     F: FixtureAccess,
 {
     let mut seeds = Vec::new();
-    let mut seen = HashSet::new();
+    let mut dedup = SeedDedup::default();
     let mut unprocessed_hubs = Vec::new();
 
     let snapshot = query_test.coordinator().relation_searcher().query().index();
@@ -278,7 +282,7 @@ where
         if judgment.query_type != QueryType::Qualified {
             continue;
         }
-        try_seed_judgment(snapshot, judgment, &mut seen, &mut seeds);
+        try_seed_judgment(snapshot, judgment, &mut dedup, &mut seeds);
     }
 
     for hub in &config.hub_names {
@@ -286,7 +290,11 @@ where
             unprocessed_hubs.push(hub.to_string());
             continue;
         }
-        let mut ids = snapshot.get_function_ids_by_name(hub);
+        let mut ids: Vec<EntityId> = snapshot
+            .get_function_ids_by_name(hub)
+            .into_iter()
+            .filter(|id| hub_candidate_ok(snapshot, *id))
+            .collect();
         ids.sort_by(|a, b| {
             hub_degree(snapshot, *b)
                 .cmp(&hub_degree(snapshot, *a))
@@ -301,7 +309,8 @@ where
                 .map(|entity| entity.name.clone())
                 .unwrap_or_else(|| hub.to_string());
             push_seed(
-                &mut seen,
+                snapshot,
+                &mut dedup,
                 &mut seeds,
                 id,
                 name,
@@ -318,16 +327,25 @@ where
             if judgment.query_type == QueryType::Qualified {
                 continue;
             }
-            try_seed_judgment(snapshot, judgment, &mut seen, &mut seeds);
+            try_seed_judgment(snapshot, judgment, &mut dedup, &mut seeds);
         }
     }
     (seeds, unprocessed_hubs)
 }
 
+/// Deduplication state for seed selection: selected entity ids plus the
+/// exact file spans already covered (alias entities such as
+/// `req.get = req.header` share one span and collapse to a single seed).
+#[derive(Default)]
+struct SeedDedup {
+    seen: HashSet<u64>,
+    seen_spans: HashSet<(String, u64, u64)>,
+}
+
 fn try_seed_judgment(
     snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
     judgment: &RelevanceJudgment,
-    seen: &mut HashSet<u64>,
+    dedup: &mut SeedDedup,
     seeds: &mut Vec<Seed>,
 ) {
     let Some((range, _)) = judgment
@@ -347,7 +365,8 @@ fn try_seed_judgment(
             .map(|entity| entity.name.clone())
             .unwrap_or_else(|| format!("entity-{}", id.0));
         push_seed(
-            seen,
+            snapshot,
+            dedup,
             seeds,
             id,
             name,
@@ -360,7 +379,26 @@ fn try_seed_judgment(
     }
 }
 
-/// Insert a seed unless its entity was already selected.
+/// Ordering key for judgment-seed selection: covered rows first, then less
+/// span excess, smaller size, and lower entity id for determinism.
+type CoverageKey = (
+    usize,
+    core::cmp::Reverse<u64>,
+    core::cmp::Reverse<u64>,
+    core::cmp::Reverse<u64>,
+);
+
+/// Pick the entity covering the most judgment rows.
+///
+/// Judgment ranges name an implementation span, so the seed is the entity
+/// covering the largest share of the range, usually the range's exact owner.
+/// The previous smallest-inside rule resolved `app.use` to its nested
+/// `mounted_app` closure and `createApplication` to its inner `app`
+/// closure, hiding the judged methods from review. Ties break toward less
+/// span excess, then smaller size, then lower entity id for determinism.
+/// Function-like entities still win over type definitions so a range
+/// straddling overloads resolves to a method, with a class chosen only
+/// when no callable candidate exists.
 fn pick_most_specific_entity(
     snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
     ids: &[EntityId],
@@ -369,85 +407,114 @@ fn pick_most_specific_entity(
 ) -> Option<EntityId> {
     let first_row = start_line.min(end_line).saturating_sub(1);
     let last_row = start_line.max(end_line).saturating_sub(1);
-    let mut candidates: Vec<(EntityId, usize, usize, u64, bool)> = Vec::new();
-    for id in ids.iter().copied() {
-        let Some(entity) = snapshot.get_function_by_entity_id(id) else {
-            continue;
-        };
-        if !(entity.kind.is_function_like() || entity.kind.is_type_definition()) {
-            continue;
-        }
-        let start = entity.span.start_position.row;
-        let end = entity.span.end_position.row.max(start);
-        let byte_len = entity.span.end_byte.saturating_sub(entity.span.start_byte);
-        candidates.push((
-            id,
-            start,
-            end,
-            byte_len as u64,
-            entity.kind.is_function_like(),
-        ));
-    }
-    // Function-like entities win over type definitions at every tier so a
-    // range straddling two overloads still resolves to a method, and a
-    // class is only chosen when no callable candidate exists.
     for function_like in [true, false] {
-        let mut inside: Vec<(EntityId, u64)> = Vec::new();
-        let mut containing: Vec<(EntityId, u64)> = Vec::new();
-        let mut overlapping: Vec<(EntityId, usize, u64)> = Vec::new();
-        for (id, start, end, byte_len, is_fn) in &candidates {
-            if *is_fn != function_like {
+        let mut best: Option<(CoverageKey, EntityId)> = None;
+        for id in ids.iter().copied() {
+            let Some(entity) = snapshot.get_function_by_entity_id(id) else {
+                continue;
+            };
+            let is_fn = entity.kind.is_function_like();
+            if is_fn != function_like {
                 continue;
             }
-            if *start >= first_row && *end <= last_row {
-                inside.push((*id, *byte_len));
-            } else if *start <= first_row && *end >= last_row {
-                containing.push((*id, *byte_len));
-            } else if *start <= last_row && *end >= first_row {
-                let overlap_start = (*start).max(first_row);
-                let overlap_end = (*end).min(last_row);
-                overlapping.push((*id, overlap_end - overlap_start + 1, *byte_len));
+            if !(is_fn || entity.kind.is_type_definition()) {
+                continue;
+            }
+            let start = entity.span.start_position.row;
+            let end = entity.span.end_position.row.max(start);
+            if end < first_row || start > last_row {
+                continue;
+            }
+            let overlap = end.min(last_row) - start.max(first_row) + 1;
+            let excess = (end - start + 1 - overlap) as u64;
+            let byte_len = entity.span.end_byte.saturating_sub(entity.span.start_byte) as u64;
+            let key = (
+                overlap,
+                core::cmp::Reverse(excess),
+                core::cmp::Reverse(byte_len),
+                core::cmp::Reverse(id.0),
+            );
+            let replace = match &best {
+                None => true,
+                Some((current, _)) => key > *current,
+            };
+            if replace {
+                best = Some((key, id));
             }
         }
-        if let Some((id, _)) = inside
-            .into_iter()
-            .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.0.cmp(&b.0.0)))
-        {
-            return Some(id);
-        }
-        if let Some((id, _)) = containing
-            .into_iter()
-            .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.0.cmp(&b.0.0)))
-        {
-            return Some(id);
-        }
-        if let Some((id, _, _)) = overlapping.into_iter().max_by(|a, b| {
-            a.1.cmp(&b.1)
-                .then_with(|| b.2.cmp(&a.2))
-                .then_with(|| b.0.0.cmp(&a.0.0))
-        }) {
+        if let Some((_, id)) = best {
             return Some(id);
         }
     }
     None
 }
 
+/// Whether a hub-name match may become a review seed.
+///
+/// The name index also holds non-callable entities (an `examples/` variable
+/// shadowing a router method, an import binding), which previously became
+/// junk seeds. Hubs additionally stay within production paths, matching the
+/// scope used for chains and ego graphs.
+fn hub_candidate_ok(
+    snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
+    id: EntityId,
+) -> bool {
+    let Some(entity) = snapshot.get_function_by_entity_id(id) else {
+        return false;
+    };
+    if !(entity.kind.is_function_like() || entity.kind.is_type_definition()) {
+        return false;
+    }
+    let path = snapshot.get_file_path_by_entity(id).unwrap_or_default();
+    if path.is_empty() {
+        return false;
+    }
+    if path_excluded_by_types(&path, &[ExcludableContentType::Test]) {
+        return false;
+    }
+    if path
+        .split('/')
+        .any(|segment| segment.eq_ignore_ascii_case("examples"))
+    {
+        return false;
+    }
+    true
+}
+
+/// Insert a seed unless its entity or its exact file span was selected.
+///
+/// Same-span deduplication collapses alias entities of one function (such as
+/// `req.get = req.header`) into a single seed so redundant pages do not
+/// consume the seed budget.
 fn push_seed(
-    seen: &mut HashSet<u64>,
+    snapshot: &cce_codegraph::index::snapshot_index::LayeredSnapshotIndex,
+    dedup: &mut SeedDedup,
     seeds: &mut Vec<Seed>,
     id: EntityId,
     name: String,
     provenance: String,
     stable_id: Option<String>,
 ) {
-    if seen.insert(id.0) {
-        seeds.push(Seed {
-            id,
-            name,
-            provenance,
-            stable_id,
-        });
+    if !dedup.seen.insert(id.0) {
+        return;
     }
+    if let Some(entity) = snapshot.get_function_by_entity_id(id) {
+        let file = snapshot.get_file_path_by_entity(id).unwrap_or_default();
+        let span_key = (
+            file,
+            entity.span.start_byte as u64,
+            entity.span.end_byte as u64,
+        );
+        if !dedup.seen_spans.insert(span_key) {
+            return;
+        }
+    }
+    seeds.push(Seed {
+        id,
+        name,
+        provenance,
+        stable_id,
+    });
 }
 
 /// Hub candidate connectivity used to surface the most-linked entities.
@@ -475,10 +542,14 @@ fn stable_id_of(
 /// Whether a hub name contributed at least one rendered seed.
 ///
 /// Provenance is recorded at seed time, so the check reads it directly
-/// instead of reverse-looking-up the slug suffix.
+/// instead of reverse-looking-up the slug suffix. A same-named judgment
+/// seed also counts: the entity the hub would have contributed is already
+/// under review, so the hub must not be reported as unmatched or starved.
 fn hub_resolved(outcomes: &[SeedOutcome], hub: &str) -> bool {
     let wanted = format!("hub `{hub}`");
-    outcomes.iter().any(|outcome| outcome.provenance == wanted)
+    outcomes
+        .iter()
+        .any(|outcome| outcome.provenance == wanted || outcome.name.eq_ignore_ascii_case(hub))
 }
 
 /// One-line human description of an entity id for neighbor tables.
@@ -520,6 +591,109 @@ struct SeedPageData<'a> {
     forward: &'a [cce_codegraph::CallChainNode],
     backward: &'a [cce_codegraph::CallChainNode],
     ego: &'a SubGraph,
+    folded_ego: &'a [FoldedEdge],
+    nested: &'a [(String, String, String)],
+}
+
+/// One ego edge group sharing (source, relation, target).
+///
+/// The traversal emits one edge per call site, so hot pairs repeat once
+/// per call. Review tables count and render folded groups; the raw
+/// per-callsite edges stay in the machine-readable graph JSON.
+struct FoldedEdge {
+    source: String,
+    target: String,
+    relation: String,
+    callsites: Vec<String>,
+}
+
+/// Fold per-callsite ego edges by (source, relation, target), preserving
+/// first-seen order.
+fn fold_ego_edges(edges: &[GraphEdge]) -> Vec<FoldedEdge> {
+    let mut folded: Vec<FoldedEdge> = Vec::new();
+    let mut index: HashMap<(String, String, String), usize> = HashMap::new();
+    for edge in edges {
+        let key = (
+            edge.source.clone(),
+            edge.target.clone(),
+            edge.relation.clone(),
+        );
+        if let Some(&pos) = index.get(&key) {
+            if let Some(site) = edge.callsite.as_deref() {
+                folded[pos].callsites.push(site.to_string());
+            }
+            continue;
+        }
+        index.insert(key.clone(), folded.len());
+        folded.push(FoldedEdge {
+            source: key.0,
+            target: key.1,
+            relation: key.2,
+            callsites: edge.callsite.iter().cloned().collect(),
+        });
+    }
+    folded
+}
+
+/// Compact callsite list for one folded edge group.
+fn folded_callsites_label(callsites: &[String]) -> String {
+    const SHOWN: usize = 3;
+    let mut shown: Vec<&str> = callsites.iter().take(SHOWN).map(String::as_str).collect();
+    if callsites.len() > SHOWN {
+        shown.push("\u{2026}");
+    }
+    if shown.is_empty() {
+        return "-".to_string();
+    }
+    let mut label = shown.join(", ");
+    if callsites.len() > SHOWN {
+        label.push_str(&format!(" (+{} more)", callsites.len() - SHOWN));
+    }
+    label
+}
+
+/// Function-like entities strictly inside the seed span.
+///
+/// Calls inside them are attributed to the closure rather than the seed,
+/// so a seed delegating to callbacks (such as `app.use` to its `forEach`
+/// callback) would otherwise look behaviorless. Listed for orientation;
+/// their own edges stay on their own pages.
+fn nested_closure_entities(
+    coordinator: &cce_orchestrator::QueryCoordinator,
+    seed: EntityId,
+    seed_file: &str,
+) -> Vec<(String, String, String)> {
+    let snapshot = coordinator.relation_searcher().query().index();
+    let Some(seed_entity) = snapshot.get_function_by_entity_id(seed) else {
+        return Vec::new();
+    };
+    let start = seed_entity.span.start_position.row;
+    let end = seed_entity.span.end_position.row;
+    snapshot
+        .get_entities_in_line_range(seed_file, start, end)
+        .into_iter()
+        .filter(|id| *id != seed)
+        .filter_map(|id| snapshot.get_function_by_entity_id(id))
+        .filter(|entity| entity.kind.is_function_like())
+        .filter(|entity| {
+            let inner_start = entity.span.start_position.row;
+            let inner_end = entity.span.end_position.row;
+            inner_start >= start && inner_end <= end && (inner_start != start || inner_end != end)
+        })
+        .take(8)
+        .map(|entity| {
+            (
+                entity.name.clone(),
+                format!("{:?}", entity.kind).to_lowercase(),
+                format!(
+                    "{}:{}-{}",
+                    seed_file,
+                    entity.span.start_position.row + 1,
+                    entity.span.end_position.row + 1
+                ),
+            )
+        })
+        .collect()
 }
 
 /// Render one self-contained per-seed markdown page.
@@ -537,6 +711,8 @@ fn render_seed_page(
         forward,
         backward,
         ego,
+        folded_ego,
+        nested,
     } = *data;
     let (name, kind, location) = describe(seed.id);
     let mut page = format!("# Seed: {name} (`{kind}`)\n\n");
@@ -550,6 +726,16 @@ fn render_seed_page(
     ));
     page.push_str(&format!("- Location: `{location}`\n"));
     page.push_str(&format!("- Provenance: {}\n", seed.provenance));
+    if !nested.is_empty() {
+        let items: Vec<String> = nested
+            .iter()
+            .map(|(name, kind, location)| format!("`{name}` (`{kind}`, `{location}`)"))
+            .collect();
+        page.push_str(&format!(
+            "- Nested closures: {}. Calls inside them are attributed to the closure, not to this seed.\n",
+            items.join(", ")
+        ));
+    }
 
     page.push_str(&format!("\n## Callees ({})\n\n", callees.len()));
     if callees.is_empty() {
@@ -629,8 +815,11 @@ fn render_seed_page(
     page.push_str(&format!(
         "\n## Ego graph ({} nodes, {} edges)\n\n",
         ego.nodes.len(),
-        ego.edges.len()
+        folded_ego.len()
     ));
+    page.push_str(
+        "Edges folded by (source, relation, target); repeated calls share one row with their callsites listed.\n",
+    );
     if ego.nodes.is_empty() {
         page.push_str("(empty)\n");
     } else {
@@ -643,18 +832,18 @@ fn render_seed_page(
                 cell(&node_source(node)),
             ));
         }
-        page.push_str("\n| from | relation | to | callsite |\n|---|---|---|---:|\n");
-        for edge in &ego.edges {
+        page.push_str("\n| from | relation | to | callsites |\n|---|---|---|---:|\n");
+        for edge in folded_ego {
             page.push_str(&format!(
                 "| {} | {} | {} | {} |\n",
                 cell(&edge.source),
                 cell(&edge.relation),
                 cell(&edge.target),
-                cell(edge.callsite.as_deref().unwrap_or("-"))
+                cell(&folded_callsites_label(&edge.callsites))
             ));
         }
         page.push_str("\n```mermaid\n");
-        page.push_str(&render_mermaid(ego));
+        page.push_str(&render_mermaid(&ego.nodes, folded_ego));
         page.push_str("```\n");
     }
     page
@@ -729,17 +918,20 @@ fn exclude_test_nodes(ego: SubGraph) -> SubGraph {
     SubGraph { nodes, edges }
 }
 
-/// Mermaid flowchart for the ego graph.
-fn render_mermaid(ego: &SubGraph) -> String {
+/// Mermaid flowchart for the folded ego graph.
+fn render_mermaid(
+    nodes: &[cce_orchestrator::query::graph::GraphNode],
+    edges: &[FoldedEdge],
+) -> String {
     let mut out = String::from("flowchart TD\n");
-    for node in &ego.nodes {
+    for node in nodes {
         out.push_str(&format!(
             "    {}[\"{}\"]\n",
             mermaid_id(&node.id),
             mermaid_label(&node.label),
         ));
     }
-    for edge in &ego.edges {
+    for edge in edges {
         out.push_str(&format!(
             "    {} -->|{}| {}\n",
             mermaid_id(&edge.source),
