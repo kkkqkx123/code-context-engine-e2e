@@ -129,16 +129,30 @@ pub async fn run_relation_review(config: RelationReviewConfig) -> anyhow::Result
         let seed_name = seed.name.clone();
         let describe = |id: EntityId| describe_entity(coordinator, id);
 
-        let callees = coordinator.get_callees(seed.id).unwrap_or_default();
-        let caller_relations = coordinator
+        let callees: Vec<ResolvedRelation> = coordinator
+            .get_callees(seed.id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(is_call_view_edge)
+            .collect();
+        let caller_relations: Vec<ResolvedRelation> = coordinator
             .get_callers_paginated(seed.id, &relation_options)
-            .unwrap_or_default();
-        let forward = coordinator
+            .unwrap_or_default()
+            .into_iter()
+            .filter(is_call_view_edge)
+            .collect();
+        let forward: Vec<cce_codegraph::CallChainNode> = coordinator
             .query_forward(seed.id, &relation_options)
-            .unwrap_or_default();
-        let backward = coordinator
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|node| node.relation_type != cce_types::RelationType::FunctionReference)
+            .collect();
+        let backward: Vec<cce_codegraph::CallChainNode> = coordinator
             .query_backward(seed.id, &relation_options)
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|node| node.relation_type != cce_types::RelationType::FunctionReference)
+            .collect();
         let ego = GraphService::new(coordinator.relation_searcher_arc())
             .ego_graph(seed.id, config.depth, GraphDirection::Both)
             .unwrap_or_default();
@@ -670,6 +684,16 @@ fn render_chain(
         ));
     }
     out
+}
+
+/// Whether a relation belongs in the call-semantics views (Callees, Callers,
+/// forward/backward chains).
+///
+/// Function-reference edges record that a function value is used, not that
+/// it is invoked. They surface only in the Incoming references section;
+/// letting them into the call views would inflate caller counts and chains.
+fn is_call_view_edge(relation: &ResolvedRelation) -> bool {
+    relation.relation_type != cce_types::RelationType::FunctionReference
 }
 
 /// Callsite label for a per-callsite edge: caller file plus 1-based line.
