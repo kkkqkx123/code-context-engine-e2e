@@ -173,6 +173,14 @@ name = "dump_document_chunks"
 path = "examples/rust/dump_document_chunks.rs"
 
 [[example]]
+name = "dbg_bm25_ranked"
+path = "examples/rust/dbg_bm25_ranked.rs"
+
+[[example]]
+name = "dbg_direct_chunks"
+path = "examples/rust/dbg_direct_chunks.rs"
+
+[[example]]
 name = "export_doc"
 path = "examples/rust/export_doc.rs"
 
