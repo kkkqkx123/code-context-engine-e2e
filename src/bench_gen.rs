@@ -12,6 +12,7 @@ use cce_config::{
     AppConfig,
     modules::{EmbeddingModelConfig, ProviderConfig},
 };
+use cce_llm::{EmbeddingResult, LlmError};
 use cce_llm_client::OpenAICompatibleProvider;
 use cce_orchestrator::index::FileProcessor;
 use cce_plugin::PluginRegistry;
@@ -220,6 +221,127 @@ pub fn scan_fixture(spec: FixtureSpec) -> anyhow::Result<Vec<cce_scanner::FileEn
     Ok(scanner.scan(&opts)?)
 }
 
+/// Retry budget for one outer embedding batch in benchmark data generation.
+///
+/// Data generation is an offline throughput workload: waiting out a rate
+/// window is far cheaper than discarding the whole run. Six retries with a
+/// capped exponential schedule sleep about two minutes in total, enough to
+/// ride out per-minute token and request windows.
+const EMBED_BATCH_MAX_RETRIES: u32 = 6;
+const EMBED_RETRY_BASE_DELAY_MS: u64 = 2000;
+const EMBED_RETRY_MAX_DELAY_MS: u64 = 60_000;
+/// Pacing between diagnostic single-text probes so fault isolation never
+/// bursts at full concurrency into a recovering rate window.
+const EMBED_PROBE_PACING_MS: u64 = 500;
+/// Outer batch size for benchmark embedding: bounds one provider request so
+/// a persistent batch-level rejection converges through halving.
+const MAX_BATCH_CHUNKS: usize = 16;
+
+/// Whether one more attempt may succeed for a data-generation batch error.
+///
+/// Timeouts, transport failures, rate limits, gateway failures and server
+/// errors are transient. HTTP 400 is included because the provider surfaces
+/// throttling as a bare 400 parameter error; a genuinely invalid payload
+/// converges through the batch-split fallback instead of burning retries.
+/// Billing, auth, model, configuration and token-budget rejections are
+/// permanent and fail fast.
+fn is_transient_batch_error(err: &LlmError) -> bool {
+    match err {
+        LlmError::RateLimitExceeded(_)
+        | LlmError::Timeout(_)
+        | LlmError::Http(_)
+        | LlmError::Api(_)
+        | LlmError::InvalidResponse(_)
+        | LlmError::CircuitBreakerOpen(_) => true,
+        LlmError::HttpStatus { status, .. } => *status == 400 || (500..=599).contains(status),
+        _ => false,
+    }
+}
+
+/// Wait before a batch retry: capped exponential backoff honoring the
+/// provider-reported retry window as a lower bound.
+fn embed_retry_delay_ms(attempt: u32, err: &LlmError) -> u64 {
+    let backoff = EMBED_RETRY_BASE_DELAY_MS
+        .saturating_mul(1u64 << attempt.saturating_sub(1).min(6))
+        .min(EMBED_RETRY_MAX_DELAY_MS);
+    match err {
+        LlmError::RateLimitExceeded(retry_after_ms) => backoff.max(*retry_after_ms),
+        _ => backoff,
+    }
+}
+
+/// Embed one outer batch with retries, halving the batch when a persistent
+/// HTTP 400 indicates a payload-size rejection rather than throttling.
+async fn embed_outer_batch(
+    embedder: &OpenAICompatibleProvider,
+    refs: &[&str],
+    batch_idx: usize,
+) -> anyhow::Result<EmbeddingResult> {
+    let mut attempt = 0u32;
+    loop {
+        match embedder.embed(refs).await {
+            Ok(result) => return Ok(result),
+            Err(err) => {
+                if !is_transient_batch_error(&err) || attempt >= EMBED_BATCH_MAX_RETRIES {
+                    return handle_exhausted_batch(embedder, refs, batch_idx, err).await;
+                }
+                attempt += 1;
+                let delay_ms = embed_retry_delay_ms(attempt, &err);
+                eprintln!(
+                    "  Embedding batch {batch_idx} attempt {attempt} failed ({err}); retrying in {delay_ms}ms"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+        }
+    }
+}
+
+/// Diagnose an outer batch whose retries are exhausted.
+///
+/// A persistent HTTP 400 over several texts halves the batch so a genuinely
+/// oversized payload converges to passable halves; rate-limit errors skip
+/// single-text probing because the probes would only amplify the throttle.
+/// Remaining failures fall back to paced single-text probes that report the
+/// offending global index.
+async fn handle_exhausted_batch(
+    embedder: &OpenAICompatibleProvider,
+    refs: &[&str],
+    batch_idx: usize,
+    err: LlmError,
+) -> anyhow::Result<EmbeddingResult> {
+    if matches!(err, LlmError::HttpStatus { status: 400, .. }) && refs.len() > 1 {
+        let mid = refs.len() / 2;
+        eprintln!(
+            "  Embedding batch {batch_idx} persistently rejected; splitting {} texts into {mid} + {}",
+            refs.len(),
+            refs.len() - mid
+        );
+        let mut left = Box::pin(embed_outer_batch(embedder, &refs[..mid], batch_idx)).await?;
+        let right = Box::pin(embed_outer_batch(embedder, &refs[mid..], batch_idx)).await?;
+        left.embeddings.extend(right.embeddings);
+        left.prompt_tokens += right.prompt_tokens;
+        left.total_tokens += right.total_tokens;
+        return Ok(left);
+    }
+    if matches!(err, LlmError::RateLimitExceeded(_)) {
+        return Err(err.into());
+    }
+    for (offset, text) in refs.iter().enumerate() {
+        tokio::time::sleep(std::time::Duration::from_millis(EMBED_PROBE_PACING_MS)).await;
+        if let Err(single_err) = embedder.embed(std::slice::from_ref(text)).await {
+            anyhow::bail!(
+                "Embedding failed for batch {batch_idx}, text index {} \
+                 (len {}): {single_err}\nBatch error: {err}\n\
+                 Text preview: {:?}",
+                batch_idx * MAX_BATCH_CHUNKS + offset,
+                text.len(),
+                &text[..text.len().min(200)]
+            );
+        }
+    }
+    Err(err.into())
+}
+
 pub async fn embed_texts(
     embedder: &OpenAICompatibleProvider,
     texts: &[String],
@@ -236,7 +358,6 @@ pub async fn embed_texts(
         }
     }
 
-    const MAX_BATCH_CHUNKS: usize = 16;
     let mut all_vectors = Vec::new();
     let mut dim = 0;
 
@@ -248,27 +369,7 @@ pub async fn embed_texts(
             refs.len(),
             refs.iter().map(|s| s.len()).max().unwrap_or(0)
         );
-        let result = match embedder.embed(&refs).await {
-            Ok(result) => result,
-            Err(batch_err) => {
-                // Isolate the offending text so the failure is diagnosable:
-                // embed each batch member individually and report the first
-                // one the provider rejects.
-                for (offset, text) in refs.iter().enumerate() {
-                    if let Err(single_err) = embedder.embed(std::slice::from_ref(text)).await {
-                        anyhow::bail!(
-                            "Embedding failed for batch {batch_idx}, text index {} \
-                             (len {}): {single_err}\nBatch error: {batch_err}\n\
-                             Text preview: {:?}",
-                            batch_idx * MAX_BATCH_CHUNKS + offset,
-                            text.len(),
-                            &text[..text.len().min(200)]
-                        );
-                    }
-                }
-                return Err(batch_err.into());
-            }
-        };
+        let result = embed_outer_batch(embedder, &refs, batch_idx).await?;
         if result.embeddings.len() != refs.len() {
             anyhow::bail!(
                 "Embedding response count mismatch in batch {batch_idx}: expected {}, received {}",
@@ -596,6 +697,56 @@ fn get_chunk_entity_name(chunk: &cce_parser::ast_to_nl::chunker::ChunkedResult) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cce_llm::LlmError;
+    use cce_types::error::common::TimeoutError;
+
+    #[test]
+    fn embed_retry_schedule_spans_about_two_minutes() {
+        let total: u64 = (1..=EMBED_BATCH_MAX_RETRIES)
+            .map(|attempt| {
+                embed_retry_delay_ms(attempt, &LlmError::Timeout(TimeoutError::new("t")))
+            })
+            .sum();
+        assert!(
+            (110_000..=140_000).contains(&total),
+            "retry sleeps must total about two minutes, got {total}ms"
+        );
+    }
+
+    #[test]
+    fn embed_retry_honors_retry_after_floor() {
+        let err = LlmError::RateLimitExceeded(45_000);
+        assert_eq!(embed_retry_delay_ms(1, &err), 45_000);
+        assert_eq!(embed_retry_delay_ms(6, &err), 60_000);
+    }
+
+    #[test]
+    fn transient_batch_errors_retry_and_permanent_errors_fail_fast() {
+        for err in [
+            LlmError::Timeout(TimeoutError::new("t")),
+            LlmError::RateLimitExceeded(1000),
+            LlmError::HttpStatus {
+                status: 400,
+                message: "throttle".into(),
+            },
+            LlmError::HttpStatus {
+                status: 503,
+                message: "busy".into(),
+            },
+        ] {
+            assert!(is_transient_batch_error(&err), "must retry: {err}");
+        }
+        for err in [
+            LlmError::Auth("bad key".into()),
+            LlmError::QuotaExhausted("empty".into()),
+            LlmError::ModelNotFound("gone".into()),
+            LlmError::TokenLimitExceeded(9000, 8192),
+            LlmError::ContextLengthExceeded("long".into()),
+            LlmError::InvalidInput("bad".into()),
+        ] {
+            assert!(!is_transient_batch_error(&err), "must fail fast: {err}");
+        }
+    }
 
     #[test]
     fn collect_files_by_ext_decodes_non_utf8_c_source() {
