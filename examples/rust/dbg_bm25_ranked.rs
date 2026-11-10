@@ -62,6 +62,125 @@ const TARGETS: &[Target] = &[
         start: 727,
         end: 765,
     },
+    Target {
+        query_id: "G2Q4",
+        query_text: "extract matched results with surrounding context lines",
+        file: "crates/searcher/src/sink.rs",
+        start: 142,
+        end: 149,
+    },
+    Target {
+        query_id: "G2Q14",
+        query_text: "parse gitignore file format with comments and negation",
+        file: "crates/ignore/src/gitignore.rs",
+        start: 385,
+        end: 421,
+    },
+    Target {
+        query_id: "G2Q11",
+        query_text: "compile PCRE2 pattern with advanced flags for lookaround",
+        file: "crates/pcre2/src/matcher.rs",
+        start: 37,
+        end: 85,
+    },
+    Target {
+        query_id: "G2Q16",
+        query_text: "extract literal strings from regex for optimization",
+        file: "crates/regex/src/literal.rs",
+        start: 54,
+        end: 70,
+    },
+    Target {
+        query_id: "G2Q4",
+        query_text: "extract matched results with surrounding context lines",
+        file: "crates/searcher/src/searcher/mod.rs",
+        start: 399,
+        end: 419,
+    },
+    Target {
+        query_id: "G2Q5",
+        query_text: "compile regular expression with case insensitive flag",
+        file: "crates/regex/src/matcher.rs",
+        start: 103,
+        end: 106,
+    },
+    Target {
+        query_id: "G2Q1",
+        query_text: "search for text pattern in files using regular expression",
+        file: "crates/regex/src/matcher.rs",
+        start: 409,
+        end: 421,
+    },
+    Target {
+        query_id: "G2Q6",
+        query_text: "match patterns that span across multiple lines",
+        file: "crates/searcher/src/searcher/mod.rs",
+        start: 373,
+        end: 391,
+    },
+    Target {
+        query_id: "G2Q7",
+        query_text: "use memory mapped file for efficient search performance",
+        file: "crates/searcher/src/searcher/mmap.rs",
+        start: 13,
+        end: 25,
+    },
+    Target {
+        query_id: "G2Q10",
+        query_text: "filter files by extension or type like rust or python",
+        file: "crates/ignore/src/types.rs",
+        start: 248,
+        end: 289,
+    },
+    Target {
+        query_id: "G2Q12",
+        query_text: "format search output with line numbers and file paths",
+        file: "crates/printer/src/standard.rs",
+        start: 1172,
+        end: 1189,
+    },
+    Target {
+        query_id: "G2Q15",
+        query_text: "handle search errors gracefully with unified error type",
+        file: "crates/searcher/src/searcher/mod.rs",
+        start: 238,
+        end: 262,
+    },
+    Target {
+        query_id: "G2Q9",
+        query_text: "detect and handle binary files during search",
+        file: "crates/searcher/src/line_buffer.rs",
+        start: 42,
+        end: 64,
+    },
+    Target {
+        query_id: "G2Q18",
+        query_text: "override ignore rules with include or exclude globs",
+        file: "crates/ignore/src/overrides.rs",
+        start: 119,
+        end: 134,
+    },
+    Target {
+        query_id: "FZ-G1Q9-synonym",
+        query_text: "compile method on Pcre2Matcher",
+        file: "crates/pcre2/src/matcher.rs",
+        start: 37,
+        end: 39,
+    },
+    Target {
+        query_id: "G2Q13",
+        query_text: "parallel directory traversal using multiple threads",
+        file: "crates/ignore/src/walk.rs",
+        start: 1306,
+        end: 1325,
+    },
+    Target {
+        query_id: "G2Q13",
+        query_text: "parallel directory traversal using multiple threads",
+        file: "crates/ignore/src/walk.rs",
+        start: 1355,
+        end: 1365,
+    },
 ];
 
 const BASELINES: &[&str] = &[
@@ -69,6 +188,68 @@ const BASELINES: &[&str] = &[
     "full_pipeline_raw_source",
     "direct_chunking",
 ];
+
+/// Dump every BM25 chunk of one file: id, span, text length, text head.
+/// Usage: `cargo run --example dbg_bm25_ranked -p cce-e2e-tests -- dump <baseline> <file-suffix>`
+/// Output: `outputs/debug/bm25_ranked/DUMP_{baseline}__{stem}.txt`.
+fn dump_file_chunks(baseline: &str, file_suffix: &str) {
+    let out_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("outputs")
+        .join("debug")
+        .join("bm25_ranked");
+    std::fs::create_dir_all(&out_root).expect("create debug output dir");
+    let bench = load_benchmark_data(&data_path(baseline)).expect("load bench data");
+    let mut out = String::new();
+    for (i, record) in bench.bm25_documents.iter().enumerate() {
+        let chunk = &bench.bm25.chunks[i];
+        if !chunk.file_path.ends_with(file_suffix) {
+            continue;
+        }
+        let head: String = record.content.chars().take(300).collect();
+        out.push_str(&format!(
+            "--- {} {}:{}-{} title={:?} keywords={:?} content_len={}\n{}\n",
+            chunk.chunk_id,
+            chunk.file_path,
+            chunk.start_line,
+            chunk.end_line,
+            record.title,
+            record.keywords,
+            record.content.len(),
+            head,
+        ));
+    }
+    let stem = file_suffix.replace('/', "_");
+    std::fs::write(out_root.join(format!("DUMP_{baseline}__{stem}.txt")), &out)
+        .expect("write dump");
+    eprintln!("WROTE DUMP {baseline} {file_suffix}");
+}
+
+/// Print full content + keywords of every BM25 chunk whose span overlaps
+/// [start, end] in the given file.
+/// Usage: `cargo run --example dbg_bm25_ranked -p cce-e2e-tests -- show <baseline> <file-suffix> <start> <end>`
+fn show_covering_chunks(baseline: &str, file_suffix: &str, start: usize, end: usize) {
+    let bench = load_benchmark_data(&data_path(baseline)).expect("load bench data");
+    for (i, record) in bench.bm25_documents.iter().enumerate() {
+        let chunk = &bench.bm25.chunks[i];
+        if !chunk.file_path.ends_with(file_suffix) {
+            continue;
+        }
+        if chunk.start_line > end || chunk.end_line < start {
+            continue;
+        }
+        println!(
+            "=== {} {}:{}-{} title={:?} keywords={:?} content_len={} ===\n{}\n",
+            chunk.chunk_id,
+            chunk.file_path,
+            chunk.start_line,
+            chunk.end_line,
+            record.title,
+            record.keywords,
+            record.content.len(),
+            record.content,
+        );
+    }
+}
 
 fn data_path(baseline: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -81,6 +262,17 @@ fn data_path(baseline: &str) -> std::path::PathBuf {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 4 && args[1] == "dump" {
+        dump_file_chunks(&args[2], &args[3]);
+        return;
+    }
+    if args.len() == 6 && args[1] == "show" {
+        let start: usize = args[4].parse().expect("start line");
+        let end: usize = args[5].parse().expect("end line");
+        show_covering_chunks(&args[2], &args[3], start, end);
+        return;
+    }
     let out_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("outputs")
         .join("debug")
@@ -123,7 +315,7 @@ fn main() {
             let query = infra::expand_query(&bench.query_texts[q_idx], &term_index);
             let ranked_all = infra::score_all(
                 &term_index,
-                &[query.clone()],
+                std::slice::from_ref(&query),
                 &config,
                 TermOperator::Or,
                 docs.len(),
@@ -267,7 +459,10 @@ fn main() {
                 out.push_str("best-single: NONE (no same-file chunk retrieved)\n");
             }
             std::fs::write(
-                out_root.join(format!("{baseline}__{}.txt", target.query_id)),
+                out_root.join(format!(
+                    "{baseline}__{}_{}-{}.txt",
+                    target.query_id, target.start, target.end
+                )),
                 &out,
             )
             .expect("write debug output");

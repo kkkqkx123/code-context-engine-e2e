@@ -293,10 +293,7 @@ where
         // A hub whose name is already under review contributes nothing new:
         // expanding it would spend budget on a same-name duplicate instead
         // of an uncovered hub, so mark it covered and leave the slot free.
-        if seeds
-            .iter()
-            .any(|seed| seed.name.eq_ignore_ascii_case(*hub))
-        {
+        if seeds.iter().any(|seed| seed.name.eq_ignore_ascii_case(hub)) {
             continue;
         }
         let mut ids: Vec<EntityId> = snapshot

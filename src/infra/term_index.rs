@@ -132,7 +132,10 @@ pub fn build_term_index(documents: &[FulltextDocument]) -> InMemoryTermIndex {
 ///
 /// Uses the shared production `MixedTokenizer` so benchmark term statistics
 /// mirror the real tantivy indexing behavior (identifier splitting, CJK
-/// segmentation, dual-form tokens).
+/// segmentation, dual-form tokens). The index stores attested word forms
+/// only; depluralization applies on the query side (`expand_query`), so
+/// index statistics stay untouched and existing deployments need no
+/// reindexing for the query-side gain.
 pub fn tokenize_text(text: &str) -> Vec<String> {
     MixedTokenizer::new().tokenize(text)
 }
@@ -160,7 +163,12 @@ impl ExpandedQuery {
 /// tokenize the query with the production tokenizer, then expand whole/split
 /// forms using the corpus document-frequency table.
 pub fn expand_query(query_text: &str, index: &InMemoryTermIndex) -> ExpandedQuery {
-    let tokens = MixedTokenizer::new().tokenize_offsets(query_text);
+    // Query-side plural variants (shared implementation with production
+    // retrieval): a plural query term also tries its singular form, so
+    // `files` reaches docs that only spell `file`. Index statistics are
+    // untouched, so this cannot dilute attested-term weights.
+    let tokens =
+        cce_text::expand_with_plural_variants(MixedTokenizer::new().tokenize_offsets(query_text));
     let terms = expand_query_tokens(&tokens, |text| index.term_doc_freq(text))
         .into_iter()
         .map(|(token, scale)| QueryTerm {
