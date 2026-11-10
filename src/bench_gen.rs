@@ -15,9 +15,11 @@ use cce_config::{
 use cce_llm::{EmbeddingResult, LlmError};
 use cce_llm_client::OpenAICompatibleProvider;
 use cce_orchestrator::index::FileProcessor;
+use cce_parser::ast_to_nl::chunker::{ChunkPath, ChunkedResult};
 use cce_plugin::PluginRegistry;
 use cce_plugin_runtime::FilePluginSource;
 use cce_scanner::{FSScanner, ScanOptions};
+use cce_types::{OutputMode, ParsedFile};
 
 pub fn data_dir(baseline: &str, project: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -566,6 +568,107 @@ pub fn chunk_data_from_result(chunk: &cce_parser::ast_to_nl::chunker::ChunkedRes
     }
 }
 
+/// Single-parse products shared by the full-pipeline baselines.
+///
+/// The production index parses each file once and derives both retrieval
+/// paths from the same parse. Both `full_pipeline` (NL text) and
+/// `full_pipeline_raw_source` (sliced raw source) share these products so a
+/// large fixture is parsed only once per `run_bench_gen` run; derivation is
+/// a pure clone + text replacement without any reparsing.
+pub struct FullPipelineParse {
+    /// NL embedding-path chunks (`OutputMode::Both` split, unfiltered).
+    pub embedding_nl: Vec<ChunkedResult>,
+    /// NL BM25-path chunks (`OutputMode::Both` split, unfiltered).
+    pub bm25_nl: Vec<ChunkedResult>,
+    /// Target-fixture parses feeding the relation-edge sidecar.
+    pub target_parsed: Vec<ParsedFile>,
+    /// Decoded source by normalized path, backing raw-source slicing.
+    pub source_map: HashMap<String, String>,
+}
+
+pub(crate) fn split_full_pipeline_chunks(
+    results: Vec<ChunkedResult>,
+) -> (Vec<ChunkedResult>, Vec<ChunkedResult>) {
+    let mut emb = Vec::new();
+    let mut bm25 = Vec::new();
+    for chunk in results {
+        match chunk.path {
+            ChunkPath::Bm25 => bm25.push(chunk),
+            ChunkPath::Embedding => emb.push(chunk),
+        }
+    }
+    (emb, bm25)
+}
+
+/// Parse target + distractor fixtures once for the full-pipeline baselines.
+///
+/// Runs one `process_file_complete(entry, OutputMode::Both)` pass with the
+/// unified `file_processor_for(&target_spec)` processor, splits each result
+/// into both retrieval paths, and records the decoded source map plus the
+/// target parses. Callers derive `full_pipeline` and
+/// `full_pipeline_raw_source` chunks from this without reparsing.
+pub async fn collect_full_pipeline_parse(
+    target_spec: FixtureSpec,
+    distractor_spec: FixtureSpec,
+) -> anyhow::Result<FullPipelineParse> {
+    let target_entries = scan_fixture(target_spec.clone())?;
+    let dist_entries = scan_fixture(distractor_spec)?;
+    let mut processor = file_processor_for(&target_spec);
+    let mut embedding_nl = Vec::new();
+    let mut bm25_nl = Vec::new();
+    let mut target_parsed = Vec::new();
+    let mut source_map: HashMap<String, String> = HashMap::new();
+    for entry in &target_entries {
+        if let Ok(result) = processor
+            .process_file_complete(entry, OutputMode::Both)
+            .await
+        {
+            record_source(&mut source_map, entry, &result.parsed_file);
+            let (emb, bm25) = split_full_pipeline_chunks(result.chunks);
+            embedding_nl.extend(emb);
+            bm25_nl.extend(bm25);
+            target_parsed.push(result.parsed_file);
+        }
+    }
+    for entry in &dist_entries {
+        if let Ok(result) = processor
+            .process_file_complete(entry, OutputMode::Both)
+            .await
+        {
+            record_source(&mut source_map, entry, &result.parsed_file);
+            let (emb, bm25) = split_full_pipeline_chunks(result.chunks);
+            embedding_nl.extend(emb);
+            bm25_nl.extend(bm25);
+        }
+    }
+    eprintln!(
+        "=== FULL PIPELINE PARSE: {} embedding chunks, {} bm25 chunks over {} target files ===",
+        embedding_nl.len(),
+        bm25_nl.len(),
+        target_parsed.len(),
+    );
+    Ok(FullPipelineParse {
+        embedding_nl,
+        bm25_nl,
+        target_parsed,
+        source_map,
+    })
+}
+
+fn record_source(
+    source_map: &mut HashMap<String, String>,
+    entry: &cce_scanner::FileEntry,
+    parsed_file: &ParsedFile,
+) {
+    let decoded = parsed_file.source.to_string();
+    let entry_key = normalize_file_path(&entry.relative_path.to_string_lossy());
+    let parsed_key = normalize_file_path(&parsed_file.path);
+    source_map
+        .entry(entry_key)
+        .or_insert_with(|| decoded.clone());
+    source_map.entry(parsed_key).or_insert(decoded);
+}
+
 /// Project-level configuration for benchmark data generation.
 pub struct ProjectConfig {
     pub name: &'static str,
@@ -574,10 +677,12 @@ pub struct ProjectConfig {
     pub queries: Vec<QueryData>,
 }
 
-/// Run the full 2-baseline benchmark data generation for a project.
+/// Run the full 3-baseline benchmark data generation for a project.
 ///
-/// Handles embedder setup, both baselines (full_pipeline, direct_chunking),
-/// and persistence to `data/benchmark/{baseline}/{name}/bge-m3/`.
+/// Parses target + distractor fixtures once and derives both `full_pipeline`
+/// (NL text) and `full_pipeline_raw_source` (sliced raw source) from that
+/// single parse; `direct_chunking` keeps its separate lightweight pipeline.
+/// Persists to `data/benchmark/{baseline}/{name}/bge-m3/`.
 pub async fn run_bench_gen(config: ProjectConfig) -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
     crate::init_minimal_logging();
@@ -592,29 +697,24 @@ pub async fn run_bench_gen(config: ProjectConfig) -> anyhow::Result<()> {
     let target_spec = config.target_spec;
     let distractor_spec = config.distractor_spec;
 
-    for baseline in [
-        "full_pipeline",
-        "full_pipeline_raw_source",
-        "direct_chunking",
-    ] {
+    eprintln!("=== Phase 1: parsing once for full-pipeline variants ===");
+    let shared = collect_full_pipeline_parse(target_spec.clone(), distractor_spec.clone()).await?;
+    let full_chunks = full_pipeline::derive_full_pipeline_chunks(&shared, target_spec.clone())?;
+    let raw_chunks = full_pipeline_raw::derive_full_pipeline_raw_source_chunks(&shared)?;
+    eprintln!("=== Phase 1b: generating direct_chunking chunks ===");
+    let direct_chunks =
+        entity_based::gen_entity_based_chunks(target_spec.clone(), distractor_spec.clone()).await?;
+    let baselines: Vec<(&str, GeneratedChunks)> = vec![
+        ("full_pipeline", full_chunks),
+        ("full_pipeline_raw_source", raw_chunks),
+        ("direct_chunking", direct_chunks),
+    ];
+    for (baseline, chunks) in &baselines {
         eprintln!("\n{}", "=".repeat(60));
         eprintln!("=== Baseline: {baseline} ===");
         eprintln!("{}\n", "=".repeat(60));
 
-        eprintln!("=== Phase 1: generating chunks ===");
-        let chunks = if baseline == "full_pipeline" {
-            full_pipeline::gen_full_pipeline_chunks(target_spec.clone(), distractor_spec.clone())
-                .await?
-        } else if baseline == "full_pipeline_raw_source" {
-            full_pipeline_raw::gen_full_pipeline_raw_source_chunks(
-                target_spec.clone(),
-                distractor_spec.clone(),
-            )
-            .await?
-        } else {
-            entity_based::gen_entity_based_chunks(target_spec.clone(), distractor_spec.clone())
-                .await?
-        };
+        eprintln!("=== Phase 1: chunks ready (no reparsing) ===");
 
         if chunks.embedding_chunks.len() != chunks.embedding_texts.len() {
             anyhow::bail!(

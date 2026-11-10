@@ -1,75 +1,35 @@
 use std::collections::HashMap;
 
-use cce_orchestrator::index::FileProcessor;
-use cce_parser::ast_to_nl::chunker::{ChunkPath, ChunkedResult};
+use cce_parser::ast_to_nl::chunker::ChunkedResult;
 use cce_parser::grouper::GroupType;
-use cce_types::OutputMode;
 
 use crate::bench_data::ChunkData;
 use crate::bench_gen::{
-    GeneratedChunks, bm25_doc_records, chunk_data_from_result, normalize_file_path, scan_fixture,
-    validate_unique_chunks,
+    FullPipelineParse, GeneratedChunks, bm25_doc_records, chunk_data_from_result,
+    collect_full_pipeline_parse, normalize_file_path, validate_unique_chunks,
 };
 
-/// Split a single-parse `OutputMode::Both` result into the two retrieval paths
-/// (see `baselines/full_pipeline.rs` for the alignment rationale).
-fn split_by_path(results: Vec<ChunkedResult>) -> (Vec<ChunkedResult>, Vec<ChunkedResult>) {
-    let mut emb = Vec::new();
-    let mut bm25 = Vec::new();
-    for chunk in results {
-        match chunk.path {
-            ChunkPath::Bm25 => bm25.push(chunk),
-            ChunkPath::Embedding => emb.push(chunk),
-        }
-    }
-    (emb, bm25)
-}
-
-pub async fn gen_full_pipeline_raw_source_chunks(
-    target_spec: crate::FixtureSpec,
-    distractor_spec: crate::FixtureSpec,
+/// Derive raw-source chunks from one shared parse.
+///
+/// Shares `collect_full_pipeline_parse` with the NL `full_pipeline` baseline
+/// so large fixtures are parsed once; derivation only clones the NL chunks
+/// and replaces `text` by slicing the shared decoded source map by
+/// `source_ranges` (see `baselines/full_pipeline.rs` for the single-parse
+/// alignment rationale).
+pub fn derive_full_pipeline_raw_source_chunks(
+    parse: &FullPipelineParse,
 ) -> anyhow::Result<GeneratedChunks> {
-    let target_entries = scan_fixture(target_spec)?;
-    let dist_entries = scan_fixture(distractor_spec)?;
-
-    let mut source_map: HashMap<String, String> = HashMap::new();
-    let mut processor = FileProcessor::new();
-
-    let mut emb_results: Vec<cce_parser::ast_to_nl::chunker::ChunkedResult> = Vec::new();
-    let mut bm25_results: Vec<cce_parser::ast_to_nl::chunker::ChunkedResult> = Vec::new();
-
-    for entry in target_entries.iter().chain(dist_entries.iter()) {
-        if let Ok(result) = processor
-            .process_file_complete(entry, OutputMode::Both)
-            .await
-        {
-            // The raw baseline slices decoded source lines by chunk
-            // source_ranges, so the map must hold exactly the decoded text
-            // the processor indexed. A separate read_to_string pass would
-            // silently drop non-UTF8 files (for example GBK-encoded
-            // punctuation in media-server C sources) that production
-            // decoding handles, leaving chunks without a map entry.
-            let decoded = result.parsed_file.source.to_string();
-            let entry_key = normalize_file_path(&entry.relative_path.to_string_lossy());
-            let parsed_key = normalize_file_path(&result.parsed_file.path);
-            source_map
-                .entry(entry_key)
-                .or_insert_with(|| decoded.clone());
-            source_map.entry(parsed_key).or_insert(decoded);
-            let (emb, bm25) = split_by_path(result.chunks);
-            emb_results.extend(emb);
-            bm25_results.extend(bm25);
-        }
-    }
+    let mut emb_results = parse.embedding_nl.clone();
+    let mut bm25_results = parse.bm25_nl.clone();
 
     emb_results.retain(|chunk| chunk.group_type != GroupType::FileDocumentation);
     for chunk in &mut emb_results {
-        chunk.text = extract_raw_source(chunk, &source_map);
+        chunk.text = extract_raw_source(chunk, &parse.source_map);
     }
 
     bm25_results.retain(|chunk| chunk.group_type != GroupType::FileDocumentation);
     for chunk in &mut bm25_results {
-        chunk.text = extract_raw_source(chunk, &source_map);
+        chunk.text = extract_raw_source(chunk, &parse.source_map);
     }
 
     eprintln!(
@@ -97,10 +57,15 @@ pub async fn gen_full_pipeline_raw_source_chunks(
     })
 }
 
-fn extract_raw_source(
-    chunk: &cce_parser::ast_to_nl::chunker::ChunkedResult,
-    source_map: &HashMap<String, String>,
-) -> String {
+pub async fn gen_full_pipeline_raw_source_chunks(
+    target_spec: crate::FixtureSpec,
+    distractor_spec: crate::FixtureSpec,
+) -> anyhow::Result<GeneratedChunks> {
+    let parse = collect_full_pipeline_parse(target_spec, distractor_spec).await?;
+    derive_full_pipeline_raw_source_chunks(&parse)
+}
+
+fn extract_raw_source(chunk: &ChunkedResult, source_map: &HashMap<String, String>) -> String {
     const MAX_TOKENS: usize = 7200;
     // Proportional truncation is shared with the dead-letter truncate-retry
     // path via `cce_utils::token_estimation::truncate_to_token_budget`:
@@ -170,6 +135,9 @@ fn extract_raw_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bench_gen::split_full_pipeline_chunks;
+    use cce_orchestrator::index::FileProcessor;
+    use cce_types::OutputMode;
 
     fn gbk_c_bytes() -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -226,7 +194,7 @@ mod tests {
             .entry(normalize_file_path(&result.parsed_file.path))
             .or_insert(decoded_from_result);
 
-        let (emb, bm25) = split_by_path(result.chunks);
+        let (emb, bm25) = split_full_pipeline_chunks(result.chunks);
         assert!(
             !emb.is_empty() || !bm25.is_empty(),
             "gbk fixture must yield chunks"

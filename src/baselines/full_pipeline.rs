@@ -1,75 +1,30 @@
 use cce_codegraph::IndexBuilder;
-use cce_parser::ast_to_nl::chunker::{ChunkPath, ChunkedResult};
+use cce_parser::ast_to_nl::chunker::ChunkedResult;
 use cce_parser::grouper::GroupType;
-use cce_types::{OutputMode, ParsedFile};
+use cce_types::ParsedFile;
 
 use crate::FixtureSpec;
 use crate::bench_data::{CallEdgeData, ChunkData};
 use crate::bench_gen::{
-    GeneratedChunks, bm25_doc_records, chunk_data_from_result, collect_call_edges,
-    fixture_source_path, scan_fixture, validate_unique_chunks,
+    FullPipelineParse, GeneratedChunks, bm25_doc_records, chunk_data_from_result,
+    collect_call_edges, collect_full_pipeline_parse, fixture_source_path, validate_unique_chunks,
 };
 
-/// Split a single-parse `OutputMode::Both` result into the two retrieval paths.
+/// Derive full-pipeline (NL text) chunks from one shared parse.
 ///
 /// The production index parses each file **once** and generates both paths
 /// from the same parse (see `IndexOrchestrator::decide_output_mode`), so both
 /// paths share the same `entity_ids` and `segment_id`s — the cross-path
 /// alignment contract documented in `chunker.rs` / `hybrid-fusion-design.md`.
-/// The benchmark must mirror this: parsing once per mode would consume a fresh
-/// slice of the global entity-id counter per path and silently break
-/// entity-level alignment (0% alignment coverage).
-fn split_by_path(results: Vec<ChunkedResult>) -> (Vec<ChunkedResult>, Vec<ChunkedResult>) {
-    let mut emb = Vec::new();
-    let mut bm25 = Vec::new();
-    for chunk in results {
-        match chunk.path {
-            ChunkPath::Bm25 => bm25.push(chunk),
-            ChunkPath::Embedding => emb.push(chunk),
-        }
-    }
-    (emb, bm25)
-}
-
-pub async fn gen_full_pipeline_chunks(
+/// Parsing once per baseline would waste a full tree-sitter pass over large
+/// fixtures, so `collect_full_pipeline_parse` runs the parse and both this
+/// and the raw-source baseline derive from it without reparsing.
+pub fn derive_full_pipeline_chunks(
+    parse: &FullPipelineParse,
     target_spec: FixtureSpec,
-    distractor_spec: FixtureSpec,
 ) -> anyhow::Result<GeneratedChunks> {
-    let target_entries = scan_fixture(target_spec.clone())?;
-    let dist_entries = scan_fixture(distractor_spec)?;
-
-    let mut processor = crate::bench_gen::file_processor_for(&target_spec);
-
-    let mut emb_results: Vec<ChunkedResult> = Vec::new();
-    let mut bm25_results: Vec<ChunkedResult> = Vec::new();
-    let mut target_parsed: Vec<ParsedFile> = Vec::new();
-
-    // Target entries: collect chunks and the parse products used for the
-    // relation-edge sidecar (distractors share relative paths and would
-    // collide, so only the target fixture feeds the index).
-    for entry in &target_entries {
-        if let Ok(result) = processor
-            .process_file_complete(entry, OutputMode::Both)
-            .await
-        {
-            let (emb, bm25) = split_by_path(result.chunks);
-            emb_results.extend(emb);
-            bm25_results.extend(bm25);
-            target_parsed.push(result.parsed_file);
-        }
-    }
-    // Distractor entries: collect chunks only (no file-docs — same relative
-    // paths would collide on chunk_id and file-doc queries target only).
-    for entry in &dist_entries {
-        if let Ok(result) = processor
-            .process_file_complete(entry, OutputMode::Both)
-            .await
-        {
-            let (emb, bm25) = split_by_path(result.chunks);
-            emb_results.extend(emb);
-            bm25_results.extend(bm25);
-        }
-    }
+    let mut emb_results = parse.embedding_nl.clone();
+    let mut bm25_results = parse.bm25_nl.clone();
 
     exclude_file_documentation(&mut emb_results, "full-pipeline embedding");
     exclude_file_documentation(&mut bm25_results, "full-pipeline BM25");
@@ -95,8 +50,16 @@ pub async fn gen_full_pipeline_chunks(
         bm25_chunks,
         bm25_texts,
         bm25_documents,
-        call_edges: build_call_edges(target_spec, &target_parsed),
+        call_edges: build_call_edges(target_spec, &parse.target_parsed),
     })
+}
+
+pub async fn gen_full_pipeline_chunks(
+    target_spec: FixtureSpec,
+    distractor_spec: FixtureSpec,
+) -> anyhow::Result<GeneratedChunks> {
+    let parse = collect_full_pipeline_parse(target_spec.clone(), distractor_spec).await?;
+    derive_full_pipeline_chunks(&parse, target_spec)
 }
 
 /// Build the relation index from the same parses that produced the chunks and
