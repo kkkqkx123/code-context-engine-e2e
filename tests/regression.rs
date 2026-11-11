@@ -18,5 +18,7 @@ pub mod rust_relation_diamond;
 pub mod rust_sidecar;
 #[path = "regression/test_marker_language_coverage.rs"]
 pub mod test_marker_language_coverage;
+#[path = "regression/tree_sitter_queries.rs"]
+pub mod tree_sitter_queries;
 #[path = "regression/type_inference/mod.rs"]
 pub mod type_inference;

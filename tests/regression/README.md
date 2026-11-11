@@ -16,6 +16,8 @@
 
 另外 `test_marker_language_coverage` 以内联代码覆盖 C#/Dart/Scala/PHP/C++ 的测试标记回归（见 `docs/plan/language_test_coverage.md`）。
 
+`tree_sitter_queries` 按语言覆盖查询回归 fixture（`fixtures/<lang>/query_regression`）：`go`、`csharp`、`rust`、`ruby`、`php`、`c`、`python`、`scala`、`cpp`、`java`、`javascript`、`typescript`、`kotlin`、`lua`、`dart`、`bash`，断言文件级依赖目标、已消除噪声的否定断言与个别解析归属（见 `docs/plan/tests/query-regression-coverage-supplement-2026-11-11.md`）。
+
 ## 输出文件生成
 
 对应 `outputs/` 下的展示文件由 `examples/` 下的示例生成：

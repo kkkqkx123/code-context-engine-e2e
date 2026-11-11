@@ -114,6 +114,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Rust, "basic")
     }
 
+    /// Rust tree-sitter query regression fixture
+    pub fn rust_query_regression() -> Self {
+        Self::new(FixtureCategory::Rust, "query_regression")
+    }
+
     /// Rust review fixture group
     pub fn rust_review(name: impl Into<String>) -> Self {
         Self::new(FixtureCategory::Rust, format!("review/{}", name.into()))
@@ -199,6 +204,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Python, "basic")
     }
 
+    /// Python tree-sitter query regression fixture
+    pub fn python_query_regression() -> Self {
+        Self::new(FixtureCategory::Python, "query_regression")
+    }
+
     /// Python type inference type hints fixture
     pub fn python_type_inference_type_hints() -> Self {
         Self::new(FixtureCategory::Python, "type_inference/type_hints")
@@ -245,6 +255,11 @@ impl FixtureSpec {
     /// Java basic project fixture
     pub fn java_basic() -> Self {
         Self::new(FixtureCategory::Java, "basic")
+    }
+
+    /// Java tree-sitter query regression fixture
+    pub fn java_query_regression() -> Self {
+        Self::new(FixtureCategory::Java, "query_regression")
     }
 
     /// Java type inference generics fixture
@@ -352,6 +367,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::TypeScript, "basic")
     }
 
+    /// TypeScript tree-sitter query regression fixture
+    pub fn typescript_query_regression() -> Self {
+        Self::new(FixtureCategory::TypeScript, "query_regression")
+    }
+
     /// TypeScript review fixture group
     pub fn typescript_review(name: impl Into<String>) -> Self {
         Self::new(
@@ -433,6 +453,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::CSharp, "basic")
     }
 
+    /// C# tree-sitter query regression fixture
+    pub fn csharp_query_regression() -> Self {
+        Self::new(FixtureCategory::CSharp, "query_regression")
+    }
+
     /// C# type inference generics fixture
     pub fn csharp_type_inference_generics() -> Self {
         Self::new(FixtureCategory::CSharp, "type_inference/generics")
@@ -496,6 +521,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Go, "basic")
     }
 
+    /// Go tree-sitter query regression fixture
+    pub fn go_query_regression() -> Self {
+        Self::new(FixtureCategory::Go, "query_regression")
+    }
+
     /// Go type inference interfaces fixture
     pub fn go_type_inference_interfaces() -> Self {
         Self::new(FixtureCategory::Go, "type_inference/interfaces")
@@ -536,6 +566,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Kotlin, "basic")
     }
 
+    /// Kotlin tree-sitter query regression fixture
+    pub fn kotlin_query_regression() -> Self {
+        Self::new(FixtureCategory::Kotlin, "query_regression")
+    }
+
     /// Kotlin review fixture group
     pub fn kotlin_review(name: impl Into<String>) -> Self {
         Self::new(FixtureCategory::Kotlin, format!("review/{}", name.into()))
@@ -549,6 +584,11 @@ impl FixtureSpec {
     /// PHP basic project fixture
     pub fn php_basic() -> Self {
         Self::new(FixtureCategory::Php, "basic")
+    }
+
+    /// PHP tree-sitter query regression fixture
+    pub fn php_query_regression() -> Self {
+        Self::new(FixtureCategory::Php, "query_regression")
     }
 
     /// PHP review fixture group
@@ -566,6 +606,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Ruby, "basic")
     }
 
+    /// Ruby tree-sitter query regression fixture
+    pub fn ruby_query_regression() -> Self {
+        Self::new(FixtureCategory::Ruby, "query_regression")
+    }
+
     /// Ruby review fixture group
     pub fn ruby_review(name: impl Into<String>) -> Self {
         Self::new(FixtureCategory::Ruby, format!("review/{}", name.into()))
@@ -579,6 +624,11 @@ impl FixtureSpec {
     /// JavaScript basic project fixture (class, functions, CommonJS imports)
     pub fn javascript_basic() -> Self {
         Self::new(FixtureCategory::JavaScript, "basic")
+    }
+
+    /// JavaScript tree-sitter query regression fixture
+    pub fn javascript_query_regression() -> Self {
+        Self::new(FixtureCategory::JavaScript, "query_regression")
     }
 
     /// JavaScript review fixture group
@@ -614,6 +664,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::C, "basic")
     }
 
+    /// C tree-sitter query regression fixture
+    pub fn c_query_regression() -> Self {
+        Self::new(FixtureCategory::C, "query_regression")
+    }
+
     /// C review fixture group
     pub fn c_review(name: impl Into<String>) -> Self {
         Self::new(FixtureCategory::C, format!("review/{}", name.into()))
@@ -632,6 +687,11 @@ impl FixtureSpec {
     /// Bash basic project fixture (source/function)
     pub fn bash_basic() -> Self {
         Self::new(FixtureCategory::Bash, "basic")
+    }
+
+    /// Bash tree-sitter query regression fixture
+    pub fn bash_query_regression() -> Self {
+        Self::new(FixtureCategory::Bash, "query_regression")
     }
 
     /// Bash review fixture group
@@ -654,6 +714,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Lua, "basic")
     }
 
+    /// Lua tree-sitter query regression fixture
+    pub fn lua_query_regression() -> Self {
+        Self::new(FixtureCategory::Lua, "query_regression")
+    }
+
     /// Lua review fixture group
     pub fn lua_review(name: impl Into<String>) -> Self {
         Self::new(FixtureCategory::Lua, format!("review/{}", name.into()))
@@ -672,6 +737,11 @@ impl FixtureSpec {
     /// C++ basic project fixture (header/source separation, class, calls)
     pub fn cpp_basic() -> Self {
         Self::new(FixtureCategory::Cpp, "basic")
+    }
+
+    /// C++ tree-sitter query regression fixture
+    pub fn cpp_query_regression() -> Self {
+        Self::new(FixtureCategory::Cpp, "query_regression")
     }
 
     /// C++ review fixture group
@@ -787,6 +857,11 @@ impl FixtureSpec {
         Self::new(FixtureCategory::Scala, "basic")
     }
 
+    /// Scala tree-sitter query regression fixture
+    pub fn scala_query_regression() -> Self {
+        Self::new(FixtureCategory::Scala, "query_regression")
+    }
+
     /// Scala review fixture group
     pub fn scala_review(name: impl Into<String>) -> Self {
         Self::new(FixtureCategory::Scala, format!("review/{}", name.into()))
@@ -860,6 +935,11 @@ impl FixtureSpec {
     /// Dart basic project fixture (class, functions, imports)
     pub fn dart_basic() -> Self {
         Self::new(FixtureCategory::Dart, "basic")
+    }
+
+    /// Dart tree-sitter query regression fixture
+    pub fn dart_query_regression() -> Self {
+        Self::new(FixtureCategory::Dart, "query_regression")
     }
 
     /// Dart review fixture group
@@ -994,6 +1074,11 @@ impl TestFixture {
         Self::load(FixtureSpec::rust_basic())
     }
 
+    /// Load Rust tree-sitter query regression fixture
+    pub fn rust_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::rust_query_regression())
+    }
+
     /// Load Rust review fixture
     pub fn rust_review(name: impl Into<String>) -> io::Result<Self> {
         Self::load(FixtureSpec::rust_review(name))
@@ -1079,6 +1164,11 @@ impl TestFixture {
         Self::load(FixtureSpec::python_basic())
     }
 
+    /// Load Python tree-sitter query regression fixture
+    pub fn python_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::python_query_regression())
+    }
+
     /// Load Python type inference type hints fixture
     pub fn python_type_inference_type_hints() -> io::Result<Self> {
         Self::load(FixtureSpec::python_type_inference_type_hints())
@@ -1122,6 +1212,11 @@ impl TestFixture {
     /// Load Java basic project fixture
     pub fn java_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::java_basic())
+    }
+
+    /// Load Java tree-sitter query regression fixture
+    pub fn java_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::java_query_regression())
     }
 
     /// Load Java type inference generics fixture
@@ -1214,6 +1309,11 @@ impl TestFixture {
         Self::load(FixtureSpec::typescript_basic())
     }
 
+    /// Load TypeScript tree-sitter query regression fixture
+    pub fn typescript_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::typescript_query_regression())
+    }
+
     /// Load TypeScript index_sidecar review fixture
     pub fn typescript_index_sidecar() -> io::Result<Self> {
         Self::load(FixtureSpec::typescript_index_sidecar())
@@ -1279,6 +1379,11 @@ impl TestFixture {
         Self::load(FixtureSpec::csharp_basic())
     }
 
+    /// Load C# tree-sitter query regression fixture
+    pub fn csharp_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::csharp_query_regression())
+    }
+
     /// Load C# type inference generics fixture
     pub fn csharp_type_inference_generics() -> io::Result<Self> {
         Self::load(FixtureSpec::csharp_type_inference_generics())
@@ -1334,6 +1439,11 @@ impl TestFixture {
         Self::load(FixtureSpec::go_basic())
     }
 
+    /// Load Go tree-sitter query regression fixture
+    pub fn go_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::go_query_regression())
+    }
+
     /// Load Go type inference interfaces fixture
     pub fn go_type_inference_interfaces() -> io::Result<Self> {
         Self::load(FixtureSpec::go_type_inference_interfaces())
@@ -1369,6 +1479,11 @@ impl TestFixture {
         Self::load(FixtureSpec::kotlin_basic())
     }
 
+    /// Load Kotlin tree-sitter query regression fixture
+    pub fn kotlin_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::kotlin_query_regression())
+    }
+
     /// Load Kotlin coroutines review fixture
     pub fn kotlin_review_coroutines() -> io::Result<Self> {
         Self::load(FixtureSpec::kotlin_review_coroutines())
@@ -1377,6 +1492,11 @@ impl TestFixture {
     /// Load PHP basic project fixture
     pub fn php_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::php_basic())
+    }
+
+    /// Load PHP tree-sitter query regression fixture
+    pub fn php_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::php_query_regression())
     }
 
     /// Load PHP namespace/trait review fixture
@@ -1389,6 +1509,11 @@ impl TestFixture {
         Self::load(FixtureSpec::ruby_basic())
     }
 
+    /// Load Ruby tree-sitter query regression fixture
+    pub fn ruby_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::ruby_query_regression())
+    }
+
     /// Load Ruby mixin review fixture
     pub fn ruby_review_mixin() -> io::Result<Self> {
         Self::load(FixtureSpec::ruby_review_mixin())
@@ -1397,6 +1522,11 @@ impl TestFixture {
     /// Load JavaScript basic project fixture
     pub fn javascript_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::javascript_basic())
+    }
+
+    /// Load JavaScript tree-sitter query regression fixture
+    pub fn javascript_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::javascript_query_regression())
     }
 
     /// Load JavaScript Express review fixture
@@ -1419,6 +1549,11 @@ impl TestFixture {
         Self::load(FixtureSpec::c_basic())
     }
 
+    /// Load C tree-sitter query regression fixture
+    pub fn c_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::c_query_regression())
+    }
+
     /// Load C macros review fixture
     pub fn c_review_macros() -> io::Result<Self> {
         Self::load(FixtureSpec::c_review_macros())
@@ -1432,6 +1567,11 @@ impl TestFixture {
     /// Load Bash basic project fixture
     pub fn bash_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::bash_basic())
+    }
+
+    /// Load Bash tree-sitter query regression fixture
+    pub fn bash_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::bash_query_regression())
     }
 
     /// Load Bash pipeline review fixture
@@ -1449,6 +1589,11 @@ impl TestFixture {
         Self::load(FixtureSpec::lua_basic())
     }
 
+    /// Load Lua tree-sitter query regression fixture
+    pub fn lua_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::lua_query_regression())
+    }
+
     /// Load Lua closure review fixture
     pub fn lua_review_closure() -> io::Result<Self> {
         Self::load(FixtureSpec::lua_review_closure())
@@ -1462,6 +1607,11 @@ impl TestFixture {
     /// Load C++ basic project fixture
     pub fn cpp_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::cpp_basic())
+    }
+
+    /// Load C++ tree-sitter query regression fixture
+    pub fn cpp_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::cpp_query_regression())
     }
 
     /// Load C++ templates review fixture
@@ -1564,6 +1714,11 @@ impl TestFixture {
         Self::load(FixtureSpec::scala_basic())
     }
 
+    /// Load Scala tree-sitter query regression fixture
+    pub fn scala_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::scala_query_regression())
+    }
+
     /// Load Scala case class review fixture
     pub fn scala_review_case_class() -> io::Result<Self> {
         Self::load(FixtureSpec::scala_review_case_class())
@@ -1632,6 +1787,11 @@ impl TestFixture {
     /// Load Dart basic project fixture
     pub fn dart_basic() -> io::Result<Self> {
         Self::load(FixtureSpec::dart_basic())
+    }
+
+    /// Load Dart tree-sitter query regression fixture
+    pub fn dart_query_regression() -> io::Result<Self> {
+        Self::load(FixtureSpec::dart_query_regression())
     }
 
     /// Load Dart mixin/async review fixture
