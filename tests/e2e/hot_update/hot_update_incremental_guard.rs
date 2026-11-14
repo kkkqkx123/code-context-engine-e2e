@@ -75,6 +75,7 @@ async fn test_guard_001_only_changed_file_is_parsed_embedded_indexed() {
     assert_eq!(initial.total_files, 3);
     let epoch1 = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
@@ -114,6 +115,7 @@ async fn test_guard_001_only_changed_file_is_parsed_embedded_indexed() {
 
     let epoch2 = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
@@ -125,16 +127,16 @@ async fn test_guard_001_only_changed_file_is_parsed_embedded_indexed() {
     // renumbered by every candidate clone, so the stable cross-epoch identity
     // is the source ID carried by chunks, not the row id.
     for path in ["src/util.rs", "src/mod.rs"] {
-        let before = harness.chunks_for_file_epoch(epoch1, path);
-        let after = harness.chunks_for_file_epoch(epoch2, path);
+        let before = harness.chunks_for_file_epoch(epoch1, path).await;
+        let after = harness.chunks_for_file_epoch(epoch2, path).await;
         assert!(!before.is_empty(), "{path} must have chunks in epoch 1");
         assert_eq!(
             before, after,
             "unchanged file {path} must keep its chunk ids and source entity ids across the epoch boundary"
         );
     }
-    let lib_before = harness.chunks_for_file_epoch(epoch1, "src/lib.rs");
-    let lib_after = harness.chunks_for_file_epoch(epoch2, "src/lib.rs");
+    let lib_before = harness.chunks_for_file_epoch(epoch1, "src/lib.rs").await;
+    let lib_after = harness.chunks_for_file_epoch(epoch2, "src/lib.rs").await;
     assert!(!lib_before.is_empty());
     assert_eq!(
         lib_after.len(),
@@ -171,8 +173,8 @@ async fn test_guard_001_only_changed_file_is_parsed_embedded_indexed() {
     );
 
     // The published generation is complete and searchable.
-    assert_eq!(harness.files_for_epoch(epoch2), 3);
-    assert_eq!(harness.entities_for_epoch(epoch2), 4);
+    assert_eq!(harness.files_for_epoch(epoch2).await, 3);
+    assert_eq!(harness.entities_for_epoch(epoch2).await, 4);
     let query = harness.query_bm25("brand_new_symbol").await;
     assert!(
         query
@@ -266,14 +268,15 @@ async fn test_incr_001_embedding_resume_skips_completed_module() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(
         active.data_epoch, 1,
         "adopted candidate published as epoch 1"
     );
-    assert_eq!(harness.files_for_epoch(1), 2);
-    assert_eq!(harness.entities_for_epoch(1), 2);
+    assert_eq!(harness.files_for_epoch(1).await, 2);
+    assert_eq!(harness.entities_for_epoch(1).await, 2);
     let cp = harness.checkpoint_of("incr1-op").await.expect("checkpoint");
     assert_eq!(cp.status, CheckpointStatus::Completed);
 }
@@ -355,11 +358,12 @@ async fn test_incr_002_disk_change_forces_reembed_only_changed_file() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(active.data_epoch, 1);
-    assert_eq!(harness.files_for_epoch(1), 2);
-    assert_eq!(harness.entities_for_epoch(1), 2);
+    assert_eq!(harness.files_for_epoch(1).await, 2);
+    assert_eq!(harness.entities_for_epoch(1).await, 2);
 }
 
 // ===========================================================================
@@ -379,6 +383,7 @@ async fn test_incr_006_deletion_keeps_survivor_entity_ids_stable() {
     assert_eq!(initial.total_files, 3);
     let epoch1 = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
@@ -397,6 +402,7 @@ async fn test_incr_006_deletion_keeps_survivor_entity_ids_stable() {
 
     let epoch2 = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
@@ -410,8 +416,8 @@ async fn test_incr_006_deletion_keeps_survivor_entity_ids_stable() {
     // Survivors keep their chunk ids and source entity ids; the deleted file's
     // chunks are gone.
     for path in ["src/lib.rs", "src/util.rs"] {
-        let before = harness.chunks_for_file_epoch(epoch1, path);
-        let after = harness.chunks_for_file_epoch(epoch2, path);
+        let before = harness.chunks_for_file_epoch(epoch1, path).await;
+        let after = harness.chunks_for_file_epoch(epoch2, path).await;
         assert!(!before.is_empty());
         assert_eq!(
             before, after,
@@ -421,9 +427,10 @@ async fn test_incr_006_deletion_keeps_survivor_entity_ids_stable() {
     assert!(
         harness
             .chunks_for_file_epoch(epoch2, "src/mod.rs")
+            .await
             .is_empty(),
         "deleted file must leave no chunks behind"
     );
-    assert_eq!(harness.entities_for_epoch(epoch2), 2);
-    assert_eq!(harness.files_for_epoch(epoch2), 2);
+    assert_eq!(harness.entities_for_epoch(epoch2).await, 2);
+    assert_eq!(harness.files_for_epoch(epoch2).await, 2);
 }

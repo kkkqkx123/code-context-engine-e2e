@@ -47,7 +47,6 @@ use cce_orchestrator::{QueryCoordinator, SearchResult, SearchSources};
 use cce_parser::ast_to_nl::chunker::result::ChunkedResult;
 use cce_scanner::FileEntry;
 use cce_storage_bm25::{Bm25Client, Bm25Config};
-use cce_storage_metadb_sqlite::SqliteClient;
 use cce_storage_vector_qdrant::QdrantConfig;
 use cce_storage_vector_qdrant::{QdrantClient, generate_project_group_id};
 use cce_types::language::LanguageInfo;
@@ -634,7 +633,8 @@ async fn build_bare_coordinator(
     group_id: &str,
 ) -> QueryCoordinator {
     let scope = ProjectScope::new(project_id, group_id.to_string()).expect("project scope");
-    let sqlite_db = Arc::new(SqliteClient::in_memory().expect("in-memory sqlite"));
+    let metadata_store =
+        cce_orchestrator::index::in_memory_metadata_store().expect("in-memory store");
     let empty_index = RelationIndex::new();
     let call_chain = Arc::new(CallChainQuery::from_index(empty_index));
 
@@ -646,7 +646,7 @@ async fn build_bare_coordinator(
         scope,
     )
     .with_capabilities(IndexCapabilities::new().with_vectors(true).with_bm25(true))
-    .with_sqlite(sqlite_db)
+    .with_metadata_store(metadata_store)
     .build()
 }
 

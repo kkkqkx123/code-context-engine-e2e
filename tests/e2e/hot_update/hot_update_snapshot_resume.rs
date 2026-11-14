@@ -41,7 +41,8 @@ async fn warm_up(harness: &HotUpdateHarness) -> anyhow::Result<i64> {
     assert_eq!(result.status, OperationStatus::Completed);
 
     let epoch = harness
-        .active_manifest()?
+        .active_manifest()
+        .await?
         .expect("active manifest after warm-up")
         .data_epoch;
     Ok(epoch)
@@ -73,9 +74,9 @@ async fn test_envelope_lost_resume_reparses_and_matches_baseline() {
     let harness = HotUpdateHarness::new().await.expect("harness");
     let baseline_epoch = warm_up(&harness).await.expect("warm-up failed");
     assert_eq!(baseline_epoch, 2);
-    let baseline_files = harness.files_for_epoch(baseline_epoch);
-    let baseline_entities = harness.entities_for_epoch(baseline_epoch);
-    let baseline_chunks = harness.chunks_for_epoch(baseline_epoch);
+    let baseline_files = harness.files_for_epoch(baseline_epoch).await;
+    let baseline_entities = harness.entities_for_epoch(baseline_epoch).await;
+    let baseline_chunks = harness.chunks_for_epoch(baseline_epoch).await;
     assert_eq!(baseline_entities, 4, "two functions per file");
 
     // Crash state without envelopes but with correct content hashes: the
@@ -107,6 +108,7 @@ async fn test_envelope_lost_resume_reparses_and_matches_baseline() {
     // The published generation matches what live processing produced.
     let resumed_epoch = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
@@ -115,9 +117,15 @@ async fn test_envelope_lost_resume_reparses_and_matches_baseline() {
         baseline_epoch + 1,
         "resume must publish a fresh generation"
     );
-    assert_eq!(harness.files_for_epoch(resumed_epoch), baseline_files);
-    assert_eq!(harness.entities_for_epoch(resumed_epoch), baseline_entities);
-    assert_eq!(harness.chunks_for_epoch(resumed_epoch), baseline_chunks);
+    assert_eq!(harness.files_for_epoch(resumed_epoch).await, baseline_files);
+    assert_eq!(
+        harness.entities_for_epoch(resumed_epoch).await,
+        baseline_entities
+    );
+    assert_eq!(
+        harness.chunks_for_epoch(resumed_epoch).await,
+        baseline_chunks
+    );
 
     // The rebuilt data is queryable: BM25 finds the warm-up symbols.
     let query = harness.query_bm25("lib_extra").await;
@@ -165,12 +173,13 @@ async fn test_envelope_lost_resume_handles_drifted_file() {
 
     let resumed_epoch = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
-    assert_eq!(harness.files_for_epoch(resumed_epoch), 2);
+    assert_eq!(harness.files_for_epoch(resumed_epoch).await, 2);
     assert_eq!(
-        harness.entities_for_epoch(resumed_epoch),
+        harness.entities_for_epoch(resumed_epoch).await,
         3,
         "drifted lib.rs holds one function again, util.rs keeps two"
     );

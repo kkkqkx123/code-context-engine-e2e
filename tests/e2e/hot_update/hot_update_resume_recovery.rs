@@ -11,7 +11,8 @@
 
 use cce_config::AstToNlConfig;
 use cce_orchestrator::operation::OperationStatus;
-use cce_storage_metadb_sqlite::types::CheckpointStatus;
+use cce_storage_common::MetadataStorage;
+use cce_storage_common::metadb::CheckpointStatus;
 
 use crate::helper::init_minimal_logging;
 use crate::hot_update::resume_harness::{
@@ -88,15 +89,16 @@ async fn test_rc1_crash_before_candidate_reclones_and_reprocesses() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(active.data_epoch, 1, "first publication must be epoch 1");
     assert_eq!(
-        harness.files_for_epoch(1),
+        harness.files_for_epoch(1).await,
         2,
         "published generation must hold a file row for every file"
     );
-    assert_eq!(harness.entities_for_epoch(1), 2);
+    assert_eq!(harness.entities_for_epoch(1).await, 2);
     assert_eq!(harness.bm25_documents_for_project().await, 2);
     let cp = harness.checkpoint_of("rc1-op").await.expect("checkpoint");
     assert_eq!(cp.status, CheckpointStatus::Completed);
@@ -136,6 +138,7 @@ async fn test_rc2_unready_candidate_is_not_adopted() {
     // The manifest exists but was never marked candidate_ready.
     let before = harness
         .building_manifest("rc2-op")
+        .await
         .expect("manifest")
         .expect("building manifest exists");
     assert!(!before.candidate_ready, "crash state must be unready");
@@ -155,12 +158,13 @@ async fn test_rc2_unready_candidate_is_not_adopted() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(active.operation_id, "rc2-op");
     assert_eq!(active.data_epoch, 1);
-    assert_eq!(harness.files_for_epoch(1), 2);
-    assert_eq!(harness.entities_for_epoch(1), 2);
+    assert_eq!(harness.files_for_epoch(1).await, 2);
+    assert_eq!(harness.entities_for_epoch(1).await, 2);
     assert_eq!(harness.bm25_documents_for_project().await, 2);
 }
 
@@ -253,6 +257,7 @@ async fn test_rc3_adoptable_candidate_skips_completed_modules() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(
@@ -260,8 +265,8 @@ async fn test_rc3_adoptable_candidate_skips_completed_modules() {
         "candidate epoch must be published as epoch 1"
     );
     assert_eq!(active.operation_id, "rc3-op");
-    assert_eq!(harness.files_for_epoch(1), 2);
-    assert_eq!(harness.entities_for_epoch(1), 2);
+    assert_eq!(harness.files_for_epoch(1).await, 2);
+    assert_eq!(harness.entities_for_epoch(1).await, 2);
     // 2 per-function docs seeded with the candidate in BM25.
     assert_eq!(harness.bm25_documents_for_project().await, 2);
 }
@@ -312,15 +317,16 @@ async fn test_rc4_aborted_candidate_clears_module_progress_and_redoes_all() {
         .expect("crash state");
     // Mark the candidate failed (abort) after the markers were persisted.
     {
-        let conn = harness.sqlite.write_connection().expect("connection");
-        conn.execute(
-            "INSERT OR REPLACE INTO project_index_manifests
-             (project_id, publication_epoch, data_epoch, relation_epoch,
-              operation_id, state, input_fingerprint, candidate_ready, created_at)
-             VALUES (1, 1, 1, 0, 'rc4-op', 'failed', NULL, 0, 0)",
-            [],
-        )
-        .expect("inject failed manifest");
+        harness
+            .store
+            .manifest_begin_building(1, 1, "rc4-op", None)
+            .await
+            .expect("inject building manifest");
+        harness
+            .store
+            .manifest_mark_failed(1, "rc4-op", "rc4 abort")
+            .await
+            .expect("inject failed manifest");
     }
 
     // Pre-condition: markers survive the abort.
@@ -356,15 +362,16 @@ async fn test_rc4_aborted_candidate_clears_module_progress_and_redoes_all() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(active.data_epoch, 1);
     assert_eq!(
-        harness.files_for_epoch(1),
+        harness.files_for_epoch(1).await,
         2,
         "published generation must hold a file row for every file"
     );
-    assert_eq!(harness.entities_for_epoch(1), 2);
+    assert_eq!(harness.entities_for_epoch(1).await, 2);
     // 2 per-function docs indexed into BM25.
     assert_eq!(harness.bm25_documents_for_project().await, 2);
 
@@ -405,11 +412,13 @@ async fn test_rc5_active_manifest_short_circuits_resume() {
     // was never marked completed.
     let published_epoch = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
     harness
         .reopen_checkpoint(&result.operation_id)
+        .await
         .expect("reopen");
 
     let before_parses = harness.parse_count();
@@ -441,6 +450,7 @@ async fn test_rc5_active_manifest_short_circuits_resume() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(
@@ -457,8 +467,8 @@ async fn test_rc5_active_manifest_short_circuits_resume() {
         CheckpointStatus::Completed,
         "checkpoint marked complete"
     );
-    assert_eq!(harness.files_for_epoch(published_epoch), 2);
-    assert_eq!(harness.entities_for_epoch(published_epoch), 2);
+    assert_eq!(harness.files_for_epoch(published_epoch).await, 2);
+    assert_eq!(harness.entities_for_epoch(published_epoch).await, 2);
     assert_eq!(harness.bm25_documents_for_project().await, 2);
 }
 
@@ -478,6 +488,7 @@ async fn test_rc6_completed_operation_is_not_resumed() {
     let first = instance_a.run_hot_update().await.expect("phase 1 failed");
     let published_epoch = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
@@ -499,6 +510,7 @@ async fn test_rc6_completed_operation_is_not_resumed() {
     assert_eq!(harness.bm25_index_count(), before_indexes, "no re-indexing");
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(active.data_epoch, published_epoch, "no new epoch");
@@ -590,10 +602,11 @@ async fn test_rcv006_disk_change_forces_reparse() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
-    assert_eq!(harness.files_for_epoch(active.data_epoch), 2);
-    assert_eq!(harness.entities_for_epoch(active.data_epoch), 3);
+    assert_eq!(harness.files_for_epoch(active.data_epoch).await, 2);
+    assert_eq!(harness.entities_for_epoch(active.data_epoch).await, 3);
     // 1 merged per-function doc for lib.rs (alpha+gamma merge as a small
     // fragment) + 1 for util.rs in BM25.
     assert_eq!(harness.bm25_documents_for_project().await, 2);
@@ -661,10 +674,11 @@ async fn test_rcv007_config_change_forces_module_redo() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
-    assert_eq!(harness.files_for_epoch(active.data_epoch), 2);
-    assert_eq!(harness.entities_for_epoch(active.data_epoch), 2);
+    assert_eq!(harness.files_for_epoch(active.data_epoch).await, 2);
+    assert_eq!(harness.entities_for_epoch(active.data_epoch).await, 2);
     // 2 per-function docs indexed into BM25.
     assert_eq!(harness.bm25_documents_for_project().await, 2);
 }
@@ -698,12 +712,18 @@ async fn test_rcv008_full_index_checkpoint_is_not_adopted() {
         .await
         .expect("crash state");
     {
-        let conn = harness.sqlite.write_connection().expect("connection");
-        conn.execute(
-            "UPDATE checkpoint SET operation_type = 'full_index' WHERE operation_id = 'full-index-op'",
-            [],
-        )
-        .expect("rewrite operation type");
+        let mut checkpoint = harness
+            .store
+            .checkpoint_get(harness.project_id, "full-index-op")
+            .await
+            .expect("read checkpoint")
+            .expect("checkpoint exists");
+        checkpoint.operation_type = "full_index".to_string();
+        harness
+            .store
+            .checkpoint_update(harness.project_id, &checkpoint)
+            .await
+            .expect("rewrite operation type");
     }
 
     // The hot-update resume must pick a fresh operation, not the full-index one.
@@ -761,6 +781,7 @@ async fn test_data006_incompatible_envelope_forces_reparse() {
         .expect("seed candidate data");
     harness
         .tamper_envelope_schema_version("data6-op")
+        .await
         .expect("tamper envelopes");
 
     let before_parses = harness.parse_count();
@@ -777,10 +798,11 @@ async fn test_data006_incompatible_envelope_forces_reparse() {
     );
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
-    assert_eq!(harness.files_for_epoch(active.data_epoch), 2);
-    assert_eq!(harness.entities_for_epoch(active.data_epoch), 2);
+    assert_eq!(harness.files_for_epoch(active.data_epoch).await, 2);
+    assert_eq!(harness.entities_for_epoch(active.data_epoch).await, 2);
 }
 
 /// A stale checkpoint without module progress (legacy
@@ -824,6 +846,7 @@ async fn test_data007_legacy_checkpoint_redoes_conservatively() {
         .expect("seed candidate data");
     harness
         .clear_module_progress_direct("data7-op")
+        .await
         .expect("strip markers");
 
     let before_indexes = harness.bm25_index_count();
@@ -840,10 +863,11 @@ async fn test_data007_legacy_checkpoint_redoes_conservatively() {
     );
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
-    assert_eq!(harness.files_for_epoch(active.data_epoch), 2);
-    assert_eq!(harness.entities_for_epoch(active.data_epoch), 2);
+    assert_eq!(harness.files_for_epoch(active.data_epoch).await, 2);
+    assert_eq!(harness.entities_for_epoch(active.data_epoch).await, 2);
     // 2 per-function docs indexed into BM25.
     assert_eq!(harness.bm25_documents_for_project().await, 2);
 }
@@ -984,6 +1008,7 @@ async fn test_data005_export_markers_and_mtime_are_preserved() {
     // Simulate the crash window after publication.
     harness
         .reopen_checkpoint(&result.operation_id)
+        .await
         .expect("reopen");
 
     let mut instance_b = harness
@@ -1031,11 +1056,12 @@ async fn test_wf001_incremental_update_publishes_and_queries() {
 
     let epoch_before = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
     assert_eq!(epoch_before, 1);
-    assert_eq!(harness.chunks_for_epoch(1), 2);
+    assert_eq!(harness.chunks_for_epoch(1).await, 2);
 
     // Baseline change detection sees no changes.
     let mut instance_a = harness
@@ -1059,6 +1085,7 @@ async fn test_wf001_incremental_update_publishes_and_queries() {
 
     let epoch_after = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
@@ -1067,8 +1094,8 @@ async fn test_wf001_incremental_update_publishes_and_queries() {
         epoch_before + 1,
         "epoch must bump by exactly one"
     );
-    assert_eq!(harness.files_for_epoch(epoch_after), 2);
-    assert_eq!(harness.entities_for_epoch(epoch_after), 3);
+    assert_eq!(harness.files_for_epoch(epoch_after).await, 2);
+    assert_eq!(harness.entities_for_epoch(epoch_after).await, 3);
 
     // BM25 sees the new symbol.
     let query = harness.query_bm25("brand_new_symbol").await;
@@ -1109,44 +1136,36 @@ async fn test_wf002_deletion_removes_all_file_data() {
 
     let epoch = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
-    let gone_chunks: i64 = {
-        // Scope the read guard: the helpers below re-acquire `read_connection()`
-        // and the backing parking_lot mutex is not reentrant.
-        let conn = harness.sqlite.read_connection().expect("connection");
-        conn.query_row(
-            "SELECT COUNT(*) FROM chunks WHERE project_id = ?1 AND epoch = ?2 AND file_path = ?3",
-            rusqlite::params![harness.project_id, epoch, "src/gone.rs"],
-            |row| row.get(0),
-        )
+    let gone_chunks: usize = harness
+        .store
+        .chunks_by_file(harness.project_id, "src/gone.rs", epoch)
+        .await
         .expect("count gone chunks")
-    };
+        .len();
     assert_eq!(
         gone_chunks, 0,
         "WF-002: deleted file must leave no chunks behind"
     );
     assert_eq!(
-        harness.files_for_epoch(epoch),
+        harness.files_for_epoch(epoch).await,
         1,
         "only the kept file remains"
     );
-    assert_eq!(harness.entities_for_epoch(epoch), 1);
+    assert_eq!(harness.entities_for_epoch(epoch).await, 1);
     // 1 per-function doc indexed into BM25 at the published
     // epoch (older retained generations hold gone.rs until GC retires them).
     assert_eq!(harness.bm25_documents_for_epoch(epoch).await, 1);
 
-    let gone_entities: i64 = {
-        let conn = harness.sqlite.read_connection().expect("connection");
-        conn.query_row(
-            "SELECT COUNT(*) FROM entities WHERE project_id = ?1 AND epoch = ?2 AND file_id IN
-             (SELECT id FROM files WHERE project_id = ?1 AND epoch = ?2 AND path = ?3)",
-            rusqlite::params![harness.project_id, epoch, "src/gone.rs"],
-            |row| row.get(0),
-        )
+    let gone_entities: usize = harness
+        .store
+        .entity_ids_by_file_epoch(harness.project_id, epoch, "src/gone.rs")
+        .await
         .expect("count gone entities")
-    };
+        .len();
     assert_eq!(gone_entities, 0);
 }
 
@@ -1178,11 +1197,12 @@ async fn test_wf003_added_file_becomes_searchable() {
 
     let epoch = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
-    assert_eq!(harness.files_for_epoch(epoch), 2);
-    assert_eq!(harness.entities_for_epoch(epoch), 2);
+    assert_eq!(harness.files_for_epoch(epoch).await, 2);
+    assert_eq!(harness.entities_for_epoch(epoch).await, 2);
 
     let query = harness.query_bm25("shiny_new").await;
     assert!(
@@ -1212,6 +1232,7 @@ async fn test_wf004_noop_path_is_quick_and_clean() {
 
     let epoch_before = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active")
         .data_epoch;
@@ -1230,6 +1251,7 @@ async fn test_wf004_noop_path_is_quick_and_clean() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(active.data_epoch, epoch_before, "no new epoch on noop");

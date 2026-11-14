@@ -61,7 +61,7 @@ pub struct QueryWorkflowTest<F: FixtureAccess> {
     /// `None` (default) means embedded simvec; `Some(url)` selects Qdrant.
     qdrant_url: Option<String>,
     /// Shared SQLite database (index + query use same instance)
-    sqlite_db: Option<Arc<cce_storage_metadb_sqlite::SqliteClient>>,
+    relation_db: Option<cce_orchestrator::index::MetadataStore>,
     /// Shared embedder for vector index and query (optional; without it,
     /// vector storage is skipped during indexing)
     embedder: Option<Arc<OpenAICompatibleProvider>>,
@@ -104,7 +104,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
             local_vector: None,
             qdrant_client: None,
             qdrant_url: None,
-            sqlite_db: None,
+            relation_db: None,
             embedder: None,
             metrics_registry: None,
             rerank_handler: None,
@@ -224,7 +224,8 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
     /// per-run temp directory; opt into Qdrant with [`Self::with_qdrant_url`].
     pub async fn index(&mut self) -> Result<&IndexResult> {
         use cce_orchestrator::CheckpointManager;
-        use cce_storage_metadb_sqlite::SqliteClient;
+        use cce_orchestrator::index::{MetadataStore, in_memory_metadata_store};
+        use cce_storage_common::MetadataStorage;
 
         let mut orchestrator =
             IndexOrchestrator::new(self.project_id).expect("failed to create IndexOrchestrator");
@@ -244,7 +245,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         orchestrator = orchestrator.with_project_fingerprint(project_group_id);
 
         // Set up checkpoint manager for operation progress tracking
-        let sqlite_db = Arc::new(SqliteClient::in_memory()?);
+        let metadata_store = in_memory_metadata_store()?;
         // Register the project row before any metadata write so FK-scoped
         // file/entity/chunk inserts resolve, and so query-time source reads
         // locate the real fixture root. Inserted first so the publisher's
@@ -252,19 +253,19 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         {
             let root_path = self.fixture.root_path().to_string_lossy().to_string();
             let project_id = self.project_id;
-            sqlite_db.with_transaction(|tx| {
-                cce_storage_metadb_sqlite::ProjectRepository::ensure(tx, project_id, &root_path)
-            })?;
+            metadata_store
+                .ensure_project(project_id, &root_path)
+                .await?;
         }
         let checkpoint_manager = Arc::new(CheckpointManager::new_for_project(
             self.project_id,
-            sqlite_db.clone(),
+            metadata_store.clone(),
         ));
-        self.sqlite_db = Some(sqlite_db.clone());
+        self.relation_db = Some(metadata_store.clone());
         orchestrator = orchestrator.with_checkpoint_manager(checkpoint_manager);
-        orchestrator = orchestrator.with_metadata_store(sqlite_db.clone());
+        orchestrator = orchestrator.with_metadata_store(metadata_store.clone());
         orchestrator = orchestrator.with_relation_publisher(Arc::new(
-            TestRelationPublisher::with_sqlite((*sqlite_db).clone()),
+            TestRelationPublisher::with_store(metadata_store.clone()),
         ));
 
         // Each test instance gets a unique BM25 index temp directory to prevent cross-test
@@ -711,8 +712,8 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         )
         .with_capabilities(capabilities);
 
-        if let Some(ref sqlite_db) = self.sqlite_db {
-            coordinator_builder = coordinator_builder.with_sqlite(sqlite_db.clone());
+        if let Some(ref metadata_store) = self.relation_db {
+            coordinator_builder = coordinator_builder.with_metadata_store(metadata_store.clone());
         }
         if let Some(ref registry) = self.metrics_registry {
             coordinator_builder = coordinator_builder.with_metrics_registry(registry.clone());

@@ -259,6 +259,7 @@ async fn test_watcher_coalesces_rapid_events_for_same_file() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(active.data_epoch, 1, "a single epoch is published");
@@ -332,17 +333,18 @@ async fn test_watcher_renames_to_delete_plus_create() {
     // not through physical rows of one epoch.
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     let epoch = active.data_epoch;
     assert!(epoch > 0, "the rename must publish a new epoch");
     assert_eq!(
-        harness.visible_file_rows(epoch, "src/rename_old.rs"),
+        harness.visible_file_rows(epoch, "src/rename_old.rs").await,
         0,
         "the old path must be hidden from the published generation"
     );
     assert_eq!(
-        harness.visible_file_rows(epoch, "src/keep.rs"),
+        harness.visible_file_rows(epoch, "src/keep.rs").await,
         1,
         "the untouched file survives the rename"
     );

@@ -72,7 +72,7 @@ async fn embedder_drift_reembeds_active_generation_in_place() {
 
     // Phase 1: normal processing under "model-a" publishes the baseline.
     let (embedder_a, _server_a) = DriftScaffold::embedder("model-a").await;
-    let storage_a = scaffold.storage_with_embedder(embedder_a);
+    let storage_a = scaffold.storage_with_embedder(embedder_a).await;
     let context_a = scaffold.context(storage_a.clone(), None);
     let processors_a = DriftScaffold::processor_pair(context_a);
 
@@ -90,7 +90,7 @@ async fn embedder_drift_reembeds_active_generation_in_place() {
         "warm-up must run clean"
     );
 
-    let warm_epoch = scaffold.published_epoch();
+    let warm_epoch = scaffold.published_epoch().await;
     assert!(warm_epoch >= 1, "warm-up must publish a generation");
 
     let warm_points = scaffold.qdrant.captured();
@@ -104,13 +104,14 @@ async fn embedder_drift_reembeds_active_generation_in_place() {
     // The first operation only records the embedder fingerprint as baseline.
     let warm_fp = scaffold
         .meta_string("embedding_model_fingerprint")
+        .await
         .expect("baseline fingerprint recorded");
 
     scaffold.qdrant.clear();
 
     // Phase 2: switch to "model-b" and run an operation with no file changes.
     let (embedder_b, _server_b) = DriftScaffold::embedder("model-b").await;
-    let storage_b = scaffold.storage_with_embedder(embedder_b);
+    let storage_b = scaffold.storage_with_embedder(embedder_b).await;
     let context_b = scaffold.context(storage_b.clone(), None);
     let processors_b = DriftScaffold::processor_pair(context_b);
 
@@ -170,6 +171,7 @@ async fn embedder_drift_reembeds_active_generation_in_place() {
     // The new embedder fingerprint is persisted after a successful sweep.
     let drift_fp = scaffold
         .meta_string("embedding_model_fingerprint")
+        .await
         .expect("fingerprint persisted");
     assert_ne!(drift_fp, warm_fp, "fingerprint must move to model-b");
 

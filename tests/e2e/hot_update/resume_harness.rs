@@ -16,7 +16,6 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
-use rusqlite::OptionalExtension;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
 
@@ -26,6 +25,7 @@ use cce_orchestrator::hot_update::progress::read_module_progress;
 use cce_orchestrator::hot_update::{
     BatchChangeResult, FileChangeType, HotUpdateError, ParseResultWithChanges,
 };
+use cce_orchestrator::index::MetadataStore;
 use cce_orchestrator::index::StorageCoordinator;
 use cce_orchestrator::{
     Bm25UpdateProcessor, CheckpointManager, EmbeddingUpdateProcessor, ExportConfig,
@@ -35,8 +35,7 @@ use cce_orchestrator::{
 };
 use cce_parser::summary::{FileSummary, RuleBasedGenerator, SummaryGenerator};
 use cce_storage_bm25::{Bm25Client, Bm25Config};
-use cce_storage_metadb_sqlite::SqliteClient;
-use cce_storage_metadb_sqlite::{GenerationOverrideRepository, ProjectIndexManifestRepository};
+use cce_storage_common::MetadataStorage;
 use cce_utils::hash::hash_serializable;
 
 use crate::helper::EmptyFixture;
@@ -216,9 +215,9 @@ impl CoordinatorInstance {
 pub struct HotUpdateHarness {
     pub fixture: EmptyFixture,
     pub project_id: i64,
-    /// Keeps the SQLite file alive for the test duration.
+    /// Keeps the relation database file alive for the test duration.
     _db_dir: TempDir,
-    pub sqlite: Arc<SqliteClient>,
+    pub store: MetadataStore,
     /// Keeps the BM25 index directory alive for the test duration.
     _bm25_dir: TempDir,
     pub bm25: Arc<Bm25Client>,
@@ -256,37 +255,28 @@ impl HotUpdateHarness {
     pub async fn with_project_id(project_id: i64) -> anyhow::Result<Self> {
         let fixture = EmptyFixture::new().context("failed to create fixture")?;
         let db_dir = TempDir::new().context("failed to create db temp dir")?;
-        let sqlite = Arc::new(
-            SqliteClient::with_path(db_dir.path().join("cce.db").to_string_lossy())
-                .context("failed to create file-backed SQLite")?,
-        );
-        // Scope the client to the project so `for_project` reads and writes
-        // land in the same project database the orchestrator persists to
-        // (mirrors production, where the server hands project-scoped clients
-        // to the orchestrator).
-        let sqlite = sqlite.for_project(project_id).context("scope sqlite")?;
+        // Scope the store to the project so reads and writes land in the
+        // same project database the orchestrator persists to (mirrors
+        // production, where the server hands project-scoped stores to the
+        // orchestrator).
+        let store = Arc::new(
+            cce_storage_metadb_sqlite::SqliteClient::with_path(
+                db_dir.path().join("cce.db").to_string_lossy(),
+            )
+            .context("failed to create file-backed SQLite")?,
+        )
+        .for_project(project_id)
+        .context("scope store")?;
         let checkpoint_manager = Arc::new(CheckpointManager::new_for_project(
             project_id,
-            sqlite.clone(),
+            store.clone(),
         ));
 
         // Ensure the project row exists so full-index and hot-update writes
         // satisfy the projects FK before the first scan.
-        sqlite
-            .with_transaction(|tx| {
-                tx.execute(
-                    "INSERT OR IGNORE INTO projects (id, name, root_path, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?4)",
-                    rusqlite::params![
-                        project_id,
-                        format!("project_{project_id}"),
-                        "/",
-                        chrono::Utc::now().timestamp(),
-                    ],
-                )
-                .map(|_| ())
-                .map_err(|e| cce_types::StorageError::insert("projects", e.to_string()))
-            })
+        store
+            .ensure_project(project_id, "/")
+            .await
             .context("failed to ensure project row")?;
 
         let bm25_dir = TempDir::new().context("failed to create bm25 temp dir")?;
@@ -302,7 +292,7 @@ impl HotUpdateHarness {
             fixture,
             project_id,
             _db_dir: db_dir,
-            sqlite,
+            store,
             _bm25_dir: bm25_dir,
             bm25,
             checkpoint_manager,
@@ -465,7 +455,7 @@ impl HotUpdateHarness {
         summary_fingerprint: String,
         transform: ProcessorTransform<'_>,
     ) -> anyhow::Result<CoordinatorInstance> {
-        let storage = self.build_storage();
+        let storage = self.build_storage().await;
         let processors = self.build_processors(
             selection,
             &storage,
@@ -491,7 +481,7 @@ impl HotUpdateHarness {
                 .context("failed to create coordinator")?
         };
         coordinator = coordinator
-            .with_metadata_store(self.sqlite.clone())
+            .with_metadata_store(self.store.clone())
             .with_checkpoint_manager(self.checkpoint_manager.clone())
             .with_storage_coordinator(storage.clone())
             .with_parse_probe(self.parse_counter.clone())
@@ -513,22 +503,18 @@ impl HotUpdateHarness {
     }
 
     /// Storage coordinator seeded with the currently active data epoch.
-    fn build_storage(&self) -> Arc<StorageCoordinator> {
-        let active_epoch = {
-            let conn = self
-                .sqlite
-                .read_connection()
-                .expect("read connection for epoch seed");
-            ProjectIndexManifestRepository::get_active(&conn, self.project_id)
-                .ok()
-                .flatten()
-                .map(|m| m.data_epoch)
-                .unwrap_or(0)
-        };
+    async fn build_storage(&self) -> Arc<StorageCoordinator> {
+        let active_epoch = self
+            .active_manifest()
+            .await
+            .ok()
+            .flatten()
+            .map(|m| m.data_epoch)
+            .unwrap_or(0);
         Arc::new(
             StorageCoordinator::new(self.project_id)
                 .expect("valid project id")
-                .with_metadata_store(self.sqlite.clone())
+                .with_metadata_store(self.store.clone())
                 .with_bm25(self.bm25.clone())
                 .with_epoch(active_epoch)
                 .with_batch_id(0),
@@ -578,7 +564,7 @@ impl HotUpdateHarness {
             let exporter = Arc::new(NlDocumentExporter::new(export_config));
             let processor = NlDocumentUpdateProcessor::new(exporter)
                 .with_checkpoint_manager(self.checkpoint_manager.clone())
-                .with_relation_context(Some(self.sqlite.clone()), self.project_id)
+                .with_metadata_context(Some(self.store.clone()), self.project_id)
                 .with_render_inputs(hash_serializable(&self.grouper_config), String::new());
             processors.push(Arc::new(processor));
         }
@@ -591,7 +577,7 @@ impl HotUpdateHarness {
         let mut orchestrator = IndexOrchestrator::new(self.project_id)
             .context("failed to create index orchestrator")?;
         orchestrator = orchestrator
-            .with_metadata_store(self.sqlite.clone())
+            .with_metadata_store(self.store.clone())
             .with_bm25_client(self.bm25.clone())
             .with_checkpoint_manager(self.checkpoint_manager.clone());
         let options = IndexOptions {
@@ -611,25 +597,23 @@ impl HotUpdateHarness {
 
     // ===== Durable state assertions (DB-backed, never in-memory) =====
 
-    pub fn active_manifest(
+    pub async fn active_manifest(
         &self,
-    ) -> anyhow::Result<Option<cce_storage_metadb_sqlite::ProjectIndexManifest>> {
-        let conn = self.sqlite.read_connection()?;
-        ProjectIndexManifestRepository::get_active(&conn, self.project_id)
+    ) -> anyhow::Result<Option<cce_storage_common::metadb::ProjectIndexManifest>> {
+        self.store
+            .manifest_active(self.project_id)
+            .await
             .context("failed to read active manifest")
     }
 
-    pub fn building_manifest(
+    pub async fn building_manifest(
         &self,
         operation_id: &str,
-    ) -> anyhow::Result<Option<cce_storage_metadb_sqlite::ProjectIndexManifest>> {
-        let conn = self.sqlite.read_connection()?;
-        ProjectIndexManifestRepository::get_building_by_operation(
-            &conn,
-            self.project_id,
-            operation_id,
-        )
-        .context("failed to read building manifest")
+    ) -> anyhow::Result<Option<cce_storage_common::metadb::ProjectIndexManifest>> {
+        self.store
+            .manifest_by_operation(self.project_id, operation_id)
+            .await
+            .context("failed to read building manifest")
     }
 
     pub async fn module_progress_of(
@@ -651,7 +635,7 @@ impl HotUpdateHarness {
     pub async fn checkpoint_of(
         &self,
         operation_id: &str,
-    ) -> Option<cce_storage_metadb_sqlite::types::CheckpointRecord> {
+    ) -> Option<cce_storage_common::metadb::CheckpointRecord> {
         self.checkpoint_manager
             .get_checkpoint(operation_id)
             .await
@@ -664,24 +648,17 @@ impl HotUpdateHarness {
     /// generation is `own rows ∪ parent rows − overridden files`, so every
     /// durable-state assertion must resolve this view instead of counting
     /// physical rows of a single epoch.
-    fn generation_view(
-        conn: &rusqlite::Connection,
-        project_id: i64,
-        epoch: i64,
-    ) -> (Option<i64>, Vec<String>) {
-        let parent: Option<i64> = conn
-            .query_row(
-                "SELECT parent_data_epoch FROM project_index_manifests
-                 WHERE project_id = ?1 AND data_epoch = ?2
-                 ORDER BY publication_epoch DESC LIMIT 1",
-                rusqlite::params![project_id, epoch],
-                |row| row.get(0),
-            )
-            .optional()
+    async fn generation_view(&self, epoch: i64) -> (Option<i64>, Vec<String>) {
+        let parent = self
+            .store
+            .manifest_parent_epoch(self.project_id, epoch)
+            .await
             .expect("read manifest parent")
-            .flatten();
-        let parent = parent.filter(|value| *value > 0);
-        let excluded = GenerationOverrideRepository::list_for_generation(conn, project_id, epoch)
+            .filter(|value| *value > 0);
+        let excluded = self
+            .store
+            .overrides_for_generation(self.project_id, epoch)
+            .await
             .expect("read overrides")
             .into_iter()
             .map(|entry| entry.file_path)
@@ -691,52 +668,34 @@ impl HotUpdateHarness {
 
     /// Resolve the epoch that physically holds the visible rows of `path`
     /// for the view rooted at `start_epoch` ("own first, miss → parent").
-    fn visible_epoch_for_path(
-        conn: &rusqlite::Connection,
-        project_id: i64,
-        start_epoch: i64,
-        path: &str,
-    ) -> Option<i64> {
+    async fn visible_epoch_for_path(&self, start_epoch: i64, path: &str) -> Option<i64> {
         let mut current = start_epoch;
         for _ in 0..4 {
             // Rows written inside this generation win.
-            let exists: i64 = conn
-                .query_row(
-                    "SELECT EXISTS(
-                         SELECT 1 FROM files
-                         WHERE project_id = ?1 AND epoch = ?2 AND path = ?3
-                     )",
-                    rusqlite::params![project_id, current, path],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
-            if exists != 0 {
+            if self
+                .store
+                .files_exists_at_epoch(self.project_id, current, path)
+                .await
+                .unwrap_or(false)
+            {
                 return Some(current);
             }
             // Overridden without own rows (deleted): nothing below is visible.
-            let overridden: i64 = conn
-                .query_row(
-                    "SELECT EXISTS(
-                         SELECT 1 FROM generation_overrides
-                         WHERE project_id = ?1 AND epoch = ?2 AND file_path = ?3
-                     )",
-                    rusqlite::params![project_id, current, path],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
-            if overridden != 0 {
+            if self
+                .store
+                .overrides_for_generation(self.project_id, current)
+                .await
+                .unwrap_or_default()
+                .iter()
+                .any(|entry| entry.file_path == path)
+            {
                 return None;
             }
-            let parent: Option<i64> = conn
-                .query_row(
-                    "SELECT parent_data_epoch FROM project_index_manifests
-                     WHERE project_id = ?1 AND data_epoch = ?2
-                     ORDER BY publication_epoch DESC LIMIT 1",
-                    rusqlite::params![project_id, current],
-                    |row| row.get(0),
-                )
-                .optional()
-                .ok()?
+            let parent: Option<i64> = self
+                .store
+                .manifest_parent_epoch(self.project_id, current)
+                .await
+                .ok()
                 .flatten()
                 .filter(|value| *value > 0);
             current = parent?;
@@ -745,107 +704,80 @@ impl HotUpdateHarness {
     }
 
     /// Count chunks visible from one generation's epoch view.
-    pub fn chunks_for_epoch(&self, epoch: i64) -> i64 {
-        let conn = self
-            .sqlite
-            .read_connection()
-            .expect("read connection for chunk count");
-        let (parent, excluded) = Self::generation_view(&conn, self.project_id, epoch);
-        let mut total: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM chunks WHERE project_id = ?1 AND epoch = ?2",
-                rusqlite::params![self.project_id, epoch],
-                |row| row.get::<_, i64>(0),
-            )
+    pub async fn chunks_for_epoch(&self, epoch: i64) -> i64 {
+        let (parent, excluded) = self.generation_view(epoch).await;
+        let mut total: i64 = self
+            .store
+            .chunks_count(self.project_id, epoch)
+            .await
             .expect("count chunks");
         if let Some(parent) = parent {
-            total += conn
-                .query_row(
-                    "SELECT COUNT(*) FROM chunks WHERE project_id = ?1 AND epoch = ?2",
-                    rusqlite::params![self.project_id, parent],
-                    |row| row.get::<_, i64>(0),
-                )
+            total += self
+                .store
+                .chunks_count(self.project_id, parent)
+                .await
                 .expect("count inherited chunks");
             for path in &excluded {
-                total -= conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM chunks WHERE project_id = ?1 AND epoch = ?2 AND file_path = ?3",
-                        rusqlite::params![self.project_id, parent, path],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .expect("count overridden chunks");
+                total -= self
+                    .store
+                    .chunks_by_file(self.project_id, path, parent)
+                    .await
+                    .expect("count overridden chunks")
+                    .len() as i64;
             }
         }
         total
     }
 
     /// Count entities visible from one generation's epoch view.
-    pub fn entities_for_epoch(&self, epoch: i64) -> i64 {
-        let conn = self
-            .sqlite
-            .read_connection()
-            .expect("read connection for entity count");
-        let (parent, excluded) = Self::generation_view(&conn, self.project_id, epoch);
-        let mut total: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM entities WHERE project_id = ?1 AND epoch = ?2",
-                rusqlite::params![self.project_id, epoch],
-                |row| row.get::<_, i64>(0),
-            )
+    pub async fn entities_for_epoch(&self, epoch: i64) -> i64 {
+        let (parent, excluded) = self.generation_view(epoch).await;
+        let mut total: i64 = self
+            .store
+            .entities_count(self.project_id, epoch)
+            .await
             .expect("count entities");
         if let Some(parent) = parent {
-            total += conn
-                .query_row(
-                    "SELECT COUNT(*) FROM entities e JOIN files f ON e.file_id = f.id
-                     WHERE f.project_id = ?1 AND f.epoch = ?2",
-                    rusqlite::params![self.project_id, parent],
-                    |row| row.get::<_, i64>(0),
-                )
+            total += self
+                .store
+                .entities_count(self.project_id, parent)
+                .await
                 .expect("count inherited entities");
             for path in &excluded {
-                total -= conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM entities e JOIN files f ON e.file_id = f.id
-                         WHERE f.project_id = ?1 AND f.epoch = ?2 AND f.path = ?3",
-                        rusqlite::params![self.project_id, parent, path],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .expect("count overridden entities");
+                total -= self
+                    .store
+                    .entity_ids_by_file_epoch(self.project_id, parent, path)
+                    .await
+                    .expect("count overridden entities")
+                    .len() as i64;
             }
         }
         total
     }
 
     /// Count files visible from one generation's epoch view.
-    pub fn files_for_epoch(&self, epoch: i64) -> i64 {
-        let conn = self
-            .sqlite
-            .read_connection()
-            .expect("read connection for file count");
-        let (parent, excluded) = Self::generation_view(&conn, self.project_id, epoch);
-        let mut total: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM files WHERE project_id = ?1 AND epoch = ?2",
-                rusqlite::params![self.project_id, epoch],
-                |row| row.get::<_, i64>(0),
-            )
+    pub async fn files_for_epoch(&self, epoch: i64) -> i64 {
+        let (parent, excluded) = self.generation_view(epoch).await;
+        let mut total: i64 = self
+            .store
+            .files_count(self.project_id, epoch)
+            .await
             .expect("count files");
         if let Some(parent) = parent {
-            total += conn
-                .query_row(
-                    "SELECT COUNT(*) FROM files WHERE project_id = ?1 AND epoch = ?2",
-                    rusqlite::params![self.project_id, parent],
-                    |row| row.get::<_, i64>(0),
-                )
+            total += self
+                .store
+                .files_count(self.project_id, parent)
+                .await
                 .expect("count inherited files");
             for path in &excluded {
-                total -= conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM files WHERE project_id = ?1 AND epoch = ?2 AND path = ?3",
-                        rusqlite::params![self.project_id, parent, path],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .expect("count overridden files");
+                if self
+                    .store
+                    .files_exists_at_epoch(self.project_id, parent, path)
+                    .await
+                    .expect("count overridden files")
+                {
+                    total -= 1;
+                }
             }
         }
         total
@@ -873,15 +805,8 @@ impl HotUpdateHarness {
     /// own-generation documents plus inherited parent documents, minus the
     /// overridden files.
     pub async fn bm25_documents_for_epoch(&self, epoch: i64) -> usize {
-        // Resolve the view before taking the BM25 lock; generation_view needs
-        // a SQLite connection of its own.
-        let (parent, excluded) = {
-            let conn = self
-                .sqlite
-                .read_connection()
-                .expect("read connection for generation view");
-            Self::generation_view(&conn, self.project_id, epoch)
-        };
+        // Resolve the view before taking the BM25 lock.
+        let (parent, excluded) = self.generation_view(epoch).await;
 
         let client = &self.bm25;
         let mut documents = client
@@ -971,29 +896,17 @@ impl HotUpdateHarness {
     /// change, this set must be identical across adjacent epochs; for a
     /// changed file the sets must be disjoint (hot-update parses are seeded
     /// above the previous maximum).
-    pub fn entity_ids_for_epoch(&self, epoch: i64, path: &str) -> Vec<i64> {
-        let conn = self
-            .sqlite
-            .read_connection()
-            .expect("read connection for entity ids");
+    pub async fn entity_ids_for_epoch(&self, epoch: i64, path: &str) -> Vec<i64> {
         // Resolve through the inheritance chain: an unchanged file's rows
         // stay in the generation that last wrote them.
-        let resolved =
-            Self::visible_epoch_for_path(&conn, self.project_id, epoch, path).unwrap_or(epoch);
-        let mut stmt = conn
-            .prepare(
-                "SELECT e.id FROM entities e JOIN files f ON e.file_id = f.id
-                 WHERE e.project_id = ?1 AND e.epoch = ?2 AND f.path = ?3
-                 ORDER BY e.id",
-            )
-            .expect("prepare entity id query");
-        let ids = stmt
-            .query_map(rusqlite::params![self.project_id, resolved, path], |row| {
-                row.get::<_, i64>(0)
-            })
-            .expect("query entity ids");
-        ids.collect::<Result<Vec<_>, _>>()
-            .expect("collect entity ids")
+        let resolved = self
+            .visible_epoch_for_path(epoch, path)
+            .await
+            .unwrap_or(epoch);
+        self.store
+            .entity_ids_by_file_epoch(self.project_id, resolved, path)
+            .await
+            .expect("query entity ids")
     }
 
     /// (chunk_id, entity_ids) pairs of one file in one epoch, ordered by
@@ -1005,82 +918,64 @@ impl HotUpdateHarness {
     /// cross-epoch identity the system guarantees: the candidate clone copies
     /// chunk rows verbatim, and fresh parses are seeded above the previous
     /// maximum so their source IDs never collide with preserved ones.
-    pub fn chunks_for_file_epoch(&self, epoch: i64, path: &str) -> Vec<(String, Vec<i64>)> {
-        let conn = self
-            .sqlite
-            .read_connection()
-            .expect("read connection for chunk ids");
+    pub async fn chunks_for_file_epoch(&self, epoch: i64, path: &str) -> Vec<(String, Vec<i64>)> {
         // Resolve through the inheritance chain: an unchanged file's rows
         // stay in the generation that last wrote them.
-        let resolved =
-            Self::visible_epoch_for_path(&conn, self.project_id, epoch, path).unwrap_or(epoch);
-        let mut stmt = conn
-            .prepare(
-                "SELECT chunk_id, entity_ids FROM chunks
-                 WHERE project_id = ?1 AND epoch = ?2 AND file_path = ?3
-                 ORDER BY chunk_id",
-            )
-            .expect("prepare chunk query");
-        let rows = stmt
-            .query_map(rusqlite::params![self.project_id, resolved, path], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .expect("query chunks");
-        rows.collect::<Result<Vec<_>, _>>()
-            .expect("collect chunks")
+        let resolved = self
+            .visible_epoch_for_path(epoch, path)
+            .await
+            .unwrap_or(epoch);
+        self.store
+            .chunks_by_file_epoch(self.project_id, path, resolved)
+            .await
+            .expect("query chunks")
             .into_iter()
-            .map(|(chunk_id, ids_json)| {
-                let ids: Vec<i64> = serde_json::from_str(&ids_json).unwrap_or_else(|_| Vec::new());
-                (chunk_id, ids)
+            .map(|chunk| {
+                let ids: Vec<i64> =
+                    serde_json::from_str(&chunk.entity_ids).unwrap_or_else(|_| Vec::new());
+                (chunk.chunk_id, ids)
             })
             .collect()
     }
 
     /// Count the file-table rows visibly belonging to `path` under the
     /// generation view rooted at `epoch` ("own first, miss → parent").
-    pub fn visible_file_rows(&self, epoch: i64, path: &str) -> i64 {
-        let conn = self
-            .sqlite
-            .read_connection()
-            .expect("read connection for visible file rows");
-        let Some(resolved) = Self::visible_epoch_for_path(&conn, self.project_id, epoch, path)
-        else {
+    pub async fn visible_file_rows(&self, epoch: i64, path: &str) -> i64 {
+        let Some(resolved) = self.visible_epoch_for_path(epoch, path).await else {
             return 0;
         };
-        conn.query_row(
-            "SELECT COUNT(*) FROM files WHERE project_id = ?1 AND epoch = ?2 AND path = ?3",
-            rusqlite::params![self.project_id, resolved, path],
-            |row| row.get::<_, i64>(0),
-        )
-        .expect("count visible file rows")
+        if self
+            .store
+            .files_exists_at_epoch(self.project_id, resolved, path)
+            .await
+            .expect("count visible file rows")
+        {
+            1
+        } else {
+            0
+        }
     }
 
     /// Flip an operation checkpoint back to in_progress (simulating a crash
     /// between publication and checkpoint completion).
-    pub fn reopen_checkpoint(&self, operation_id: &str) -> anyhow::Result<()> {
-        let conn = self.sqlite.write_connection()?;
-        conn.execute(
-            "UPDATE checkpoint SET status = 'in_progress', updated_at = ?1
-             WHERE project_id = ?2 AND operation_id = ?3",
-            rusqlite::params![
-                chrono::Utc::now().to_rfc3339(),
+    pub async fn reopen_checkpoint(&self, operation_id: &str) -> anyhow::Result<()> {
+        self.store
+            .checkpoint_set_status(
                 self.project_id,
-                operation_id
-            ],
-        )
-        .context("failed to reopen checkpoint")?;
+                operation_id,
+                cce_storage_common::metadb::CheckpointStatus::InProgress,
+            )
+            .await
+            .context("failed to reopen checkpoint")?;
         Ok(())
     }
 
     /// Set the module_progress of a file checkpoint to NULL directly.
-    pub fn clear_module_progress_direct(&self, operation_id: &str) -> anyhow::Result<()> {
-        let conn = self.sqlite.write_connection()?;
-        conn.execute(
-            "UPDATE checkpoint_file SET module_progress = NULL
-             WHERE project_id = ?1 AND operation_id = ?2",
-            rusqlite::params![self.project_id, operation_id],
-        )
-        .context("failed to clear module progress")?;
+    pub async fn clear_module_progress_direct(&self, operation_id: &str) -> anyhow::Result<()> {
+        self.store
+            .file_checkpoints_clear_module_progress(self.project_id, operation_id)
+            .await
+            .context("failed to clear module progress")?;
         Ok(())
     }
 }
@@ -1251,7 +1146,7 @@ impl HotUpdateHarness {
                 path,
                 &parse_path,
                 FileChangeType::Modified,
-                &Some(self.sqlite.clone()),
+                &Some(self.store.clone()),
                 self.project_id,
             )
             .await
@@ -1331,27 +1226,27 @@ impl HotUpdateHarness {
         }
 
         if state.manifest != CrashManifest::None {
-            let active_epoch = self.active_manifest()?.map(|m| m.data_epoch).unwrap_or(0);
+            let active_epoch = self
+                .active_manifest()
+                .await?
+                .map(|m| m.data_epoch)
+                .unwrap_or(0);
             let candidate_epoch = active_epoch.saturating_add(1);
-            self.sqlite
-                .with_transaction(|tx| {
-                    ProjectIndexManifestRepository::begin_building(
-                        tx,
-                        self.project_id,
-                        candidate_epoch,
-                        &state.operation_id,
-                        None,
-                    )?;
-                    if state.manifest == CrashManifest::BuildingReady {
-                        ProjectIndexManifestRepository::mark_candidate_ready(
-                            tx,
-                            self.project_id,
-                            &state.operation_id,
-                        )?;
-                    }
-                    Ok(())
-                })
+            self.store
+                .manifest_begin_building(
+                    self.project_id,
+                    candidate_epoch,
+                    &state.operation_id,
+                    None,
+                )
+                .await
                 .context("failed to create crash-state manifest")?;
+            if state.manifest == CrashManifest::BuildingReady {
+                self.store
+                    .manifest_mark_candidate_ready(self.project_id, &state.operation_id)
+                    .await
+                    .context("failed to mark crash-state manifest ready")?;
+            }
         }
 
         Ok(())
@@ -1427,7 +1322,7 @@ impl HotUpdateHarness {
         let storage = Arc::new(
             StorageCoordinator::new(self.project_id)
                 .expect("valid project id")
-                .with_metadata_store(self.sqlite.clone())
+                .with_metadata_store(self.store.clone())
                 .with_bm25(self.bm25.clone())
                 .with_epoch(epoch)
                 .with_batch_id(0),
@@ -1454,6 +1349,7 @@ impl HotUpdateHarness {
         }
         storage
             .store_parsed_files(&parsed_files)
+            .await
             .context("failed to seed candidate epoch data")?;
         for (path, chunks) in bm25_writes {
             storage
@@ -1466,25 +1362,19 @@ impl HotUpdateHarness {
 
     /// Rewrite every file checkpoint envelope of an operation with an
     /// incompatible schema version (simulating a parser/schema upgrade).
-    pub fn tamper_envelope_schema_version(&self, operation_id: &str) -> anyhow::Result<()> {
+    pub async fn tamper_envelope_schema_version(&self, operation_id: &str) -> anyhow::Result<()> {
         use cce_orchestrator::operation::checkpoint::{
             ParsedCheckpointPayload, decode_parsed_checkpoint, encode_parsed_checkpoint,
         };
-        let conn = self.sqlite.write_connection()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT file_path, parsed_data FROM checkpoint_file
-                 WHERE project_id = ?1 AND operation_id = ?2 AND parsed_data IS NOT NULL",
-            )
-            .context("failed to prepare envelope tamper statement")?;
-        let rows = stmt
-            .query_map(rusqlite::params![self.project_id, operation_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-            })
+        let records = self
+            .checkpoint_manager
+            .get_batch_files(operation_id, 0)
+            .await
             .context("failed to query envelopes")?;
-        let mut updated = Vec::new();
-        for row in rows {
-            let (path, bytes) = row.context("failed to read envelope row")?;
+        for record in records {
+            let Some(bytes) = record.parsed_data else {
+                continue;
+            };
             let mut payload: ParsedCheckpointPayload =
                 decode_parsed_checkpoint(&bytes).context("failed to decode envelope")?;
             if let ParsedCheckpointPayload::Parsed(ref mut envelope) = payload {
@@ -1492,16 +1382,15 @@ impl HotUpdateHarness {
             }
             let encoded =
                 encode_parsed_checkpoint(&payload).context("failed to encode envelope")?;
-            updated.push((path, encoded));
-        }
-        drop(stmt);
-        for (path, encoded) in updated {
-            conn.execute(
-                "UPDATE checkpoint_file SET parsed_data = ?1
-                 WHERE project_id = ?2 AND operation_id = ?3 AND file_path = ?4",
-                rusqlite::params![encoded, self.project_id, operation_id, path],
-            )
-            .context("failed to tamper envelope")?;
+            self.store
+                .checkpoint_file_set_parsed_data(
+                    self.project_id,
+                    operation_id,
+                    &record.file_path,
+                    &encoded,
+                )
+                .await
+                .context("failed to tamper envelope")?;
         }
         Ok(())
     }

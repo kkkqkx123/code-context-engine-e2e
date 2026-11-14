@@ -100,7 +100,7 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
 
     // Phase 1: baseline under default chunking.
     let (embedder_a, _server_a) = DriftScaffold::embedder("model-a").await;
-    let storage_a = scaffold.storage_with_embedder(embedder_a);
+    let storage_a = scaffold.storage_with_embedder(embedder_a).await;
     let context_a = scaffold.context(storage_a.clone(), None);
     let processors_a = DriftScaffold::processor_pair(context_a.clone());
 
@@ -119,18 +119,30 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
         "warm-up must run clean"
     );
 
-    let warm_epoch = scaffold.published_epoch();
-    assert!(!scaffold.chunks_at_epoch(warm_epoch, FILE_A).is_empty());
-    assert!(!scaffold.chunks_at_epoch(warm_epoch, FILE_B).is_empty());
+    let warm_epoch = scaffold.published_epoch().await;
+    assert!(
+        !scaffold
+            .chunks_at_epoch(warm_epoch, FILE_A)
+            .await
+            .is_empty()
+    );
+    assert!(
+        !scaffold
+            .chunks_at_epoch(warm_epoch, FILE_B)
+            .await
+            .is_empty()
+    );
 
     // Baseline pipeline fingerprints were recorded during warm-up.
     let warm_embedding_fp = scaffold
         .meta_string("chunking_fingerprint_embedding")
+        .await
         .expect("embedding fingerprint baseline");
     let warm_bm25_fp = scaffold
         .meta_string("chunking_fingerprint_bm25")
+        .await
         .expect("bm25 fingerprint baseline");
-    let old_c_contents = scaffold.chunk_contents_at_epoch(warm_epoch, FILE_C);
+    let old_c_contents = scaffold.chunk_contents_at_epoch(warm_epoch, FILE_C).await;
     assert!(!old_c_contents.is_empty(), "file C must have warm chunks");
 
     scaffold.qdrant.clear();
@@ -146,7 +158,7 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
     // never the embedder fingerprint. The typed handle stays available so
     // embedded texts can be asserted on.
     let (embedder_b, _server_b) = DriftScaffold::embedder("model-a").await;
-    let storage_b = scaffold.storage_with_embedder(embedder_b.clone());
+    let storage_b = scaffold.storage_with_embedder(embedder_b.clone()).await;
     let context_b = scaffold.context(storage_b.clone(), Some(&drifted_config));
     let processors_b = DriftScaffold::processor_pair(context_b.clone());
 
@@ -163,7 +175,7 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
         "chunking-drift sweep must not produce module failures"
     );
 
-    let candidate_epoch = scaffold.published_epoch();
+    let candidate_epoch = scaffold.published_epoch().await;
     assert_eq!(
         candidate_epoch,
         warm_epoch + 1,
@@ -174,15 +186,24 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
     // generation: fresh chunk rows exist there although nothing else would
     // have written them (they were not part of the operation's change set).
     assert!(
-        !scaffold.chunks_at_epoch(candidate_epoch, FILE_A).is_empty(),
+        !scaffold
+            .chunks_at_epoch(candidate_epoch, FILE_A)
+            .await
+            .is_empty(),
         "file A must be re-chunked into the candidate generation"
     );
     assert!(
-        !scaffold.chunks_at_epoch(candidate_epoch, FILE_B).is_empty(),
+        !scaffold
+            .chunks_at_epoch(candidate_epoch, FILE_B)
+            .await
+            .is_empty(),
         "file B must be re-chunked into the candidate generation"
     );
     assert!(
-        !scaffold.chunks_at_epoch(candidate_epoch, FILE_C).is_empty(),
+        !scaffold
+            .chunks_at_epoch(candidate_epoch, FILE_C)
+            .await
+            .is_empty(),
         "file C is processed by the normal flow"
     );
 
@@ -190,7 +211,7 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
     // mappings materialized in the candidate generation, pointing at the new
     // point ids instead of staying behind in the ancestor generation.
     for path in [FILE_A, FILE_B] {
-        let mappings = scaffold.mappings_at_epoch(candidate_epoch, path);
+        let mappings = scaffold.mappings_at_epoch(candidate_epoch, path).await;
         assert!(
             !mappings.is_empty(),
             "{path} must own entity-detail mappings in the candidate generation"
@@ -220,11 +241,12 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
     assert!(
         !scaffold
             .chunk_contents_at_epoch(candidate_epoch, FILE_C)
+            .await
             .is_empty(),
         "file C's fresh content must be embedded through the normal flow"
     );
     assert!(
-        scaffold.file_rows_at_epoch(candidate_epoch, FILE_C) == 1,
+        scaffold.file_rows_at_epoch(candidate_epoch, FILE_C).await == 1,
         "file C must have exactly one file row in the candidate generation"
     );
 
@@ -241,7 +263,11 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
         })
         .count();
     assert!(
-        c_points_in_candidate <= scaffold.chunks_at_epoch(candidate_epoch, FILE_C).len(),
+        c_points_in_candidate
+            <= scaffold
+                .chunks_at_epoch(candidate_epoch, FILE_C)
+                .await
+                .len(),
         "file C points in the candidate generation must come from the normal flow only"
     );
 
@@ -250,9 +276,11 @@ async fn chunking_drift_rechunks_from_cache_and_skips_changed_files() {
     assert_ne!(new_fp, warm_embedding_fp, "pipeline fingerprint must drift");
     let embedding_fp = scaffold
         .meta_string("chunking_fingerprint_embedding")
+        .await
         .expect("embedding fingerprint persisted after sweep");
     let bm25_fp = scaffold
         .meta_string("chunking_fingerprint_bm25")
+        .await
         .expect("bm25 fingerprint persisted after sweep");
     assert_eq!(embedding_fp, new_fp, "embedding fingerprint key updated");
     assert_eq!(bm25_fp, new_fp, "bm25 fingerprint key updated");

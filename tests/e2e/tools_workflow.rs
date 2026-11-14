@@ -3,9 +3,7 @@
 //! Tests for standalone tools: AST diagnosis, compression retrieval,
 //! keyword search, and symbol lookup tools.
 
-use cce_orchestrator::tools::{
-    AstDiagnosis, CompressionRequest, CompressionRetrieval, DiagnosisRequest,
-};
+use cce_orchestrator::{AstDiagnosis, CompressionRequest, CompressionRetrieval, DiagnosisRequest};
 use cce_types::language::Language;
 
 use crate::helper::init_minimal_logging;
@@ -166,7 +164,7 @@ async fn test_batch_compression() {
 
     let compression = CompressionRetrieval::new();
 
-    let request = cce_orchestrator::tools::BatchCompressionRequest {
+    let request = cce_orchestrator::BatchCompressionRequest {
         file_paths: vec![
             file1.to_string_lossy().to_string(),
             file2.to_string_lossy().to_string(),
@@ -197,7 +195,7 @@ async fn test_batch_compression() {
 #[test]
 fn test_goto_definition_tool_construction() {
     use cce_codegraph::LayeredSnapshotIndex;
-    use cce_orchestrator::tools::GotoDefinitionTool;
+    use cce_orchestrator::GotoDefinitionTool;
     use std::sync::Arc;
 
     let index = Arc::new(LayeredSnapshotIndex::empty());
@@ -210,7 +208,7 @@ fn test_goto_definition_tool_construction() {
 #[test]
 fn test_find_references_tool_construction() {
     use cce_codegraph::LayeredSnapshotIndex;
-    use cce_orchestrator::tools::FindReferencesTool;
+    use cce_orchestrator::FindReferencesTool;
     use std::sync::Arc;
 
     let index = Arc::new(LayeredSnapshotIndex::empty());
@@ -222,7 +220,7 @@ fn test_find_references_tool_construction() {
 #[test]
 fn test_get_symbols_tool_construction() {
     use cce_codegraph::LayeredSnapshotIndex;
-    use cce_orchestrator::tools::GetSymbolsTool;
+    use cce_orchestrator::GetSymbolsTool;
     use std::sync::Arc;
 
     let index = Arc::new(LayeredSnapshotIndex::empty());

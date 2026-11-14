@@ -65,7 +65,7 @@ async fn test_real_bm25_failure_triggers_abort_and_resume() {
     );
     // The candidate was prepared and then retired as failed: no active epoch.
     assert!(
-        harness.active_manifest().expect("manifest").is_none(),
+        harness.active_manifest().await.expect("manifest").is_none(),
         "an aborted candidate must never be activated"
     );
 
@@ -92,11 +92,12 @@ async fn test_real_bm25_failure_triggers_abort_and_resume() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(active.data_epoch, 1);
-    assert_eq!(harness.files_for_epoch(1), 2);
-    assert_eq!(harness.entities_for_epoch(1), 2);
+    assert_eq!(harness.files_for_epoch(1).await, 2);
+    assert_eq!(harness.entities_for_epoch(1).await, 2);
 
     // Both files must be searchable after the resumed publication.
     for (query, file) in [("alpha", "src/lib.rs"), ("beta", "src/util.rs")] {
@@ -184,6 +185,7 @@ async fn test_partial_batch_failure_continues() {
     // The resumed run republished the touched content into a new epoch.
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
     assert_eq!(active.data_epoch, 2);

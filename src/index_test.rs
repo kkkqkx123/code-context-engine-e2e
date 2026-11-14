@@ -6,13 +6,13 @@ use std::sync::Arc;
 
 use crate::fixture::FixtureAccess;
 use async_trait::async_trait;
+use cce_orchestrator::index::{MetadataStore, in_memory_metadata_store};
 use cce_orchestrator::index::{
     RelationPublication, RelationSnapshotPublisher, ResolutionPipelineService,
 };
 use cce_plugin::PluginRegistry;
 use cce_storage_bm25::Bm25Client;
-use cce_storage_metadb_sqlite::RelationSnapshotRepository;
-use cce_storage_metadb_sqlite::SqliteClient;
+use cce_storage_common::MetadataStorage;
 use cce_types::{CanonicalRelationSnapshot, SnapshotDelta, StorageError};
 
 /// Minimal relation-snapshot publisher for workflow tests.
@@ -21,38 +21,32 @@ use cce_types::{CanonicalRelationSnapshot, SnapshotDelta, StorageError};
 /// full-index relation path exercises genuine storage writes instead of being
 /// short-circuited by a missing publisher.
 pub struct TestRelationPublisher {
-    sqlite: SqliteClient,
+    store: MetadataStore,
     pipeline: ResolutionPipelineService,
 }
 
 impl TestRelationPublisher {
-    /// Create a publisher backed by a fresh temporary SQLite database.
+    /// Create a publisher backed by a fresh in-memory relation store.
     pub fn new() -> Self {
-        let sqlite = SqliteClient::new_in_temp().expect("temporary sqlite client");
-        Self::with_sqlite(sqlite)
+        let store = in_memory_metadata_store().expect("in-memory store should open");
+        Self::with_store(store)
     }
 
-    /// Create a publisher bound to an existing SQLite database, so hot-update
+    /// Create a publisher bound to an existing relation store, so hot-update
     /// relation publications share the durable state of the test harness.
-    pub fn with_sqlite(sqlite: SqliteClient) -> Self {
+    pub fn with_store(store: MetadataStore) -> Self {
         Self {
-            pipeline: ResolutionPipelineService::new_local(sqlite.clone()),
-            sqlite,
+            pipeline: ResolutionPipelineService::new(store.clone()),
+            store,
         }
     }
 
     /// Ensure the project row exists so relation tables with foreign keys can
     /// reference it.
-    fn ensure_project(&self, project_id: i64) -> Result<(), StorageError> {
-        self.sqlite.with_transaction(|tx| {
-            tx.execute(
-                "INSERT OR IGNORE INTO projects (id, name, root_path, config_file_path, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, '.cce/config.json', ?4, ?4)",
-                rusqlite::params![project_id, format!("project-{project_id}"), format!("/project/{project_id}"), chrono::Utc::now().timestamp()],
-            )
-            .map_err(|error| StorageError::insert("projects", error.to_string()))?;
-            Ok(())
-        })
+    async fn ensure_project(&self, project_id: i64) -> Result<(), StorageError> {
+        self.store
+            .ensure_project(project_id, &format!("/project/{project_id}"))
+            .await
     }
 }
 
@@ -71,14 +65,15 @@ impl RelationSnapshotPublisher for TestRelationPublisher {
         snapshot: CanonicalRelationSnapshot,
         index: &cce_codegraph::index::RelationIndex,
     ) -> Result<RelationPublication, StorageError> {
-        self.ensure_project(project_id)?;
-        let relation_epoch =
-            self.pipeline
-                .allocate_and_write(project_id, operation_id, &snapshot)?;
+        self.ensure_project(project_id).await?;
+        let relation_epoch = self
+            .pipeline
+            .allocate_and_write(project_id, operation_id, &snapshot)
+            .await?;
         // Activate like the production publisher does: activation promotes the
         // ready epoch and records `active_relation_epoch` in project_meta, so
         // downstream delta flows have a CAS base.
-        self.pipeline.activate(project_id, relation_epoch)?;
+        self.pipeline.activate(project_id, relation_epoch).await?;
         // Share the same deep-copied product the production publisher hands
         // to export enhancement so workflow tests exercise the shared path.
         let base = Arc::new(cce_codegraph::index::RelationSnapshotIndex::from_index(
@@ -97,13 +92,14 @@ impl RelationSnapshotPublisher for TestRelationPublisher {
         delta: SnapshotDelta,
         base: Option<cce_codegraph::index::LayeredSnapshotIndex>,
     ) -> Result<RelationPublication, StorageError> {
-        self.ensure_project(project_id)?;
+        self.ensure_project(project_id).await?;
 
         // CAS: the candidate was built from the active epoch; reject it if a
         // concurrent publication advanced past the base.
         let active_epoch = self
-            .sqlite
+            .store
             .project_meta_get_int(project_id, "active_relation_epoch")
+            .await
             .map_err(|error| {
                 StorageError::Validation(format!("cannot read active epoch for CAS: {error}"))
             })?;
@@ -112,17 +108,15 @@ impl RelationSnapshotPublisher for TestRelationPublisher {
         }
 
         let epoch = self
-            .sqlite
-            .with_transaction(|tx| {
-                let epoch = RelationSnapshotRepository::allocate_building(
-                    tx,
-                    project_id,
-                    operation_id,
-                    &delta.config_fingerprint,
-                )?;
-                RelationSnapshotRepository::write_delta(tx, project_id, epoch, &delta)?;
-                Ok(epoch)
-            })
+            .store
+            .snapshot_allocate(project_id, operation_id, &delta.config_fingerprint)
+            .await
+            .map_err(|error| {
+                StorageError::Validation(format!("failed to persist relation delta: {error}"))
+            })?;
+        self.store
+            .snapshot_write_delta(project_id, epoch, &delta)
+            .await
             .map_err(|error| {
                 StorageError::Validation(format!("failed to persist relation delta: {error}"))
             })?;

@@ -20,13 +20,14 @@ use cce_e2e_tests::mock_qdrant::CapturingMockQdrant;
 use cce_llm_client::OpenAICompatibleProvider;
 use cce_orchestrator::hot_update::processors::ProcessorContext;
 use cce_orchestrator::hot_update::{BatchChangeResult, FileChangeType, ParseResultWithChanges};
+use cce_orchestrator::index::MetadataStore;
 use cce_orchestrator::index::StorageCoordinator;
 use cce_orchestrator::operation::{OperationContext, OperationProcessResult, OperationType};
 use cce_orchestrator::{
     Bm25UpdateProcessor, CheckpointManager, EmbeddingUpdateProcessor, UpdateProcessor,
 };
 use cce_storage_bm25::{Bm25Client, Bm25Config};
-use cce_storage_metadb_sqlite::SqliteClient;
+use cce_storage_common::MetadataStorage;
 use cce_storage_vector_qdrant::{QdrantClient, types as qdrant_types};
 
 /// Qdrant payload isolation group used for every scenario.
@@ -37,7 +38,7 @@ const EMBEDDER_DIMENSION: usize = 8;
 /// Durable state shared by all operations of one drift-sweep test.
 pub struct DriftScaffold {
     pub fixture: crate::helper::EmptyFixture,
-    pub sqlite: Arc<SqliteClient>,
+    pub store: MetadataStore,
     pub checkpoint_manager: Arc<CheckpointManager>,
     pub bm25: Arc<Bm25Client>,
     pub qdrant: CapturingMockQdrant,
@@ -52,23 +53,20 @@ impl DriftScaffold {
     pub async fn new() -> anyhow::Result<Self> {
         let fixture = crate::helper::EmptyFixture::new().context("failed to create fixture")?;
         let db_dir = TempDir::new().context("failed to create db temp dir")?;
-        let scoped = SqliteClient::with_path(db_dir.path().join("cce.db").to_string_lossy())
-            .context("failed to create file-backed SQLite")?
-            .for_project(PROJECT_ID)
-            .context("failed to scope SQLite to project")?;
+        let scoped = Arc::new(
+            cce_storage_metadb_sqlite::SqliteClient::with_path(
+                db_dir.path().join("cce.db").to_string_lossy(),
+            )
+            .context("failed to create file-backed SQLite")?,
+        )
+        .for_project(PROJECT_ID)
+        .context("failed to scope store to project")?;
 
         // Production semantics: root_path is the real project directory;
-        // chunking-drift sweeps resolve swept files against it. The row was
-        // already seeded by `for_project`, so update instead of insert.
+        // chunking-drift sweeps resolve swept files against it.
         scoped
-            .with_transaction(|tx| {
-                tx.execute(
-                    "UPDATE projects SET root_path = ?2 WHERE id = ?1",
-                    rusqlite::params![PROJECT_ID, fixture.root().to_string_lossy(),],
-                )
-                .map(|_| ())
-                .map_err(|e| cce_types::StorageError::update("projects", e.to_string()))
-            })
+            .ensure_project(PROJECT_ID, &fixture.root().to_string_lossy())
+            .await
             .context("failed to point the project row at the fixture root")?;
 
         let bm25_dir = TempDir::new().context("failed to create bm25 temp dir")?;
@@ -81,7 +79,7 @@ impl DriftScaffold {
 
         Ok(Self {
             fixture,
-            sqlite: scoped.clone(),
+            store: scoped.clone(),
             checkpoint_manager: Arc::new(CheckpointManager::new_for_project(PROJECT_ID, scoped)),
             bm25: Arc::new(bm25),
             qdrant: CapturingMockQdrant::spawn().await,
@@ -104,23 +102,23 @@ impl DriftScaffold {
     /// Storage coordinator pointed at the shared durable state. The epoch is
     /// only a fallback: `prepare_operation` advances it to the candidate
     /// epoch before any write happens.
-    pub fn storage_with_embedder(
+    pub async fn storage_with_embedder(
         &self,
         embedder: Arc<OpenAICompatibleProvider>,
     ) -> Arc<StorageCoordinator> {
-        self.storage_inner(Some(embedder))
+        self.storage_inner(Some(embedder)).await
     }
 
     /// Storage coordinator without an embedder (BM25-only scenarios).
-    pub fn storage_without_embedder(&self) -> Arc<StorageCoordinator> {
-        self.storage_inner(None)
+    pub async fn storage_without_embedder(&self) -> Arc<StorageCoordinator> {
+        self.storage_inner(None).await
     }
 
-    fn storage_inner(
+    async fn storage_inner(
         &self,
         embedder: Option<Arc<OpenAICompatibleProvider>>,
     ) -> Arc<StorageCoordinator> {
-        let active_epoch = self.active_epoch();
+        let active_epoch = self.active_epoch().await;
         let qdrant_config = QdrantConfig {
             url: self.qdrant.url().to_string(),
             vector_size: EMBEDDER_DIMENSION,
@@ -135,7 +133,7 @@ impl DriftScaffold {
             Arc::new(QdrantClient::new(qdrant_config, ".").expect("qdrant client must build"));
         let mut storage = StorageCoordinator::new(PROJECT_ID)
             .expect("valid project id")
-            .with_metadata_store(self.sqlite.clone())
+            .with_metadata_store(self.store.clone())
             .with_bm25(self.bm25.clone())
             .with_qdrant(qdrant)
             .with_project_group_id(GROUP_ID)
@@ -146,10 +144,10 @@ impl DriftScaffold {
         Arc::new(storage)
     }
 
-    fn active_epoch(&self) -> i64 {
-        use cce_storage_metadb_sqlite::ProjectIndexManifestRepository;
-        let conn = self.sqlite.read_connection().expect("read connection");
-        ProjectIndexManifestRepository::get_active(&conn, PROJECT_ID)
+    async fn active_epoch(&self) -> i64 {
+        self.store
+            .manifest_active(PROJECT_ID)
+            .await
             .ok()
             .flatten()
             .map(|manifest| manifest.data_epoch)
@@ -157,8 +155,8 @@ impl DriftScaffold {
     }
 
     /// The currently published (active) data epoch, or 0 when never published.
-    pub fn published_epoch(&self) -> i64 {
-        self.active_epoch()
+    pub async fn published_epoch(&self) -> i64 {
+        self.active_epoch().await
     }
 
     /// Processor context for the shared SQLite database. `ast_to_nl`
@@ -212,7 +210,7 @@ impl DriftScaffold {
                 &absolute,
                 relative,
                 FileChangeType::Modified,
-                &Some(self.sqlite.clone()),
+                &Some(self.store.clone()),
                 PROJECT_ID,
             )
             .await
@@ -295,71 +293,51 @@ impl DriftScaffold {
         // Mirror the change detector's post-publication hash backfill:
         // candidate file rows are written without content hashes and only
         // get them once the manifest is active.
-        let published = self.published_epoch();
-        let conn = self.sqlite.write_connection().expect("write connection");
-        for result in &batch.parse_results {
-            if let Some(hash) = result.parsed_file.file_hash.as_deref() {
-                conn.execute(
-                    "UPDATE files SET content_hash = ?1
-                     WHERE project_id = ?2 AND epoch = ?3 AND path = ?4",
-                    rusqlite::params![
-                        hash,
-                        PROJECT_ID,
-                        published,
-                        result.file_path.to_string_lossy()
-                    ],
-                )
-                .expect("backfill file content hash");
-            }
-        }
+        let published = self.published_epoch().await;
+        let backfill: Vec<(String, String)> = batch
+            .parse_results
+            .iter()
+            .filter_map(|result| {
+                result
+                    .parsed_file
+                    .file_hash
+                    .clone()
+                    .map(|hash| (result.file_path.to_string_lossy().to_string(), hash))
+            })
+            .collect();
+        self.store
+            .files_record_hashes(PROJECT_ID, published, &backfill)
+            .await
+            .expect("backfill file content hash");
 
         Ok(results)
     }
 
-    pub fn meta_string(&self, key: &str) -> Option<String> {
-        self.sqlite
+    pub async fn meta_string(&self, key: &str) -> Option<String> {
+        self.store
             .project_meta_get_string_optional(PROJECT_ID, key)
+            .await
             .expect("read project meta")
     }
 
     /// Chunk rows of one file at one epoch: `(chunk_id, entity_ids_json)`.
-    pub fn chunks_at_epoch(&self, epoch: i64, path: &str) -> Vec<(String, String)> {
-        let conn = self.sqlite.read_connection().expect("read connection");
-        let mut stmt = conn
-            .prepare(
-                "SELECT chunk_id, entity_ids FROM chunks
-                 WHERE project_id = ?1 AND epoch = ?2 AND file_path = ?3
-                 ORDER BY chunk_id",
-            )
-            .expect("prepare chunk query");
-        let rows = stmt
-            .query_map(rusqlite::params![PROJECT_ID, epoch, path], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .expect("query chunks");
-        rows.collect::<Result<Vec<_>, _>>().expect("collect chunks")
+    pub async fn chunks_at_epoch(&self, epoch: i64, path: &str) -> Vec<(String, String)> {
+        self.store
+            .chunks_by_file_epoch(PROJECT_ID, path, epoch)
+            .await
+            .expect("query chunks")
+            .into_iter()
+            .map(|chunk| (chunk.chunk_id, chunk.entity_ids))
+            .collect()
     }
 
     /// Entity detail mappings of one file at one epoch:
     /// `(source_entity_db_id, [qdrant point ids])`.
-    pub fn mappings_at_epoch(&self, epoch: i64, path: &str) -> Vec<(i64, Vec<String>)> {
-        let conn = self.sqlite.read_connection().expect("read connection");
-        let mut stmt = conn
-            .prepare(
-                "SELECT m.entity_id, m.qdrant_point_ids FROM entity_detail_mappings m
-                 JOIN entities e ON e.id = m.entity_id
-                 JOIN files f ON f.id = e.file_id
-                 WHERE m.project_id = ?1 AND m.epoch = ?2 AND f.path = ?3
-                 ORDER BY m.entity_id",
-            )
-            .expect("prepare mapping query");
-        let rows = stmt
-            .query_map(rusqlite::params![PROJECT_ID, epoch, path], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })
-            .expect("query mappings");
-        rows.collect::<Result<Vec<_>, _>>()
-            .expect("collect mappings")
+    pub async fn mappings_at_epoch(&self, epoch: i64, path: &str) -> Vec<(i64, Vec<String>)> {
+        self.store
+            .mappings_point_ids_by_file_epoch(PROJECT_ID, epoch, path)
+            .await
+            .expect("query mappings")
             .into_iter()
             .map(|(entity_id, ids_json)| {
                 let ids: Vec<String> =
@@ -370,43 +348,37 @@ impl DriftScaffold {
     }
 
     /// Number of file rows for `path` at `epoch`.
-    pub fn file_rows_at_epoch(&self, epoch: i64, path: &str) -> i64 {
-        let conn = self.sqlite.read_connection().expect("read connection");
-        conn.query_row(
-            "SELECT COUNT(*) FROM files WHERE project_id = ?1 AND epoch = ?2 AND path = ?3",
-            rusqlite::params![PROJECT_ID, epoch, path],
-            |row| row.get::<_, i64>(0),
-        )
-        .expect("count file rows")
+    pub async fn file_rows_at_epoch(&self, epoch: i64, path: &str) -> i64 {
+        if self
+            .store
+            .files_exists_at_epoch(PROJECT_ID, epoch, path)
+            .await
+            .expect("count file rows")
+        {
+            1
+        } else {
+            0
+        }
     }
 
     /// Chunk row contents of one file at one epoch (embedding path).
-    pub fn chunk_contents_at_epoch(&self, epoch: i64, path: &str) -> Vec<String> {
-        let conn = self.sqlite.read_connection().expect("read connection");
-        let mut stmt = conn
-            .prepare(
-                "SELECT content FROM chunks
-                 WHERE project_id = ?1 AND epoch = ?2 AND file_path = ?3 AND path = 'emb'",
-            )
-            .expect("prepare chunk content query");
-        let rows = stmt
-            .query_map(rusqlite::params![PROJECT_ID, epoch, path], |row| {
-                row.get::<_, String>(0)
-            })
-            .expect("query chunk contents");
-        rows.collect::<Result<Vec<_>, _>>()
-            .expect("collect chunk contents")
+    pub async fn chunk_contents_at_epoch(&self, epoch: i64, path: &str) -> Vec<String> {
+        self.store
+            .chunks_by_file_epoch(PROJECT_ID, path, epoch)
+            .await
+            .expect("query chunk contents")
+            .into_iter()
+            .filter(|chunk| chunk.path == "emb")
+            .map(|chunk| chunk.content)
+            .collect()
     }
 
     /// Total physical chunk rows of one file across all epochs.
-    pub fn total_chunks_for_path(&self, path: &str) -> i64 {
-        let conn = self.sqlite.read_connection().expect("read connection");
-        conn.query_row(
-            "SELECT COUNT(*) FROM chunks WHERE project_id = ?1 AND file_path = ?2",
-            rusqlite::params![PROJECT_ID, path],
-            |row| row.get::<_, i64>(0),
-        )
-        .expect("count total chunks")
+    pub async fn total_chunks_for_path(&self, path: &str) -> i64 {
+        self.store
+            .chunks_count_by_path(PROJECT_ID, path)
+            .await
+            .expect("count total chunks")
     }
 
     /// BM25 documents visible at one epoch.

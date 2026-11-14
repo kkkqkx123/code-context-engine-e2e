@@ -12,7 +12,7 @@ use cce_config::{AstToNlConfig, HotUpdateConfig};
 use cce_orchestrator::IndexOrchestrator;
 use cce_orchestrator::hot_update::progress::module_input_fingerprint;
 use cce_orchestrator::index::IndexOptions;
-use cce_storage_metadb_sqlite::snapshot_store::SqliteSnapshotStore;
+use cce_storage_common::MetadataStorage;
 
 use crate::helper::init_minimal_logging;
 use crate::hot_update::resume_harness::{
@@ -114,9 +114,10 @@ async fn test_chunking_config_change_invalidates_embedding_bm25() {
 
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
-    assert_eq!(harness.files_for_epoch(active.data_epoch), 2);
+    assert_eq!(harness.files_for_epoch(active.data_epoch).await, 2);
 }
 
 /// a summary-config drift invalidates only the summary module;
@@ -274,19 +275,16 @@ async fn test_exclude_pattern_change_affects_next_scan() {
     // The excluded file must not appear in the published epoch.
     let active = harness
         .active_manifest()
+        .await
         .expect("manifest")
         .expect("active");
-    let skipped_rows: i64 = {
-        let conn = harness.sqlite.read_connection().expect("connection");
-        conn.query_row(
-            "SELECT COUNT(*) FROM files WHERE project_id = ?1 AND epoch = ?2 AND path = ?3",
-            rusqlite::params![harness.project_id, active.data_epoch, "tests/skip.rs"],
-            |row| row.get(0),
-        )
-        .expect("count excluded rows")
-    };
-    assert_eq!(
-        skipped_rows, 0,
+    let skipped_visible = harness
+        .store
+        .files_exists_at_epoch(harness.project_id, active.data_epoch, "tests/skip.rs")
+        .await
+        .expect("count excluded rows");
+    assert!(
+        !skipped_visible,
         "the excluded file must be absent from the new epoch"
     );
 }
@@ -329,14 +327,12 @@ async fn test_build_config_change_triggers_relation_rebuild() {
     let harness = HotUpdateHarness::new().await.expect("harness");
     relation_fixture(&harness);
 
-    // Publish the initial relation snapshot into the harness's SQLite so the
+    // Publish the initial relation snapshot into the harness's store so the
     // config-rebuild has a base to diff against.
-    let publisher = Arc::new(TestRelationPublisher::with_sqlite(
-        harness.sqlite.as_ref().clone(),
-    ));
+    let publisher = Arc::new(TestRelationPublisher::with_store(harness.store.clone()));
     let mut orchestrator = IndexOrchestrator::new(harness.project_id)
         .expect("index orchestrator")
-        .with_metadata_store(harness.sqlite.clone())
+        .with_metadata_store(harness.store.clone())
         .with_checkpoint_manager(harness.checkpoint_manager.clone())
         .with_relation_publisher(publisher.clone());
     let options = IndexOptions {
@@ -356,20 +352,21 @@ async fn test_build_config_change_triggers_relation_rebuild() {
         // Reuse the harness storage builder semantics: current active epoch.
         let active_epoch = harness
             .active_manifest()
+            .await
             .expect("manifest")
             .map(|m| m.data_epoch)
             .unwrap_or(0);
         Arc::new(
             cce_orchestrator::index::StorageCoordinator::new(harness.project_id)
                 .expect("storage coordinator")
-                .with_metadata_store(harness.sqlite.clone())
+                .with_metadata_store(harness.store.clone())
                 .with_epoch(active_epoch)
                 .with_batch_id(0),
         )
     };
     let relation_processor =
         cce_orchestrator::hot_update::RelationUpdateProcessor::with_persistence_and_config(
-            harness.sqlite.clone(),
+            harness.store.clone(),
             harness.root(),
             harness.project_id,
         )
@@ -397,8 +394,9 @@ async fn test_build_config_change_triggers_relation_rebuild() {
     let coordinator = start_watch_chain(&mut instance, harness.root(), harness.project_id).await;
 
     let before_relation_epoch = harness
-        .sqlite
+        .store
         .project_meta_get_int(harness.project_id, "active_relation_epoch")
+        .await
         .expect("read active relation epoch");
 
     // Modify Cargo.toml (a comment change keeps the dependency fingerprint
@@ -437,8 +435,9 @@ async fn test_build_config_change_triggers_relation_rebuild() {
 
     // The relation rebuild must publish a new relation epoch.
     let after_relation_epoch = harness
-        .sqlite
+        .store
         .project_meta_get_int(harness.project_id, "active_relation_epoch")
+        .await
         .expect("read active relation epoch");
     assert!(
         after_relation_epoch > before_relation_epoch,
@@ -449,7 +448,7 @@ async fn test_build_config_change_triggers_relation_rebuild() {
     use cce_codegraph::index::snapshot_loader::RelationSnapshotLoader;
     use cce_codegraph::index::snapshot_query::SnapshotFileQueryOps;
     let rebuilt = RelationSnapshotLoader::load(
-        &SqliteSnapshotStore::new(harness.sqlite.as_ref().clone()),
+        harness.store.as_ref(),
         harness.project_id,
         after_relation_epoch,
     )
