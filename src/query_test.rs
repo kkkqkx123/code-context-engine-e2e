@@ -224,7 +224,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
     /// per-run temp directory; opt into Qdrant with [`Self::with_qdrant_url`].
     pub async fn index(&mut self) -> Result<&IndexResult> {
         use cce_orchestrator::CheckpointManager;
-        use cce_orchestrator::index::{MetadataStore, in_memory_metadata_store};
+        use cce_orchestrator::index::in_memory_metadata_store;
         use cce_storage_common::MetadataStorage;
 
         let mut orchestrator =
