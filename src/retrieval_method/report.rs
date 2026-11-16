@@ -34,6 +34,7 @@ pub fn write_all(
         write_aggregate_by_query_type(out, results, top_k)?;
         write_per_query(out, results, top_k)?;
         write_fusion_gain(out, results, top_k)?;
+        write_relative_baseline(out, results, top_k)?;
     }
     write_weight_sensitivity(out, results)?;
     write_rrf_sensitivity(out, results)?;
@@ -559,6 +560,123 @@ fn query_type_of(results: &[MethodResult], query_id: &str, baseline: &str) -> St
         .find(|r| r.baseline == baseline && r.query_id == query_id)
         .map(|r| r.query_type.to_string())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Write `relative_baseline_top{k}.md`.
+///
+/// Compares each hybrid method against the single-path baselines on a
+/// per-query basis: best/worst single path, oracle (per-query best of emb
+/// and bm25), and the gap between the best hybrid and the oracle.
+fn write_relative_baseline(
+    out: &Path,
+    results: &[MethodResult],
+    top_k: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = out.join(format!("relative_baseline_top{top_k}.md"));
+    let mut f = File::create(&path)?;
+
+    // Per-query single-path F1 values.
+    let mut single: BTreeMap<(String, String), (f64, f64)> = BTreeMap::new();
+    for r in results.iter().filter(|r| r.top_k == top_k) {
+        let entry = single
+            .entry((r.baseline.clone(), r.query_id.clone()))
+            .or_insert((0.0, 0.0));
+        match r.method.as_str() {
+            "emb" => entry.0 = r.score.range.f1_any,
+            "bm25" => entry.1 = r.score.range.f1_any,
+            _ => {}
+        }
+    }
+
+    // Per-(baseline, method) per-query F1 values for hybrid methods.
+    let mut fusion: BTreeMap<(String, String), BTreeMap<String, f64>> = BTreeMap::new();
+    for r in results.iter().filter(|r| r.top_k == top_k) {
+        if r.method == "emb" || r.method == "bm25" {
+            continue;
+        }
+        fusion
+            .entry((r.baseline.clone(), r.method.clone()))
+            .or_default()
+            .insert(r.query_id.clone(), r.score.range.f1_any);
+    }
+
+    let mut baselines: Vec<String> = single.keys().map(|k| k.0.clone()).collect();
+    baselines.sort();
+    baselines.dedup();
+
+    let headers = &[
+        "k",
+        "baseline",
+        "n",
+        "emb F1",
+        "bm25 F1",
+        "best single F1",
+        "worst single F1",
+        "oracle F1",
+        "best fusion F1",
+        "gain vs best",
+        "fusion gap",
+    ];
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for baseline in &baselines {
+        let queries: Vec<&String> = single
+            .keys()
+            .filter(|k| k.0 == *baseline)
+            .map(|k| &k.1)
+            .collect();
+        if queries.is_empty() {
+            continue;
+        }
+        let n = queries.len();
+        let mut emb_vals = Vec::new();
+        let mut bm25_vals = Vec::new();
+        let mut best_vals = Vec::new();
+        let mut worst_vals = Vec::new();
+        for q in &queries {
+            let (e, b) = single.get(&(baseline.clone(), (*q).clone())).unwrap();
+            emb_vals.push(*e);
+            bm25_vals.push(*b);
+            best_vals.push(e.max(*b));
+            worst_vals.push(e.min(*b));
+        }
+        let emb_avg = mean_of(&emb_vals);
+        let bm25_avg = mean_of(&bm25_vals);
+        let best_single_avg = mean_of(&best_vals);
+        let worst_single_avg = mean_of(&worst_vals);
+        let oracle_avg = best_single_avg;
+
+        // Best hybrid method for this baseline.
+        let mut best_fusion_name = "-".to_string();
+        let mut best_fusion_avg = 0.0;
+        for ((b, method), qmap) in &fusion {
+            if b != baseline {
+                continue;
+            }
+            let vals: Vec<f64> = queries.iter().map(|q| qmap.get(*q).copied().unwrap_or(0.0)).collect();
+            let avg = mean_of(&vals);
+            if avg > best_fusion_avg {
+                best_fusion_avg = avg;
+                best_fusion_name = method.clone();
+            }
+        }
+
+        rows.push(vec![
+            format!("{top_k}"),
+            baseline.clone(),
+            format!("{n}"),
+            format!("{:.4}", emb_avg),
+            format!("{:.4}", bm25_avg),
+            format!("{:.4}", best_single_avg),
+            format!("{:.4}", worst_single_avg),
+            format!("{:.4}", oracle_avg),
+            format!("{:.4}", best_fusion_avg),
+            format!("{:+.4}", best_fusion_avg - best_single_avg),
+            format!("{:.4}", oracle_avg - best_fusion_avg),
+        ]);
+        let _ = best_fusion_name;
+    }
+    write_md_table(&mut f, headers, &rows)?;
+    Ok(())
 }
 
 /// Format an average of a float iterator.

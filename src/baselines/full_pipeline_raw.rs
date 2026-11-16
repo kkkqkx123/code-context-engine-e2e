@@ -79,7 +79,10 @@ pub async fn gen_full_pipeline_raw_source_chunks(
     derive_full_pipeline_raw_source_chunks(&parse)
 }
 
-fn try_extract_raw_source(chunk: &ChunkedResult, source_map: &HashMap<String, String>) -> Option<String> {
+fn try_extract_raw_source(
+    chunk: &ChunkedResult,
+    source_map: &HashMap<String, String>,
+) -> Option<String> {
     const MAX_TOKENS: usize = 7200;
     // Proportional truncation is shared with the dead-letter truncate-retry
     // path via `cce_utils::token_estimation::truncate_to_token_budget`:
@@ -139,9 +142,8 @@ fn try_extract_raw_source(chunk: &ChunkedResult, source_map: &HashMap<String, St
 }
 
 fn extract_raw_source(chunk: &ChunkedResult, source_map: &HashMap<String, String>) -> String {
-    try_extract_raw_source(chunk, source_map).expect(
-        "raw-source extraction: chunk has no source coverage",
-    )
+    try_extract_raw_source(chunk, source_map)
+        .expect("raw-source extraction: chunk has no source coverage")
 }
 
 #[cfg(test)]

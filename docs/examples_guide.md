@@ -6,7 +6,7 @@ This document describes the responsibilities and organization of the `examples/`
 
 Examples are **demonstrative output generators** — they produce review artifacts under `outputs/` for manual inspection. They do NOT participate in assertions and are strictly separated from `tests/`.
 
-**Total: 77 example files** across 18 subdirectories plus root-level debug tools.
+**Total: 83 example files** across 18 subdirectories plus root-level debug tools.
 
 ## Design Principles
 
@@ -103,7 +103,7 @@ Examples are **demonstrative output generators** — they produce review artifac
 
 ### 6. Retrieval Method Benchmark (`benchmark_retrieval_{target}`)
 
-**Count:** 3 examples
+**Count:** 9 examples
 
 **Purpose:** Compare retrieval fusion methods (emb / bm25 / minmax-* / rrf-*) using pre-computed bench data.
 
