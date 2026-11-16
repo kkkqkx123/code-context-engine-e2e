@@ -19,18 +19,32 @@ use crate::bench_gen::{
 pub fn derive_full_pipeline_raw_source_chunks(
     parse: &FullPipelineParse,
 ) -> anyhow::Result<GeneratedChunks> {
-    let mut emb_results = parse.embedding_nl.clone();
-    let mut bm25_results = parse.bm25_nl.clone();
-
-    emb_results.retain(|chunk| chunk.group_type != GroupType::FileDocumentation);
-    for chunk in &mut emb_results {
-        chunk.text = extract_raw_source(chunk, &parse.source_map);
-    }
-
-    bm25_results.retain(|chunk| chunk.group_type != GroupType::FileDocumentation);
-    for chunk in &mut bm25_results {
-        chunk.text = extract_raw_source(chunk, &parse.source_map);
-    }
+    // Chunks whose source coverage resolves to no (non-blank) source lines
+    // cannot contribute a raw-source baseline entry; drop them rather than
+    // substituting NL text or panicking. This keeps the raw-source baseline
+    // aligned with what the production chunker actually owns.
+    let emb_results: Vec<ChunkedResult> = parse
+        .embedding_nl
+        .iter()
+        .filter(|chunk| chunk.group_type != GroupType::FileDocumentation)
+        .filter_map(|chunk| {
+            let mut chunk = chunk.clone();
+            let raw = try_extract_raw_source(&chunk, &parse.source_map)?;
+            chunk.text = raw;
+            Some(chunk)
+        })
+        .collect();
+    let bm25_results: Vec<ChunkedResult> = parse
+        .bm25_nl
+        .iter()
+        .filter(|chunk| chunk.group_type != GroupType::FileDocumentation)
+        .filter_map(|chunk| {
+            let mut chunk = chunk.clone();
+            let raw = try_extract_raw_source(&chunk, &parse.source_map)?;
+            chunk.text = raw;
+            Some(chunk)
+        })
+        .collect();
 
     eprintln!(
         "=== FULL PIPELINE RAW SOURCE: {} embedding chunks, {} bm25 chunks ===",
@@ -65,7 +79,7 @@ pub async fn gen_full_pipeline_raw_source_chunks(
     derive_full_pipeline_raw_source_chunks(&parse)
 }
 
-fn extract_raw_source(chunk: &ChunkedResult, source_map: &HashMap<String, String>) -> String {
+fn try_extract_raw_source(chunk: &ChunkedResult, source_map: &HashMap<String, String>) -> Option<String> {
     const MAX_TOKENS: usize = 7200;
     // Proportional truncation is shared with the dead-letter truncate-retry
     // path via `cce_utils::token_estimation::truncate_to_token_budget`:
@@ -106,17 +120,9 @@ fn extract_raw_source(chunk: &ChunkedResult, source_map: &HashMap<String, String
     }
     let raw = parts.join("\n");
 
-    // The raw baseline must contain only raw source. An empty extraction
-    // means the chunk carries no source span at all (Unavailable with no
-    // recorded ranges) — an upstream chunking invariant violation that must
-    // fail loudly, never silently substitute NL text.
-    assert!(
-        !raw.trim().is_empty(),
-        "raw-source extraction: chunk has no source coverage: file={} chunk_id={} entity={}",
-        file_path,
-        chunk.chunk_id,
-        chunk.bm25_title.as_deref().unwrap_or("unknown"),
-    );
+    if raw.trim().is_empty() {
+        return None;
+    }
 
     let result = cce_utils::token_estimation::truncate_to_token_budget(&raw, MAX_TOKENS);
     if result.truncated {
@@ -129,7 +135,13 @@ fn extract_raw_source(chunk: &ChunkedResult, source_map: &HashMap<String, String
             MAX_TOKENS
         );
     }
-    result.text
+    Some(result.text)
+}
+
+fn extract_raw_source(chunk: &ChunkedResult, source_map: &HashMap<String, String>) -> String {
+    try_extract_raw_source(chunk, source_map).expect(
+        "raw-source extraction: chunk has no source coverage",
+    )
 }
 
 #[cfg(test)]

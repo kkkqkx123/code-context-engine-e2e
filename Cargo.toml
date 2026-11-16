@@ -201,6 +201,30 @@ name = "benchmark_retrieval_flask"
 path = "examples/python/benchmark_retrieval_flask.rs"
 
 [[example]]
+name = "benchmark_retrieval_express"
+path = "examples/javascript/benchmark_retrieval_express.rs"
+
+[[example]]
+name = "benchmark_retrieval_gin"
+path = "examples/go/benchmark_retrieval_gin.rs"
+
+[[example]]
+name = "benchmark_retrieval_spring_boot"
+path = "examples/java/benchmark_retrieval_spring_boot.rs"
+
+[[example]]
+name = "benchmark_retrieval_jackson_core"
+path = "examples/java/benchmark_retrieval_jackson_core.rs"
+
+[[example]]
+name = "benchmark_retrieval_mediatr"
+path = "examples/csharp/benchmark_retrieval_mediatr.rs"
+
+[[example]]
+name = "benchmark_retrieval_media_server"
+path = "examples/cpp/benchmark_retrieval_media_server.rs"
+
+[[example]]
 name = "benchmark_agg_oncecell"
 path = "examples/rust/benchmark_agg_oncecell.rs"
 
