@@ -293,6 +293,87 @@ pub fn generate_per_query_csv(
     Ok(())
 }
 
+/// Write per-query BM25 differences between `full_pipeline` and
+/// `full_pipeline_raw_source`.
+///
+/// The two baselines share chunk boundaries, titles and keywords; only the
+/// content field differs (template plus sidecar versus raw source slice). A
+/// sustained raw-source lead on semantic queries signals missing doc/code
+/// co-occurrence or diluted term statistics rather than random fluctuation.
+/// Only the primary `impl_only` plus `BM25` single path is compared so the
+/// gate stays focused on the production BM25 content shape.
+pub fn write_baseline_diff(
+    base: &Path,
+    results: &[BaselineResult],
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::BTreeMap;
+    for &top_k in TOP_K_VALUES {
+        let mut full: BTreeMap<String, &BaselineResult> = BTreeMap::new();
+        let mut raw: BTreeMap<String, &BaselineResult> = BTreeMap::new();
+        for r in results
+            .iter()
+            .filter(|r| r.top_k == top_k && r.variant == "impl_only" && r.retriever_type == "BM25")
+        {
+            match r.baseline.as_str() {
+                "full_pipeline" => {
+                    full.insert(r.query_id.clone(), r);
+                }
+                "full_pipeline_raw_source" => {
+                    raw.insert(r.query_id.clone(), r);
+                }
+                _ => {}
+            }
+        }
+        if full.is_empty() || raw.is_empty() {
+            continue;
+        }
+        let path = base.join(format!("baseline_diff_top{top_k}.md"));
+        let mut f = File::create(&path)?;
+        let headers = &[
+            "query",
+            "query_type",
+            "full_F1a",
+            "raw_F1a",
+            "diff_raw_minus_full",
+            "winner",
+        ];
+        let mut rows = Vec::new();
+        let mut full_wins = 0usize;
+        let mut raw_wins = 0usize;
+        let mut ties = 0usize;
+        for (query_id, full_result) in &full {
+            let Some(raw_result) = raw.get(query_id) else {
+                continue;
+            };
+            let full_f1 = full_result.score.f1_any;
+            let raw_f1 = raw_result.score.f1_any;
+            let diff = raw_f1 - full_f1;
+            let winner = if diff > 1e-9 {
+                raw_wins += 1;
+                "raw"
+            } else if diff < -1e-9 {
+                full_wins += 1;
+                "full"
+            } else {
+                ties += 1;
+                "tie"
+            };
+            rows.push(vec![
+                query_id.clone(),
+                full_result.query_type.to_string(),
+                format!("{full_f1:.4}"),
+                format!("{raw_f1:.4}"),
+                format!("{diff:+.4}"),
+                winner.to_string(),
+            ]);
+        }
+        rows.sort();
+        write_md_table(&mut f, headers, &rows)?;
+        writeln!(f, "\nfull_wins={full_wins} raw_wins={raw_wins} ties={ties}")?;
+    }
+    Ok(())
+}
+
 /// Write evaluation scope manifest as a markdown table.
 pub fn generate_evaluation_scope_csv(
     base: &Path,
@@ -582,6 +663,9 @@ struct ChunkShape {
     shared_range_chunks: usize,
     largest_range_group: usize,
     duplicate_texts: usize,
+    /// BM25-only: duplicate titles across `bm25_documents` (header repetition
+    /// proxy). Zero for the embedding path which carries no title index.
+    title_duplicate_texts: usize,
 }
 
 /// Range signature of a chunk: its file plus its sorted coverage ranges.
@@ -598,7 +682,11 @@ fn range_signature(chunk: &crate::bench_data::ChunkData) -> String {
     format!("{}|{}", chunk.file_path, parts.join(","))
 }
 
-fn chunk_shape(chunks: &[crate::bench_data::ChunkData], texts: &[String]) -> ChunkShape {
+fn chunk_shape_with_docs(
+    chunks: &[crate::bench_data::ChunkData],
+    texts: &[String],
+    docs: &[crate::bench_data::Bm25DocRecord],
+) -> ChunkShape {
     let mut signatures: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut empty_ranges = 0;
     for chunk in chunks {
@@ -616,15 +704,39 @@ fn chunk_shape(chunks: &[crate::bench_data::ChunkData], texts: &[String]) -> Chu
         *text_counts.entry(text.as_str()).or_insert(0) += 1;
     }
     let duplicate_texts: usize = text_counts.values().filter(|count| **count > 1).sum();
-
+    let title_duplicate_texts = if docs.is_empty() {
+        0
+    } else {
+        title_duplicates(docs)
+    };
     ChunkShape {
         chunks: chunks.len(),
         empty_ranges,
         shared_range_chunks,
         largest_range_group,
         duplicate_texts,
+        title_duplicate_texts,
     }
 }
+
+/// Title duplication across BM25 documents: repeated titles mean the same
+/// header identity was indexed in many chunks instead of once.
+fn title_duplicates(docs: &[crate::bench_data::Bm25DocRecord]) -> usize {
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for doc in docs {
+        if doc.title.trim().is_empty() {
+            continue;
+        }
+        *counts.entry(doc.title.as_str()).or_insert(0) += 1;
+    }
+    counts.values().filter(|count| **count > 1).sum()
+}
+
+/// Entity groups whose one source span produced several chunks.
+///
+/// Groups chunks by (entity set + range signature): a group with more than
+/// one chunk is a single entity whose documentation and code were split into
+/// separate index entries sharing the same coverage.
 
 /// Write chunk-shape diagnostics: how many chunks claim a source range no
 /// other chunk claims, and how many repeat another chunk's text.
@@ -632,6 +744,9 @@ fn chunk_shape(chunks: &[crate::bench_data::ChunkData], texts: &[String]) -> Chu
 /// A range shared by many chunks makes precision collapse even when recall
 /// holds: the chunks cover each other, so none of them contributes unique
 /// coverage. Repeated text is the same problem stated in the retrieval path.
+/// BM25 rows additionally carry title duplication (header repetition
+/// proxy): repeated titles mean the same header identity was indexed in
+/// many chunks instead of once.
 pub fn write_chunk_shape_diagnostics(
     base: &Path,
     all_bench: &[(String, BenchmarkData)],
@@ -649,14 +764,26 @@ pub fn write_chunk_shape_diagnostics(
         "largest_range_group",
         "duplicate_texts",
         "duplicate_text_share",
+        "title_dup_texts",
+        "title_dup_share",
     ];
     let mut rows = Vec::new();
     for (baseline, bench) in all_bench {
-        for (retriever, chunks, texts) in [
-            ("embedding", &bench.embedding.chunks, &bench.embedding.texts),
-            ("bm25", &bench.bm25.chunks, &bench.bm25.texts),
+        for (retriever, chunks, texts, docs) in [
+            (
+                "embedding",
+                &bench.embedding.chunks,
+                &bench.embedding.texts,
+                &[][..],
+            ),
+            (
+                "bm25",
+                &bench.bm25.chunks,
+                &bench.bm25.texts,
+                &bench.bm25_documents[..],
+            ),
         ] {
-            let shape = chunk_shape(chunks, texts);
+            let shape = chunk_shape_with_docs(chunks, texts, docs);
             let total = shape.chunks.max(1) as f64;
             rows.push(vec![
                 baseline.clone(),
@@ -668,6 +795,8 @@ pub fn write_chunk_shape_diagnostics(
                 format!("{}", shape.largest_range_group),
                 format!("{}", shape.duplicate_texts),
                 format!("{:.3}", shape.duplicate_texts as f64 / total),
+                format!("{}", shape.title_duplicate_texts),
+                format!("{:.3}", shape.title_duplicate_texts as f64 / total),
             ]);
         }
     }

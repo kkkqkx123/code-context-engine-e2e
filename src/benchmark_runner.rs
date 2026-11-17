@@ -8,8 +8,8 @@ use crate::judgments::evaluate::{
 };
 use crate::judgments::report::{
     generate_evaluation_scope_csv, print_console_summary, write_aggregate_reports,
-    write_chunk_shape_diagnostics, write_relevance_reports, write_run_manifest,
-    write_test_diagnostics,
+    write_baseline_diff, write_chunk_shape_diagnostics, write_relevance_reports,
+    write_run_manifest, write_test_diagnostics,
 };
 
 /// Run the standard precise + group-filled benchmark for one project.
@@ -99,6 +99,7 @@ pub fn run_standard_benchmark(
     generate_evaluation_scope_csv(&out, &all_judgments, &judgments)?;
 
     write_aggregate_reports(&out, &all_results, &no_test_results, &impl_only_results)?;
+    write_baseline_diff(&out, &impl_only_results)?;
     write_test_diagnostics(&out, &all_bench)?;
     write_chunk_shape_diagnostics(&out, &all_bench)?;
     write_relevance_reports(

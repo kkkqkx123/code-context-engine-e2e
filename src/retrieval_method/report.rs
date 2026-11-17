@@ -652,7 +652,10 @@ fn write_relative_baseline(
             if b != baseline {
                 continue;
             }
-            let vals: Vec<f64> = queries.iter().map(|q| qmap.get(*q).copied().unwrap_or(0.0)).collect();
+            let vals: Vec<f64> = queries
+                .iter()
+                .map(|q| qmap.get(*q).copied().unwrap_or(0.0))
+                .collect();
             let avg = mean_of(&vals);
             if avg > best_fusion_avg {
                 best_fusion_avg = avg;
