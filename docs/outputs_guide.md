@@ -340,17 +340,28 @@ cargo run --example benchmark_retrieval_flask -p cce-e2e-tests
 ```
 
 **来源文件：** `examples/{lang}/benchmark_retrieval_{project}.rs`；
-核心逻辑 `src/retrieval_method/{fusion,benchmark,report}.rs`
+核心逻辑 `src/retrieval_method/{fusion,aggregation,benchmark,report}.rs`
 
 **生成逻辑：**
-- 评测方法矩阵：`emb`、`bm25`、`minmax-*`（7 组 vector/bm25 权重）、`rrf-*`（k=30/60/100）
+- 评测方法矩阵：
+  - `emb`、`bm25`：单路原始块排序（每块一次）
+  - `minmax-*`：7 组 vector/bm25 权重，实体级对齐
+  - `minmax-0.5-{vec,bm25,strict}`：单路开关的三个变体（仅保留向量独有键 / 仅保留 BM25
+    独有键 / 严格交集），两条路径都命中的键不受开关影响
+  - `rrf-*`（k=30/60/100）与 `rrf-60-strict`
+  - `agg-max` / `agg-noisy-or`：多来源聚合（两条召回路径充当两个子查询结果列表），
+    键与计分公式直接复用生产实现
 - 跨路径对齐键去重后评测，保证 hybrid 与单路口径一致
 - 复用 range-based P/R/F1 计算，另加首次命中排位、同 range 重复占位、fusion_gain、权重敏感性指标
 
 **输出内容：**
-- `run_manifest.txt` / `alignment_coverage.md`
+- `run_manifest.txt` / `alignment_coverage.md`（含每路不可对齐块数与占比）
 - `aggregate_top{k}.md` / `aggregate_by_query_type_top{k}.md` / `per_query_top{k}.md`
 - `fusion_gain_by_query_type_top{k}.md` / `weight_sensitivity.md` / `rrf_k_sensitivity.md`
+- `single_path_policy.md`：单路开关四种策略的 F1 对照（同权重，只差开关）
+- `aggregation_strategy.md`：`agg-max` 与 `agg-noisy-or` 的 F1 对照，附多来源重叠率
+- `fusion_score_baseline.md`：融合分分布基线（条目数、路径覆盖拆分、达到理论上限的占比、
+  均值/最大值）——排序不变而分数尺度变化时，只有这张表会动
 - `relevance_top5.md`
 
 #### 2.3 重排基准（`benchmark/once_cell/rerank_{variant}/`）

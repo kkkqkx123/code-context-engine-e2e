@@ -1,13 +1,28 @@
 //! Retrieval-method benchmark: dense / sparse / hybrid fusion comparison.
 //!
 //! Reuses `data/benchmark/{baseline}/{fixture}/bge-m3/bench_data.rkyv`
-//! (no regeneration, no LLM calls) and evaluates three recall-method families
-//! — `emb`, `bm25`, `minmax-*`, `rrf-*`. Single-path `emb`/`bm25` rows
+//! (no regeneration, no LLM calls) and evaluates the recall-method families
+//! — `emb`, `bm25`, `minmax-*`, `rrf-*`, their single-path policy variants and
+//! the multi-source aggregation strategies. Single-path `emb`/`bm25` rows
 //! measure the raw chunk ranking (each chunk once), identical to the
 //! no-aggregation baseline benchmark; the fused methods measure entity-level
 //! rankings (one entry per alignment key).
+//!
+//! # Baseline dimensions
+//!
+//! Three dimensions are recorded next to the F1 tables because they are what
+//! makes a later run comparable:
+//!
+//! - **single-path policy**: `minmax-0.5-vec` / `-bm25` / `-strict` measure
+//!   what each production switch contributes, instead of assuming both sides
+//!   are symmetric.
+//! - **aggregation strategy**: `agg-max` / `agg-noisy-or` measure the sub-query
+//!   merge on the same data, using the production score-combination formula.
+//! - **score semantics**: [`ScoreStat`] records how many fused entries sit at
+//!   their weight-share ceiling, so a change in the fused score scale is
+//!   visible even when the ranking (and therefore F1) is unchanged.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::bench_data::{
     BenchmarkData, ChunkData, QueryType, RelevanceJudgment, RelevanceLevel, compute_bm25_scores,
@@ -15,8 +30,15 @@ use crate::bench_data::{
 };
 use crate::judgments::evaluate::{BASELINES, BenchmarkPaths, DEFAULT_TOP_K, TOP_K_VALUES};
 use crate::range_evaluator::RankedScan;
-use crate::retrieval_method::fusion::{FusedEntry, PreparedFusion, RankedPath, dedup_ranked};
+use crate::retrieval_method::aggregation::{
+    AggSource, AggregationStat, merge_sources as merge_aggregation_sources,
+};
+use crate::retrieval_method::fusion::{
+    FusedEntry, PathCoverage, PreparedFusion, RankedPath, SinglePathPolicy, count_unalignable,
+    dedup_ranked,
+};
 use crate::retrieval_method::report;
+use cce_config::modules::search::AggregationScoreStrategy;
 use cce_storage_bm25::TermOperator;
 
 /// Weight presets for `minmax-*` methods (vector_weight, bm25_weight).
@@ -30,8 +52,30 @@ pub const MINMAX_WEIGHTS: &[(f64, f64)] = &[
     (0.1, 0.9),
 ];
 
+/// Single-path policy variants, evaluated at the balanced weight.
+///
+/// `Union` is the default and is already covered by `minmax-0.5`, so only the
+/// three narrowed policies get their own rows.
+pub const POLICY_VARIANTS: &[(&str, SinglePathPolicy)] = &[
+    ("-vec", SinglePathPolicy::VectorOnly),
+    ("-bm25", SinglePathPolicy::Bm25Only),
+    ("-strict", SinglePathPolicy::Intersection),
+];
+
+/// Weight of the `minmax-*` rows the policy variants build on.
+pub const POLICY_WEIGHT: f64 = 0.5;
+
 /// Rank-smoothing factors for `rrf-*` methods.
 pub const RRF_K_VALUES: &[f64] = &[30.0, 60.0, 100.0];
+
+/// `k` of the strict-intersection RRF row.
+pub const RRF_STRICT_K: f64 = 60.0;
+
+/// Aggregation strategies evaluated over the two recall paths.
+pub const AGGREGATION_STRATEGIES: &[(&str, AggregationScoreStrategy)] = &[
+    ("agg-max", AggregationScoreStrategy::Max),
+    ("agg-noisy-or", AggregationScoreStrategy::NoisyOr),
+];
 
 /// Per-query score for one retrieval method.
 pub struct RetrievalMethodScore {
@@ -73,6 +117,110 @@ pub struct AlignmentStat {
     pub common_keys: usize,
     pub emb_only_keys: usize,
     pub bm25_only_keys: usize,
+    /// Embedding chunks whose key can never match the BM25 path (no entity and
+    /// no segment distinct from the chunk id).
+    pub emb_unalignable: usize,
+    /// BM25 chunks with the same limitation.
+    pub bm25_unalignable: usize,
+}
+
+impl AlignmentStat {
+    /// Share of all chunks that can never align, in `[0, 1]`.
+    ///
+    /// The offline counterpart of the runtime
+    /// `search_hybrid_alignment_unalignable_ratio`: a non-trivial share is
+    /// expected (chunk-id fallback), a share that keeps growing means the
+    /// index is missing entity/segment fields.
+    pub fn unalignable_ratio(&self) -> f64 {
+        let total = self.emb_chunks + self.bm25_chunks;
+        if total == 0 {
+            0.0
+        } else {
+            (self.emb_unalignable + self.bm25_unalignable) as f64 / total as f64
+        }
+    }
+}
+
+/// Fused-score distribution of one method, accumulated over every query.
+///
+/// F1 tables cannot show a change in the *scale* of the fused score — the
+/// ranking (and therefore every metric) stays identical when the score
+/// semantics change. This stat carries the numbers that do move: the ceiling
+/// each entry can reach given its path coverage, and how many entries reach it.
+#[derive(Debug, Clone, Default)]
+pub struct ScoreSummary {
+    pub entries: usize,
+    pub dual_path: usize,
+    pub vector_only: usize,
+    pub bm25_only: usize,
+    pub at_ceiling: usize,
+    pub max_score: f64,
+    pub sum_score: f64,
+}
+
+impl ScoreSummary {
+    /// Record one fused entry against the weights that produced it.
+    ///
+    /// The ceiling is the score a key gets when every path that returned it
+    /// contributes its full normalized credit: `w_v` for a vector-only key,
+    /// `w_b` for a BM25-only key, `1.0` for a dual-path key (the weights sum to
+    /// one). A single-path key can therefore never reach `1.0` — that is the
+    /// property this counter verifies.
+    pub fn observe(&mut self, entry: &FusedEntry, vector_weight: f64, bm25_weight: f64) {
+        self.entries += 1;
+        self.max_score = self.max_score.max(entry.fused_score);
+        self.sum_score += entry.fused_score;
+        let ceiling = match entry.paths {
+            PathCoverage::Both => {
+                self.dual_path += 1;
+                vector_weight + bm25_weight
+            }
+            PathCoverage::VectorOnly => {
+                self.vector_only += 1;
+                vector_weight
+            }
+            PathCoverage::Bm25Only => {
+                self.bm25_only += 1;
+                bm25_weight
+            }
+        };
+        if (entry.fused_score - ceiling).abs() < 1e-4 {
+            self.at_ceiling += 1;
+        }
+    }
+
+    pub fn mean_score(&self) -> f64 {
+        if self.entries == 0 {
+            0.0
+        } else {
+            self.sum_score / self.entries as f64
+        }
+    }
+
+    /// Share of entries sitting at their path-coverage ceiling, in `[0, 1]`.
+    pub fn ceiling_ratio(&self) -> f64 {
+        if self.entries == 0 {
+            0.0
+        } else {
+            self.at_ceiling as f64 / self.entries as f64
+        }
+    }
+}
+
+/// Score distribution baseline of one (baseline, method) pair.
+pub struct ScoreStat {
+    pub baseline: String,
+    pub method: String,
+    pub vector_weight: f64,
+    pub bm25_weight: f64,
+    pub summary: ScoreSummary,
+}
+
+/// Aggregation baseline of one (baseline, strategy) pair.
+pub struct AggregationBaseline {
+    pub baseline: String,
+    pub strategy: String,
+    pub stat: AggregationStat,
 }
 
 /// Aggregated result of a retrieval-method benchmark run.
@@ -81,6 +229,8 @@ pub struct BenchmarkRun {
     pub results: Vec<MethodResult>,
     pub relevance: Vec<MethodRelevance>,
     pub alignment: Vec<AlignmentStat>,
+    pub scores: Vec<ScoreStat>,
+    pub aggregation: Vec<AggregationBaseline>,
     pub methods: Vec<String>,
 }
 
@@ -100,6 +250,8 @@ pub fn run_retrieval_method_benchmark(
     let mut results = Vec::new();
     let mut relevance = Vec::new();
     let mut alignment = Vec::new();
+    let mut scores = Vec::new();
+    let mut aggregation = Vec::new();
 
     for baseline in BASELINES {
         let data_path = paths.data_dir(baseline);
@@ -121,11 +273,12 @@ pub fn run_retrieval_method_benchmark(
             bench.embedding.chunks.len(),
             bench.bm25.chunks.len()
         );
-        let (mut baseline_results, mut baseline_relevance) =
-            evaluate_baseline(baseline, &bench, judgments);
+        let mut evaluated = evaluate_baseline_records(baseline, &bench, judgments);
         alignment.push(collect_alignment_stat(baseline, &bench));
-        results.append(&mut baseline_results);
-        relevance.append(&mut baseline_relevance);
+        results.append(&mut evaluated.methods);
+        relevance.append(&mut evaluated.relevance);
+        scores.append(&mut evaluated.scores);
+        aggregation.append(&mut evaluated.aggregation);
     }
 
     if results.is_empty() {
@@ -135,9 +288,21 @@ pub fn run_retrieval_method_benchmark(
             results,
             relevance,
             alignment,
+            scores,
+            aggregation,
             methods: ordered_methods(),
         });
     }
+    scores.sort_by(|a, b| {
+        a.baseline
+            .cmp(&b.baseline)
+            .then_with(|| a.method.cmp(&b.method))
+    });
+    aggregation.sort_by(|a, b| {
+        a.baseline
+            .cmp(&b.baseline)
+            .then_with(|| a.strategy.cmp(&b.strategy))
+    });
 
     let out = output_dir(project);
     std::fs::create_dir_all(&out)?;
@@ -148,6 +313,8 @@ pub fn run_retrieval_method_benchmark(
         judgments.len(),
         &methods,
         &alignment,
+        &scores,
+        &aggregation,
         &results,
         &relevance,
     )?;
@@ -163,6 +330,8 @@ pub fn run_retrieval_method_benchmark(
         results,
         relevance,
         alignment,
+        scores,
+        aggregation,
         methods,
     })
 }
@@ -173,8 +342,15 @@ pub fn ordered_methods() -> Vec<String> {
     for (alpha, _) in MINMAX_WEIGHTS {
         methods.push(format!("minmax-{alpha:.1}"));
     }
+    for (suffix, _) in POLICY_VARIANTS {
+        methods.push(format!("minmax-{POLICY_WEIGHT:.1}{suffix}"));
+    }
     for k in RRF_K_VALUES {
         methods.push(format!("rrf-{k:.0}"));
+    }
+    methods.push(format!("rrf-{RRF_STRICT_K:.0}-strict"));
+    for (name, _) in AGGREGATION_STRATEGIES {
+        methods.push((*name).to_string());
     }
     methods
 }
@@ -183,7 +359,9 @@ pub fn ordered_methods() -> Vec<String> {
 ///
 /// Counts the **expanded** per-entity keys (a multi-entity chunk contributes
 /// one key per contained entity), mirroring the entity-level aggregation used
-/// by both the single-path dedup and the fusion paths.
+/// by both the single-path dedup and the fusion paths. The unalignable counts
+/// use the production rule, so the reported share is directly comparable with
+/// the runtime alignment metric.
 pub fn collect_alignment_stat(baseline: &str, bench: &BenchmarkData) -> AlignmentStat {
     use crate::retrieval_method::fusion::alignment_keys;
     let emb_keys: HashSet<String> = bench
@@ -203,6 +381,8 @@ pub fn collect_alignment_stat(baseline: &str, bench: &BenchmarkData) -> Alignmen
         common_keys: common,
         emb_only_keys: emb_keys.len() - common,
         bm25_only_keys: bm25_keys.len() - common,
+        emb_unalignable: count_unalignable(&bench.embedding.chunks),
+        bm25_unalignable: count_unalignable(&bench.bm25.chunks),
     }
 }
 
@@ -215,16 +395,26 @@ pub fn evaluate_baseline(
     bench: &BenchmarkData,
     judgments: &[RelevanceJudgment],
 ) -> (Vec<MethodResult>, Vec<MethodRelevance>) {
-    let mut results = Vec::new();
-    let mut relevance = Vec::new();
-    evaluate_baseline_methods(baseline, bench, judgments, &mut results, &mut relevance);
-    (results, relevance)
+    let records = evaluate_baseline_records(baseline, bench, judgments);
+    (records.methods, records.relevance)
+}
+
+/// Everything one baseline contributes to a run.
+struct BaselineRecords {
+    methods: Vec<MethodResult>,
+    relevance: Vec<MethodRelevance>,
+    scores: Vec<ScoreStat>,
+    aggregation: Vec<AggregationBaseline>,
 }
 
 /// Collects the evaluation output for one baseline.
 struct MethodSink<'a> {
     results: &'a mut Vec<MethodResult>,
     relevance: &'a mut Vec<MethodRelevance>,
+    /// Per `(baseline, method)`: the weights and the accumulated score summary.
+    scores: &'a mut BTreeMap<(String, String), (f64, f64, ScoreSummary)>,
+    /// Per aggregation strategy: accumulated multi-source overlap.
+    aggregation: &'a mut BTreeMap<String, AggregationStat>,
 }
 
 /// Pre-scored recall rankings for one baseline dataset.
@@ -298,14 +488,59 @@ pub fn rank_recall(bench: &BenchmarkData) -> RecallRankings {
 }
 
 /// Evaluate every method family for one baseline across its queries.
+fn evaluate_baseline_records(
+    baseline: &str,
+    bench: &BenchmarkData,
+    judgments: &[RelevanceJudgment],
+) -> BaselineRecords {
+    let mut results = Vec::new();
+    let mut relevance = Vec::new();
+    let mut score_map: BTreeMap<(String, String), (f64, f64, ScoreSummary)> = BTreeMap::new();
+    let mut aggregation_stats: BTreeMap<String, AggregationStat> = BTreeMap::new();
+    {
+        let mut sink = MethodSink {
+            results: &mut results,
+            relevance: &mut relevance,
+            scores: &mut score_map,
+            aggregation: &mut aggregation_stats,
+        };
+        evaluate_baseline_methods(baseline, bench, judgments, &mut sink);
+    }
+    let scores = score_map
+        .into_iter()
+        .map(
+            |((baseline, method), (vector_weight, bm25_weight, summary))| ScoreStat {
+                baseline,
+                method,
+                vector_weight,
+                bm25_weight,
+                summary,
+            },
+        )
+        .collect();
+    let aggregation = aggregation_stats
+        .into_iter()
+        .map(|(strategy, stat)| AggregationBaseline {
+            baseline: baseline.to_string(),
+            strategy,
+            stat,
+        })
+        .collect();
+    BaselineRecords {
+        methods: results,
+        relevance,
+        scores,
+        aggregation,
+    }
+}
+
+/// Evaluate every method family for one baseline across its queries.
 fn evaluate_baseline_methods(
     baseline: &str,
     bench: &BenchmarkData,
     judgments: &[RelevanceJudgment],
-    results: &mut Vec<MethodResult>,
-    relevance: &mut Vec<MethodRelevance>,
+    sink: &mut MethodSink<'_>,
 ) {
-    let mut sink = MethodSink { results, relevance };
     let recall = rank_recall(bench);
 
     for (q_idx, query_data) in bench.queries.iter().enumerate() {
@@ -348,7 +583,7 @@ fn evaluate_baseline_methods(
             },
             query_data,
             judgment,
-            &mut sink,
+            sink,
         );
     }
 }
@@ -396,26 +631,73 @@ fn evaluate_query_methods(
     // search results, per-key rank maps) is shared by every weight variant.
     let prepared = PreparedFusion::prepare(&paths.emb_raw, &paths.bm25_raw);
     for (alpha, beta) in MINMAX_WEIGHTS {
-        let fused = prepared.fuse_minmax(*alpha, *beta, true);
+        let fused = prepared.fuse_minmax(*alpha, *beta, SinglePathPolicy::Union);
         record_fused(
             baseline,
             &format!("minmax-{alpha:.1}"),
             query_data,
             judgment,
             &fused,
+            Some((*alpha, *beta)),
+            sink,
+        );
+    }
+    // What each side of the single-path switch contributes, at the balanced
+    // weight so the only difference between these rows and `minmax-0.5` is the
+    // policy itself.
+    for (suffix, policy) in POLICY_VARIANTS {
+        let fused = prepared.fuse_minmax(POLICY_WEIGHT, POLICY_WEIGHT, *policy);
+        record_fused(
+            baseline,
+            &format!("minmax-{POLICY_WEIGHT:.1}{suffix}"),
+            query_data,
+            judgment,
+            &fused,
+            Some((POLICY_WEIGHT, POLICY_WEIGHT)),
             sink,
         );
     }
     for k in RRF_K_VALUES {
-        let fused = prepared.fuse_rrf(*k, true);
+        let fused = prepared.fuse_rrf(*k, SinglePathPolicy::Union);
         record_fused(
             baseline,
             &format!("rrf-{k:.0}"),
             query_data,
             judgment,
             &fused,
+            None,
             sink,
         );
+    }
+    let fused = prepared.fuse_rrf(RRF_STRICT_K, SinglePathPolicy::Intersection);
+    record_fused(
+        baseline,
+        &format!("rrf-{RRF_STRICT_K:.0}-strict"),
+        query_data,
+        judgment,
+        &fused,
+        None,
+        sink,
+    );
+
+    // Aggregation stand-in: the two recall paths play the role of two
+    // sub-query result lists, merged on the production dedup key with the
+    // production score-combination formula.
+    let sources = [
+        AggSource::new(paths.emb_raw.chunks, paths.emb_raw.ranked.clone()),
+        AggSource::new(paths.bm25_raw.chunks, paths.bm25_raw.ranked.clone()),
+    ];
+    for (name, strategy) in AGGREGATION_STRATEGIES {
+        let merged = merge_aggregation_sources(&sources, *strategy);
+        if merged.is_empty() {
+            continue;
+        }
+        sink.aggregation
+            .entry((*name).to_string())
+            .or_default()
+            .observe(&merged);
+        let ranked: Vec<&ChunkData> = merged.iter().map(|entry| &entry.chunk).collect();
+        record_method(baseline, name, query_data, judgment, &ranked, sink);
     }
 }
 
@@ -430,10 +712,24 @@ fn record_fused(
     query_data: &crate::bench_data::QueryData,
     judgment: &RelevanceJudgment,
     fused: &[FusedEntry],
+    weights: Option<(f64, f64)>,
     sink: &mut MethodSink<'_>,
 ) {
     if fused.is_empty() {
         return;
+    }
+    // Score-scale baseline: only the size algorithms report it, because their
+    // fused score is a weighted share of [0, 1] and therefore comparable
+    // across runs. RRF scores are `1 / (k + rank)` sums and carry no such
+    // meaning.
+    if let Some((vector_weight, bm25_weight)) = weights {
+        let entry = sink
+            .scores
+            .entry((baseline.to_string(), method.to_string()))
+            .or_insert_with(|| (vector_weight, bm25_weight, ScoreSummary::default()));
+        for item in fused {
+            entry.2.observe(item, vector_weight, bm25_weight);
+        }
     }
     let ranked: Vec<&ChunkData> = fused.iter().map(|entry| &entry.coverage).collect();
     record_method(baseline, method, query_data, judgment, &ranked, sink);
@@ -583,5 +879,93 @@ mod tests {
         assert_eq!(stat.common_keys, 2, "entities 7 and 8 are common");
         assert_eq!(stat.emb_only_keys, 1);
         assert_eq!(stat.bm25_only_keys, 1);
+        assert_eq!(stat.emb_unalignable, 0, "every chunk carries an entity");
+        assert_eq!(stat.bm25_unalignable, 0);
+    }
+
+    #[test]
+    fn alignment_stat_counts_unalignable_chunks() {
+        // No entity and a segment equal to the chunk id: the index's fallback
+        // shape, which can never match the other path.
+        let bare = chunk("group_1_emb_0", Vec::new(), "group_1_emb_0");
+        let bench = BenchmarkData {
+            queries: Vec::new(),
+            query_texts: Vec::new(),
+            embedding: crate::bench_data::RetrieverDataset {
+                chunks: vec![bare, chunk("a_emb_0", vec![7], "seg_a")],
+                texts: Vec::new(),
+                vectors: Vec::new(),
+                query_vectors: Vec::new(),
+                dimension: 0,
+            },
+            bm25: crate::bench_data::RetrieverDataset {
+                chunks: vec![chunk("a_bm25_0", vec![7], "seg_a")],
+                texts: Vec::new(),
+                vectors: Vec::new(),
+                query_vectors: Vec::new(),
+                dimension: 0,
+            },
+            bm25_documents: Vec::new(),
+            call_edges: Vec::new(),
+        };
+        let stat = collect_alignment_stat("test", &bench);
+        assert_eq!(stat.emb_unalignable, 1);
+        assert_eq!(stat.bm25_unalignable, 0);
+        assert!((stat.unalignable_ratio() - 1.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ordered_methods_are_unique_and_cover_every_family() {
+        let methods = ordered_methods();
+        let unique: HashSet<&String> = methods.iter().collect();
+        assert_eq!(unique.len(), methods.len(), "method names key report rows");
+        for expected in [
+            "emb",
+            "bm25",
+            "minmax-0.5",
+            "minmax-0.5-vec",
+            "minmax-0.5-bm25",
+            "minmax-0.5-strict",
+            "rrf-60",
+            "rrf-60-strict",
+            "agg-max",
+            "agg-noisy-or",
+        ] {
+            assert!(
+                methods.iter().any(|m| m == expected),
+                "missing method row {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn single_path_entries_never_reach_the_full_score() {
+        // Equal weights: a single-path entry tops out at its own weight share,
+        // a dual-path entry reaches 1.0. This is the score-scale contract the
+        // baseline table exists to protect.
+        let mut summary = ScoreSummary::default();
+        let entry = |paths, score| FusedEntry {
+            key: "k".to_string(),
+            chunk: chunk("c", vec![1], "seg"),
+            fused_score: score,
+            vector_score: Some(score),
+            bm25_score: None,
+            paths,
+            coverage: chunk("c", vec![1], "seg"),
+        };
+        summary.observe(&entry(PathCoverage::VectorOnly, 0.5), 0.5, 0.5);
+        summary.observe(&entry(PathCoverage::Bm25Only, 0.5), 0.5, 0.5);
+        summary.observe(&entry(PathCoverage::Both, 1.0), 0.5, 0.5);
+        assert_eq!(summary.entries, 3);
+        assert_eq!(summary.at_ceiling, 3);
+        assert!((summary.ceiling_ratio() - 1.0).abs() < 1e-9);
+        assert!((summary.max_score - 1.0).abs() < 1e-9);
+
+        // A single-path entry scored 1.0 is off-contract and must not count as
+        // sitting at its ceiling.
+        let mut regressed = ScoreSummary::default();
+        regressed.observe(&entry(PathCoverage::VectorOnly, 1.0), 0.5, 0.5);
+        assert_eq!(regressed.at_ceiling, 0);
+        assert!((regressed.max_score - 1.0).abs() < 1e-9);
     }
 }

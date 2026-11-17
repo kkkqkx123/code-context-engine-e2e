@@ -4,7 +4,8 @@
 //! `run_manifest.txt`, `alignment_coverage.md`, `aggregate_top{k}.md`,
 //! `aggregate_by_query_type_top{k}.md`, `per_query_top{k}.md`,
 //! `fusion_gain_by_query_type_top{k}.md`, `weight_sensitivity.md`,
-//! `rrf_k_sensitivity.md`, `relevance_top5.md`.
+//! `rrf_k_sensitivity.md`, `single_path_policy.md`, `aggregation_strategy.md`,
+//! `fusion_score_baseline.md`, `relevance_top5.md`.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -14,16 +15,20 @@ use std::path::Path;
 use crate::bench_data::RelevanceLevel;
 use crate::judgments::evaluate::{DEFAULT_TOP_K, TOP_K_VALUES};
 use crate::retrieval_method::benchmark::{
-    AlignmentStat, MINMAX_WEIGHTS, MethodRelevance, MethodResult, RRF_K_VALUES,
+    AGGREGATION_STRATEGIES, AggregationBaseline, AlignmentStat, MINMAX_WEIGHTS, MethodRelevance,
+    MethodResult, POLICY_VARIANTS, POLICY_WEIGHT, RRF_K_VALUES, ScoreStat,
 };
 
 /// Write the full report set for a benchmark run.
+#[allow(clippy::too_many_arguments)]
 pub fn write_all(
     out: &Path,
     project: &str,
     judgment_count: usize,
     methods: &[String],
     alignment: &[AlignmentStat],
+    scores: &[ScoreStat],
+    aggregation: &[AggregationBaseline],
     results: &[MethodResult],
     relevance: &[MethodRelevance],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -38,6 +43,9 @@ pub fn write_all(
     }
     write_weight_sensitivity(out, results)?;
     write_rrf_sensitivity(out, results)?;
+    write_single_path_policy(out, results)?;
+    write_aggregation_strategy(out, results, aggregation)?;
+    write_fusion_score_baseline(out, scores)?;
     write_relevance(out, relevance)?;
     Ok(())
 }
@@ -72,6 +80,22 @@ fn write_run_manifest(
     }
     writeln!(
         f,
+        "single-path policy variants (at {POLICY_WEIGHT:.1}/{POLICY_WEIGHT:.1}):"
+    )?;
+    for (suffix, policy) in POLICY_VARIANTS {
+        let (include_vector, include_bm25) = policy.switches();
+        writeln!(
+            f,
+            "  minmax-{POLICY_WEIGHT:.1}{suffix}: include_vector_only_keys={include_vector}, \
+             include_bm25_only_keys={include_bm25}"
+        )?;
+    }
+    writeln!(f, "aggregation strategies (two recall paths as sources):")?;
+    for (name, _) in AGGREGATION_STRATEGIES {
+        writeln!(f, "  {name}")?;
+    }
+    writeln!(
+        f,
         "alignment key: entity_id (multi-entity expanded) -> segment_id -> chunk_id"
     )?;
     writeln!(
@@ -83,12 +107,14 @@ fn write_run_manifest(
     for stat in alignment {
         writeln!(
             f,
-            "baseline {}: {} emb chunks ({} keys), {} bm25 chunks ({} keys), {} common keys (emb-only {}, bm25-only {})",
+            "baseline {}: {} emb chunks ({} keys, {} unalignable), {} bm25 chunks ({} keys, {} unalignable), {} common keys (emb-only {}, bm25-only {})",
             stat.baseline,
             stat.emb_chunks,
             stat.emb_keys,
+            stat.emb_unalignable,
             stat.bm25_chunks,
             stat.bm25_keys,
+            stat.bm25_unalignable,
             stat.common_keys,
             stat.emb_only_keys,
             stat.bm25_only_keys,
@@ -115,6 +141,9 @@ fn write_alignment_coverage(
         "emb_only",
         "bm25_only",
         "coverage",
+        "emb_unalignable",
+        "bm25_unalignable",
+        "unalignable_share",
     ];
     let rows: Vec<Vec<String>> = stats
         .iter()
@@ -135,6 +164,9 @@ fn write_alignment_coverage(
                 s.emb_only_keys.to_string(),
                 s.bm25_only_keys.to_string(),
                 format!("{:.1}%", coverage * 100.0),
+                s.emb_unalignable.to_string(),
+                s.bm25_unalignable.to_string(),
+                format!("{:.1}%", s.unalignable_ratio() * 100.0),
             ]
         })
         .collect();
@@ -144,7 +176,278 @@ fn write_alignment_coverage(
     writeln!(f, "Coverage = common keys / max(emb_keys, bm25_keys).")?;
     writeln!(
         f,
-        "Keys present in only one path receive partial credit in hybrid fusion (include_single_path=true)."
+        "Single-path keys join the fused list according to their own switch \
+         (include_vector_only_keys / include_bm25_only_keys, both on by default)."
+    )?;
+    writeln!(
+        f,
+        "Unalignable = chunks with no entity and no segment distinct from the chunk id; \
+         their key carries a path suffix and can never match. This is the offline \
+         counterpart of search_hybrid_alignment_unalignable_ratio: a few percent is \
+         normal (index fallback), a growing share means the index is missing entity or \
+         segment fields."
+    )?;
+    Ok(())
+}
+
+/// Write `single_path_policy.md`.
+///
+/// Compares the balanced fusion under each single-path policy. The F1 table
+/// answers "what does keeping this side's single-path keys buy"; the entry
+/// table shows how the union splits, which is what explains a row that does not
+/// move.
+fn write_single_path_policy(
+    out: &Path,
+    results: &[MethodResult],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = out.join("single_path_policy.md");
+    let mut f = File::create(&path)?;
+
+    let method_of = |suffix: &str| format!("minmax-{POLICY_WEIGHT:.1}{suffix}");
+    let policies: Vec<(String, &str)> = std::iter::once((method_of(""), "union"))
+        .chain(
+            POLICY_VARIANTS
+                .iter()
+                .map(|(suffix, _)| (method_of(suffix), *suffix)),
+        )
+        .collect();
+
+    let mut grouped: BTreeMap<(String, String, String), Vec<f64>> = BTreeMap::new();
+    for r in results.iter().filter(|r| r.top_k == DEFAULT_TOP_K) {
+        let Some((_, label)) = policies.iter().find(|(name, _)| *name == r.method) else {
+            continue;
+        };
+        grouped
+            .entry((
+                r.baseline.clone(),
+                r.query_type.to_string(),
+                (*label).to_string(),
+            ))
+            .or_default()
+            .push(r.score.range.f1_any);
+    }
+
+    let headers = &[
+        "baseline",
+        "query_type",
+        "union",
+        "vector_only",
+        "bm25_only",
+        "strict",
+        "union - strict",
+    ];
+    let mut baselines: Vec<String> = grouped.keys().map(|k| k.0.clone()).collect();
+    baselines.sort();
+    baselines.dedup();
+    let mut rows = Vec::new();
+    for baseline in &baselines {
+        let mut query_types: Vec<String> = grouped
+            .keys()
+            .filter(|k| k.0 == *baseline)
+            .map(|k| k.1.clone())
+            .collect();
+        query_types.sort();
+        query_types.dedup();
+        for query_type in query_types {
+            let mean_of_label = |label: &str| -> f64 {
+                grouped
+                    .get(&(baseline.clone(), query_type.clone(), label.to_string()))
+                    .map_or(0.0, |vals| mean_of(vals))
+            };
+            let union = mean_of_label("union");
+            let strict = mean_of_label("-strict");
+            rows.push(vec![
+                baseline.clone(),
+                query_type.clone(),
+                format!("{union:.4}"),
+                format!("{:.4}", mean_of_label("-vec")),
+                format!("{:.4}", mean_of_label("-bm25")),
+                format!("{strict:.4}"),
+                format!("{:+.4}", union - strict),
+            ]);
+        }
+    }
+    write_md_table(&mut f, headers, &rows)?;
+
+    writeln!(f)?;
+    writeln!(
+        f,
+        "All policies use identical weights ({POLICY_WEIGHT:.1} vector / {POLICY_WEIGHT:.1} BM25); \
+         only the single-path switch pair differs. Keys returned by both paths always survive, so \
+         disabling both switches equals the strict intersection (5th column of the F1 row set is \
+         the cost of dropping every single-path key)."
+    )?;
+    Ok(())
+}
+
+/// Write `aggregation_strategy.md`.
+///
+/// Two tables: the ranking effect of the strategy (F1 at the default cutoff),
+/// and how much multi-source overlap the data actually has. Without the second
+/// table a "no difference" result would be indistinguishable from a broken
+/// merge.
+fn write_aggregation_strategy(
+    out: &Path,
+    results: &[MethodResult],
+    aggregation: &[AggregationBaseline],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = out.join("aggregation_strategy.md");
+    let mut f = File::create(&path)?;
+
+    let mut grouped: BTreeMap<(String, String, String), Vec<f64>> = BTreeMap::new();
+    for r in results.iter().filter(|r| r.top_k == DEFAULT_TOP_K) {
+        if !AGGREGATION_STRATEGIES
+            .iter()
+            .any(|(name, _)| *name == r.method)
+        {
+            continue;
+        }
+        grouped
+            .entry((
+                r.baseline.clone(),
+                r.query_type.to_string(),
+                r.method.clone(),
+            ))
+            .or_default()
+            .push(r.score.range.f1_any);
+    }
+
+    let headers = &["baseline", "query_type", "agg-max", "agg-noisy-or", "delta"];
+    let mut rows = Vec::new();
+    let mut baselines: Vec<String> = grouped.keys().map(|k| k.0.clone()).collect();
+    baselines.sort();
+    baselines.dedup();
+    for baseline in &baselines {
+        let mut query_types: Vec<String> = grouped
+            .keys()
+            .filter(|k| k.0 == *baseline)
+            .map(|k| k.1.clone())
+            .collect();
+        query_types.sort();
+        query_types.dedup();
+        for query_type in query_types {
+            let mean_of_method = |method: &str| -> f64 {
+                grouped
+                    .get(&(baseline.clone(), query_type.clone(), method.to_string()))
+                    .map_or(0.0, |vals| mean_of(vals))
+            };
+            let max = mean_of_method("agg-max");
+            let noisy = mean_of_method("agg-noisy-or");
+            rows.push(vec![
+                baseline.clone(),
+                query_type.clone(),
+                format!("{max:.4}"),
+                format!("{noisy:.4}"),
+                format!("{:+.4}", noisy - max),
+            ]);
+        }
+    }
+    write_md_table(&mut f, headers, &rows)?;
+
+    writeln!(f)?;
+    writeln!(f, "### Multi-source overlap")?;
+    writeln!(f)?;
+    let headers = &[
+        "baseline",
+        "strategy",
+        "multi_source_keys",
+        "single_source_keys",
+        "contributions",
+        "multi_source_share",
+        "contributions_per_key",
+    ];
+    let rows: Vec<Vec<String>> = aggregation
+        .iter()
+        .map(|entry| {
+            vec![
+                entry.baseline.clone(),
+                entry.strategy.clone(),
+                entry.stat.multi_source_keys.to_string(),
+                entry.stat.single_source_keys.to_string(),
+                entry.stat.contributions.to_string(),
+                format!("{:.1}%", entry.stat.multi_source_ratio() * 100.0),
+                format!("{:.2}", entry.stat.contributions_per_key()),
+            ]
+        })
+        .collect();
+    write_md_table(&mut f, headers, &rows)?;
+
+    writeln!(f)?;
+    writeln!(
+        f,
+        "Each recall path stands in for one sub-query result list: both are min-max \
+         normalized per query (the production normalization), then merged on the production \
+         dedup key with the production score-combination formula. Rows are F1_any at top-{DEFAULT_TOP_K}."
+    )?;
+    writeln!(
+        f,
+        "The strategies can only differ on keys hit by more than one source, so read the \
+         overlap table first: a low multi-source share explains a flat delta."
+    )?;
+    Ok(())
+}
+
+/// Write `fusion_score_baseline.md`.
+///
+/// The numeric baseline for the fused score scale. F1 cannot observe it: the
+/// ranking is unchanged when only the score semantics move, so the ceiling each
+/// entry reaches is recorded explicitly. A single-path key must never reach
+/// `1.0` — its ceiling is its own weight share.
+fn write_fusion_score_baseline(
+    out: &Path,
+    scores: &[ScoreStat],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = out.join("fusion_score_baseline.md");
+    let mut f = File::create(&path)?;
+
+    let headers = &[
+        "baseline",
+        "method",
+        "vector_weight",
+        "bm25_weight",
+        "entries",
+        "dual_path",
+        "vector_only",
+        "bm25_only",
+        "at_ceiling",
+        "ceiling_share",
+        "mean_score",
+        "max_score",
+    ];
+    let rows: Vec<Vec<String>> = scores
+        .iter()
+        .map(|stat| {
+            let s = &stat.summary;
+            vec![
+                stat.baseline.clone(),
+                stat.method.clone(),
+                format!("{:.1}", stat.vector_weight),
+                format!("{:.1}", stat.bm25_weight),
+                s.entries.to_string(),
+                s.dual_path.to_string(),
+                s.vector_only.to_string(),
+                s.bm25_only.to_string(),
+                s.at_ceiling.to_string(),
+                format!("{:.1}%", s.ceiling_ratio() * 100.0),
+                format!("{:.4}", s.mean_score()),
+                format!("{:.4}", s.max_score),
+            ]
+        })
+        .collect();
+    write_md_table(&mut f, headers, &rows)?;
+
+    writeln!(f)?;
+    writeln!(
+        f,
+        "Ceiling = the fused score of an entry whose every contributing path gives full \
+         normalized credit: w_v for a vector-only key, w_b for a BM25-only key, 1.0 for a \
+         dual-path key (weights sum to one). at_ceiling counts entries within 1e-4 of it."
+    )?;
+    writeln!(
+        f,
+        "A single-path entry can therefore never report 1.0; a regression that restores the \
+         old single-path shortcut shows up as max_score 1.0 together with at_ceiling covering \
+         the single-path rows as well."
     )?;
     Ok(())
 }

@@ -19,7 +19,7 @@ use crate::range_evaluator::RankedScan;
 use crate::retrieval_method::benchmark::{
     MethodRelevance, MethodResult, RetrievalMethodScore, rank_recall,
 };
-use crate::retrieval_method::fusion::{PreparedFusion, RankedPath, dedup_ranked};
+use crate::retrieval_method::fusion::{PreparedFusion, RankedPath, SinglePathPolicy, dedup_ranked};
 
 use super::report;
 
@@ -268,7 +268,8 @@ fn evaluate_all_queries(mut ctx: QueryContext<'_>) {
         let bm25_raw = RankedPath::new(bm25_chunks, bm25_ranked.clone());
         if !emb_ranked.is_empty() && !bm25_ranked.is_empty() {
             let prepared = PreparedFusion::prepare(&emb_raw, &bm25_raw);
-            let fused = prepared.fuse_minmax(MINMAX_WEIGHT.0, MINMAX_WEIGHT.1, true);
+            let fused =
+                prepared.fuse_minmax(MINMAX_WEIGHT.0, MINMAX_WEIGHT.1, SinglePathPolicy::Union);
             if fused.is_empty() {
                 ctx.skipped.push("minmax-0.5 fusion empty".to_string());
             } else {

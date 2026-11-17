@@ -122,7 +122,8 @@ fn test_hybrid_fusion_weighted() {
     let config = HybridFusionConfig {
         vector_weight: 0.5,
         bm25_weight: 0.5,
-        include_single_path: true,
+        include_vector_only_keys: true,
+        include_bm25_only_keys: true,
         min_score: 0.0,
         dedup_by_chunk: false,
         ..HybridFusionConfig::default()
@@ -171,7 +172,8 @@ fn test_fusion_with_empty_bm25() {
     let config = HybridFusionConfig {
         vector_weight: 1.0,
         bm25_weight: 0.0,
-        include_single_path: true,
+        include_vector_only_keys: true,
+        include_bm25_only_keys: true,
         min_score: 0.0,
         dedup_by_chunk: false,
         ..HybridFusionConfig::default()
