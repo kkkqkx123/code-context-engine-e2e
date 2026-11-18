@@ -252,6 +252,7 @@ where
         enable_rerank: None,
         enable_result_filter: None,
         query_intent: None,
+        relation_epoch: None,
         neighbour_resolver: None,
     };
     let mut result = query_test

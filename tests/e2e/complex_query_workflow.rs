@@ -60,6 +60,18 @@ fn calculate_sum(a: i32, b: i32) -> i32 {
         .expect("BM25 query failed");
 
     tracing::info!("Query returned {} results", query_result.total);
+
+    let aggregated = query_test
+        .search_aggregated(
+            "main helper function",
+            vec!["main".to_string(), "helper_function".to_string()],
+        )
+        .await
+        .expect("aggregated query failed");
+    assert_eq!(aggregated.planned_sub_queries, 2);
+    assert_eq!(aggregated.executed_sub_queries, 2);
+    assert_eq!(aggregated.succeeded_sub_queries, 2);
+    assert!(aggregated.total > 0, "expected aggregated hits");
 }
 
 /// Relation enrichment workflow

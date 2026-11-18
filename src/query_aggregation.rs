@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
+use std::time::Instant;
 
 use anyhow::Context;
 use cce_config::modules::search::AggregationScoreStrategy;
@@ -91,7 +92,10 @@ struct ScenarioRow {
     dedup_ratio: f64,
     agreement: f64,
     failed: usize,
-    elapsed_ms: u64,
+    wall_ms: u64,
+    reported_ms: u64,
+    executed: usize,
+    cache_hits: usize,
     from_cache: bool,
     outcome: &'static str,
 }
@@ -141,13 +145,21 @@ pub async fn run_aggregation_benchmark(
 
         for strategy in STRATEGIES {
             for weight in WEIGHTS {
-                let union_items = weighted_union(&wide_first, &wide_second, *weight, config.top_k);
+                let union_items = weighted_union(
+                    &wide_first,
+                    &wide_second,
+                    *weight,
+                    config.top_k,
+                    config.search_config.result.min_score,
+                );
                 let union_metrics = evaluate(&union_items, &combined, config.top_k);
                 let options = aggregated_options(config, first, second, *weight, *strategy);
+                let call_start = Instant::now();
                 let result = coordinator
                     .search_aggregated(&options)
                     .await
                     .with_context(|| format!("aggregated query '{}'", combined.id))?;
+                let wall_ms = call_start.elapsed().as_millis() as u64;
                 let metrics = evaluate(
                     &top_items(&result.items, config.top_k),
                     &combined,
@@ -181,7 +193,10 @@ pub async fn run_aggregation_benchmark(
                     dedup_ratio: dedup_ratio(&result.items, &wide_first, &wide_second),
                     agreement: agreement_ratio(&result.items, &wide_first, &wide_second),
                     failed: result.failed_sub_queries.len(),
-                    elapsed_ms: result.elapsed_ms,
+                    wall_ms,
+                    reported_ms: result.elapsed_ms,
+                    executed: result.executed_sub_queries,
+                    cache_hits: result.sub_query_cache_hits,
                     from_cache: result.from_cache,
                     outcome,
                 });
@@ -297,6 +312,7 @@ fn aggregated_options(
         enable_rerank: None,
         enable_result_filter: None,
         query_intent: None,
+        relation_epoch: None,
         neighbour_resolver: None,
     }
 }
@@ -362,6 +378,7 @@ fn weighted_union(
     second: &QueryResult,
     weight: f32,
     top_k: usize,
+    min_score: f32,
 ) -> Vec<SearchResult> {
     let mut by_key: HashMap<String, SearchResult> = HashMap::new();
     for (result, factor) in [(first, 1.0_f32), (second, weight)] {
@@ -380,6 +397,9 @@ fn weighted_union(
         }
     }
     let mut items: Vec<SearchResult> = by_key.into_values().collect();
+    if min_score > 0.0 {
+        items.retain(|item| item.score >= min_score);
+    }
     items.sort_by(|left, right| left.cmp_score_desc_then_stable(right));
     items.truncate(top_k);
     items
@@ -523,7 +543,7 @@ fn render_report(config: &AggregationBenchmarkConfig<'_>, rows: &[ScenarioRow]) 
     .expect("write query policy");
     writeln!(
         page,
-        "- Union baseline: threshold-free inflated sub-queries, weighted and deduped before score combination, truncated to top_k."
+        "- Union baseline: threshold-free inflated sub-queries, weighted and deduped before score combination, filtered by the same min_score, then truncated to top_k."
     )
     .expect("write union policy");
     writeln!(
@@ -556,7 +576,10 @@ fn render_report(config: &AggregationBenchmarkConfig<'_>, rows: &[ScenarioRow]) 
         "dedup",
         "agreement",
         "failed",
-        "elapsed_ms",
+        "wall_ms",
+        "reported_ms",
+        "executed",
+        "cache_hits",
         "cache",
         "result",
     ];
@@ -584,7 +607,10 @@ fn render_report(config: &AggregationBenchmarkConfig<'_>, rows: &[ScenarioRow]) 
                 format!("{:.4}", row.dedup_ratio),
                 format!("{:.4}", row.agreement),
                 row.failed.to_string(),
-                row.elapsed_ms.to_string(),
+                row.wall_ms.to_string(),
+                row.reported_ms.to_string(),
+                row.executed.to_string(),
+                row.cache_hits.to_string(),
                 if row.from_cache { "hit" } else { "miss" }.to_string(),
                 row.outcome.to_string(),
             ]

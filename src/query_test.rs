@@ -9,8 +9,8 @@ use tempfile::TempDir;
 use cce_config::project_registry::ProjectScope;
 use cce_llm_client::OpenAICompatibleProvider;
 use cce_orchestrator::{
-    IndexOptions, IndexOrchestrator, IndexResult, QueryCoordinator, QueryOptions, QueryResult,
-    SearchConfig, SearchSources,
+    AggregatedQueryOptions, IndexOptions, IndexOrchestrator, IndexResult, QueryCoordinator,
+    QueryOptions, QueryResult, SearchConfig, SearchSources, SubQuery,
 };
 use cce_storage_bm25::Bm25Config;
 use cce_storage_common::{VectorStorage, generate_project_group_id};
@@ -467,29 +467,30 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         }
     }
 
-    /// Execute an aggregated search query
-    #[allow(dead_code)]
+    /// Execute an aggregated search query.
     pub async fn search_aggregated(
         &mut self,
         query_text: &str,
-        _sub_queries: Vec<String>,
+        sub_queries: Vec<String>,
     ) -> Result<&QueryResult> {
-        let options = QueryOptions {
-            query: query_text.to_string(),
+        let texts = if sub_queries.is_empty() {
+            vec![query_text.to_string()]
+        } else {
+            sub_queries
+        };
+        let options = AggregatedQueryOptions {
+            original_query: query_text.to_string(),
             project_id: self.project_id,
-            sources: self.search_sources,
-            config: self.search_config.clone(),
-            query_intent: None,
-            directory_prefix: None,
-            exclude_content_types: Vec::new(),
-            include_categories: Vec::new(),
-            exclude_categories: Vec::new(),
-            exclude_patterns: Vec::new(),
-            include_patterns: Vec::new(),
-            with_source: true,
-            enable_rerank: None,
-            enable_result_filter: None,
-            neighbour_resolver: None,
+            sub_queries: texts
+                .into_iter()
+                .map(|text| SubQuery {
+                    text,
+                    sources: self.search_sources,
+                    weight: 1.0,
+                })
+                .collect(),
+            global_config: self.search_config.clone(),
+            ..Default::default()
         };
 
         if self.query_coordinator.is_none() {
@@ -497,7 +498,7 @@ impl<F: FixtureAccess> QueryWorkflowTest<F> {
         }
 
         if let Some(ref coordinator) = self.query_coordinator {
-            let result = coordinator.search(&options).await?;
+            let result = coordinator.search_aggregated(&options).await?;
             self.last_query_result = Some(result);
         }
 

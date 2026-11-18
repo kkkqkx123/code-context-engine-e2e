@@ -141,11 +141,6 @@ fn try_extract_raw_source(
     Some(result.text)
 }
 
-fn extract_raw_source(chunk: &ChunkedResult, source_map: &HashMap<String, String>) -> String {
-    try_extract_raw_source(chunk, source_map)
-        .expect("raw-source extraction: chunk has no source coverage")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,7 +213,8 @@ mod tests {
             .chain(bm25.iter())
             .filter(|chunk| chunk.group_type != cce_parser::grouper::GroupType::FileDocumentation)
         {
-            let raw_text = extract_raw_source(chunk, &source_map);
+            let raw_text = try_extract_raw_source(chunk, &source_map)
+                .expect("raw-source extraction: chunk has no source coverage");
             assert!(
                 !raw_text.trim().is_empty(),
                 "chunk {} must extract raw source",
