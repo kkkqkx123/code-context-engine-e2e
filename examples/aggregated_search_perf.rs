@@ -48,6 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut workflow = QueryWorkflowTest::new(fixture, EmbeddingConfig::mock())
         .with_sources(SearchSources::none().with_bm25());
     workflow.index().await?;
+    workflow.ensure_coordinator().await?;
     let coordinator = Arc::new(workflow.coordinator().clone());
     let project_id = 1;
     let base = [
@@ -55,6 +56,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "helper".to_string(),
         "calculate".to_string(),
         "function".to_string(),
+        "parse".to_string(),
+        "config".to_string(),
+        "error".to_string(),
+        "index".to_string(),
     ];
 
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("outputs/benchmark");
@@ -74,20 +79,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for sub_count in [1usize, 2, 4, 8] {
         for concurrency in [1usize, 4, 16] {
             for phase in ["cold", "warm"] {
+                let warm_texts = (0..sub_count)
+                    .map(|sub_index| format!("{} warm-{sub_count}", base[sub_index]))
+                    .collect::<Vec<_>>();
+                if phase == "warm" {
+                    coordinator
+                        .search_aggregated(&options(project_id, warm_texts.clone()))
+                        .await?;
+                }
+
                 let started = Instant::now();
                 let mut tasks = JoinSet::new();
                 for request_index in 0..concurrency {
                     let coordinator = Arc::clone(&coordinator);
-                    let texts = (0..sub_count)
-                        .map(|sub_index| {
-                            let base_text = base[sub_index % base.len()].clone();
-                            if phase == "cold" {
-                                format!("{base_text} {request_index}")
-                            } else {
-                                base_text
-                            }
-                        })
-                        .collect();
+                    let texts = if phase == "warm" {
+                        warm_texts.clone()
+                    } else {
+                        (0..sub_count)
+                            .map(|sub_index| {
+                                format!(
+                                    "{} cold-{sub_count}-{concurrency}-{request_index}",
+                                    base[sub_index]
+                                )
+                            })
+                            .collect()
+                    };
                     let options = options(project_id, texts);
                     tasks.spawn(async move {
                         let call_start = Instant::now();
