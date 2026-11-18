@@ -6,7 +6,7 @@ This document describes the responsibilities and organization of the `examples/`
 
 Examples are **demonstrative output generators** — they produce review artifacts under `outputs/` for manual inspection. They do NOT participate in assertions and are strictly separated from `tests/`.
 
-**Total: 83 example files** across 18 subdirectories plus root-level debug tools.
+**Total: 84 example files** across 18 subdirectories plus root-level debug tools.
 
 ## Design Principles
 
@@ -129,7 +129,15 @@ Examples are **demonstrative output generators** — they produce review artifac
 
 **Output:** `outputs/benchmark/{target}/aggregation_enhance/`
 
-### 9. BM25 Parameter Sweep (`bm25_para_{target}`)
+### 9. Cross-Language Benchmark (`cross_language_oncecell`)
+
+**Count:** 1 example
+
+**Purpose:** Independent cross-language evaluation. Pairs each non-English judgment with the English judgment sharing the largest judged range, then reports `language_gap` on dense retrieval. BM25 rows are diagnostic only; this job does not feed chunking, BM25-parameter or aggregation-default conclusions.
+
+**Output:** `outputs/benchmark/cross_language/{target}/` — `cross_language_metrics.md`, `run_manifest.txt`
+
+### 10. BM25 Parameter Sweep (`bm25_para_{target}`)
 
 **Count:** 3 examples
 
@@ -137,7 +145,7 @@ Examples are **demonstrative output generators** — they produce review artifac
 
 **Output:** `outputs/benchmark/{target}/bm25_parameter_sweep/` + console aggregates
 
-### 10. Annotation Review (`annotation_{target}`)
+### 11. Annotation Review (`annotation_{target}`)
 
 **Count:** 7 examples
 
@@ -145,15 +153,15 @@ Examples are **demonstrative output generators** — they produce review artifac
 
 **Output:** `outputs/scenarios/<lang>/annotation/{target}/` — `index.md` + `{query_id}.md`
 
-### 11. Query Review (`query_review_{target}`)
+### 12. Query Review (`query_review_{target}`)
 
 **Count:** 2 examples
 
-**Purpose:** Real retrieval chain review — runs every judgment query through the actual query pipeline (hybrid mode with embedded local vector engine), renders per-query complete results plus an aggregated two-sub-query merge demo.
+**Purpose:** Real retrieval chain review — runs every judgment query through the actual query pipeline (hybrid mode with embedded local vector engine), renders per-query complete results, an aggregated two-sub-query merge demo, and a category-aware aggregation benchmark across query-type pairs, merge strategies and weights.
 
-**Output:** `outputs/scenarios/<lang>/query_review/{target}/` — `run_manifest.txt`, `index.md`, `{query_id}.md`, `aggregated_demo.md`
+**Output:** `outputs/scenarios/<lang>/query_review/{target}/` — `run_manifest.txt`, `index.md`, `{query_id}.md`, `aggregated_demo.md`, `aggregation_metrics.md`
 
-### 12. Relation Review (`relation_review_{target}`)
+### 13. Relation Review (`relation_review_{target}`)
 
 **Count:** 2 examples
 
@@ -161,7 +169,7 @@ Examples are **demonstrative output generators** — they produce review artifac
 
 **Output:** `outputs/scenarios/<lang>/relation_review/{target}/` — `run_manifest.txt`, `index.md`, `entity/{seed}.md`, `graph/{seed}.json`
 
-### 13. Document Export (`export_doc`, `summary_doc`, `dump_document_chunks`)
+### 14. Document Export (`export_doc`, `summary_doc`, `dump_document_chunks`)
 
 **Count:** 3 examples
 
@@ -169,7 +177,7 @@ Examples are **demonstrative output generators** — they produce review artifac
 
 **Output:** `outputs/scenarios/documents/`, `outputs/demo/documents/`
 
-### 14. Alignment Report (`alignment_report`)
+### 15. Alignment Report (`alignment_report`)
 
 **Count:** 1 example
 
@@ -177,7 +185,7 @@ Examples are **demonstrative output generators** — they produce review artifac
 
 **Output:** `outputs/scenarios/rust/alignment/`
 
-### 15. Tool Export (`export_file_fold`)
+### 16. Tool Export (`export_file_fold`)
 
 **Count:** 1 example
 
@@ -185,7 +193,7 @@ Examples are **demonstrative output generators** — they produce review artifac
 
 **Output:** `outputs/tools/file-fold/`
 
-### 16. Debug / Diagnostic Tools
+### 17. Debug / Diagnostic Tools
 
 **Count:** 5 examples
 
@@ -230,7 +238,7 @@ outputs/
 ## Naming Conventions
 
 - **Export examples:** `export_{lang}` (e.g., `export_rs`, `export_py`)
-- **Benchmarks:** `benchmark_{target}` (e.g., `benchmark_oncecell`, `benchmark_flask`)
+- **Benchmarks:** `benchmark_{target}` (e.g., `benchmark_oncecell`, `benchmark_flask`), `cross_language_{target}`
 - **Benchmark data gen:** `gen_bench_{target}`
 - **Annotation review:** `annotation_{target}`
 - **Query review:** `query_review_{target}`

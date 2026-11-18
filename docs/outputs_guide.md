@@ -27,7 +27,8 @@ outputs/
 │   │   │   ├── run_manifest.txt
 │   │   │   ├── index.md
 │   │   │   ├── {query_id}.md               # 命中表 + 命中明细 + 标注内容
-│   │   │   └── aggregated_demo.md           # 聚合查询演示（`*_aggregated` 示例）
+│   │   │   ├── aggregated_demo.md           # 聚合查询演示（`*_aggregated` 示例）
+│   │   │   └── aggregation_metrics.md       # 按查询类别/策略/权重的聚合评测
 │   │   └── relation_review/{project}/       # 关系图可视化导出（调用链 + ego 图）
 │   │       ├── run_manifest.txt
 │   │       ├── index.md
@@ -41,6 +42,9 @@ outputs/
 │   └── multi_language/                      # 多语言索引结果 JSON 报告
 ├── index/                                   # 索引工作流输出（回归测试产生）
 ├── benchmark/                               # 基准测试输出（按项目分子目录）
+│   ├── cross_language/{project}/            # 独立跨语言评测（不并入主基准）
+│   │   ├── cross_language_metrics.md
+│   │   └── run_manifest.txt
 │   ├── {project}/                           # once_cell/ripgrep/flask/express/gin/
 │   │   │                                    # jackson_core/mediatr
 │   │   ├── aggregate_metrics_top{k}.md
@@ -256,12 +260,15 @@ cargo run --example query_review_flask -p cce-e2e-tests
 ```
 
 **来源文件：** `examples/{rust,python}/query_review_{oncecell,flask}.rs`；
-核心逻辑 `src/query_review.rs`（判定集定义在 `src/judgments/{project}.rs`）
+核心逻辑 `src/query_review.rs`（判定集定义在 `src/judgments/{project}.rs`），
+聚合评测在 `src/query_aggregation.rs`
 
 **生成逻辑：** 经 `QueryWorkflowTest` 做真实索引（BM25 + SQLite 元数据 + 内存关系图，
 无 Qdrant 无网络）后逐判定查询；每个命中用内容状态机物化正文（超限降级为引用），
 经 `RelationAnnotator::annotate_single` 做关系扩展标注（命中行范围反查关系快照取
-callee/caller，前后向各最多 3 个），同一对齐键去重后渲染。
+callee/caller，前后向各最多 3 个），同一对齐键去重后渲染。聚合评测复用同一索引与
+单查询结果，另取阈值放开且 limit 放大的子查询候选构造合并前基线，再调用生产
+`search_aggregated` 跑策略/权重矩阵。
 
 **目录后缀规则：** Qdrant 可用时落默认目录（hybrid）；不可用时降级为 BM25-only
 并改写 `query_review/{project}_bm25/` 后缀目录，manifest 的 `capability` 行声明
@@ -275,6 +282,7 @@ hybrid 输出。
 - `{query_id}.md` - 命中表（含对齐键、boost 原因列）+ 逐命中明细（内容状态、
   标注内容与扩展节点）
 - `aggregated_demo.md` - 聚合查询演示（仅 `*_aggregated` 示例输出）
+- `aggregation_metrics.md` - 聚合评测：同类型/混合类型子查询对 × `noisy_or`/`max` × 三组权重；含 union recall、merge_delta、去重率、一致率、失败数与增益
 
 #### 1.8 关系图可视化导出（`scenarios/{lang}/relation_review/{project}/`）
 
@@ -394,7 +402,25 @@ cargo run --example benchmark_rerank_oncecell -p cce-e2e-tests -- linear_weighte
 - `per_query_top{k}.md` / `rerank_gain_by_query_type_top{k}.md`
 - `latency_cost.md` / `relevance_top5.md`
 
-#### 2.4 聚合增强基准（`benchmark/{project}/aggregation_enhance/`）
+#### 2.4 跨语言基准（`benchmark/cross_language/{project}/`）
+
+**生成命令：**
+
+```bash
+cargo run --example cross_language_oncecell -p cce-e2e-tests
+```
+
+**来源文件：** `examples/rust/cross_language_oncecell.rs`；核心逻辑 `src/cross_language.rs`。
+
+**生成逻辑：** 对每条非英文判定查询，按判定行范围重叠度匹配一条英文查询；两者共用同一批预计算 bge-m3 向量，分别评估 dense 召回。英文结果代表语料检索质量，`language_gap = English F1 - 非英文 F1` 代表语言对齐成本。BM25 结果仅为诊断，不参与结论。
+
+**输出内容：**
+- `cross_language_metrics.md` - 逐配对指标与 top-10 汇总
+- `run_manifest.txt` - 配对规则与排除范围
+
+**边界：** 主 benchmark、`benchmark_retrieval_*`、`benchmark_agg_*` 均使用 `CoreRetrieval`，排除 `cross_lang`；跨语言结论只看本目录。
+
+#### 2.5 聚合增强基准（`benchmark/{project}/aggregation_enhance/`）
 
 **生成命令：**
 ```bash
@@ -545,7 +571,8 @@ cargo run --example gen_bench_express / gen_bench_gin / gen_bench_jackson_core \
 | scenarios/multi_language/ | `cargo run --example multi_language_basic` | examples/multi_language/basic.rs | 是（完整索引） |
 | scenarios/documents/chunks/ | `cargo run --example export_doc` | examples/rust/export_doc.rs | 否 |
 | scenarios/documents/summary/ | `cargo run --example summary_doc` | examples/rust/summary_doc.rs | 否 |
-| benchmark/{project}/ | `cargo run --example benchmark_{project}` | examples/{lang}/benchmark_{project}.rs | 否（使用预计算向量） |
+| benchmark/{project}/ | `cargo run --example benchmark_{project}` | examples/{lang}/benchmark_{project}.rs | 否（使用预计算向量，CoreRetrieval） |
+| benchmark/cross_language/{project}/ | `cargo run --example cross_language_{project}` | examples/{lang}/cross_language_{project}.rs | 否（独立跨语言赛道） |
 | benchmark/{once_cell,ripgrep,flask}/retrieval_method/ | `cargo run --example benchmark_retrieval_{project}` | examples/{lang}/benchmark_retrieval_{project}.rs | 否（使用预计算向量与文本） |
 | benchmark/once_cell/rerank_{variant}/ | `cargo run --example benchmark_rerank_oncecell [-- fusion] [--normalize-initial]` | examples/rust/benchmark_rerank_oncecell.rs | 否（离线融合旁路分数） |
 | data/benchmark/.../rerank_*.rkyv | `cargo run --example gen_rerank_oncecell` | examples/rust/gen_rerank_oncecell.rs | **是**（调用真实重排模型） |

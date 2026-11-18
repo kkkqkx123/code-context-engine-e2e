@@ -10,7 +10,8 @@
 //! ├── run_manifest.txt
 //! ├── index.md
 //! ├── {query_id}.md
-//! └── aggregated_demo.md
+//! ├── aggregated_demo.md
+//! └── aggregation_metrics.md
 //! ```
 //!
 //! Each `{query_id}.md` carries the judgment expectation (relevant ranges),
@@ -20,7 +21,9 @@
 //! document and unexpanded hits stay raw. The aggregated demo exercises
 //! [`QueryCoordinator::search_aggregated`] with two sub-queries derived from
 //! the same judgment set, with the same production post-pass applied.
-//! Outputs are for manual review only and never participate in assertions.
+//! The aggregation metrics page evaluates deterministic sub-query pairs by
+//! query-type category, merge strategy and weight. Outputs are for manual
+//! review only and never participate in assertions.
 //!
 //! The vector backend is the embedded local engine, so hybrid output needs no
 //! external service and the default scenario directory always carries hybrid
@@ -51,6 +54,7 @@ use crate::embedding::EmbeddingConfig;
 use crate::fixture::{FixtureSpec, TestFixture};
 use crate::mock_embedding_server::{MockEmbeddingServer, mock_embedding_config};
 use crate::output_manager::{OutputBuilder, OutputCategory};
+use crate::query_aggregation::{AggregationBenchmarkConfig, run_aggregation_benchmark};
 use crate::query_test::QueryWorkflowTest;
 use crate::range_evaluator::{RetrievedCoverage, coverage_over_retrieved};
 
@@ -123,12 +127,15 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
         .with_expansion(true);
 
     let mut outcomes = Vec::new();
+    let mut single_results = Vec::new();
     for judgment in &config.judgments {
-        let mut result = query_test
+        let raw_result = query_test
             .query(&judgment.query_text)
             .await
             .with_context(|| format!("query {}", judgment.id))?
             .clone();
+        single_results.push(raw_result.clone());
+        let mut result = raw_result;
         // Wrap hits exactly like an expand=true API response so the rendered
         // bodies are verbatim what callers receive: expanded hits carry the
         // full annotated document, the rest stay raw.
@@ -172,6 +179,22 @@ pub async fn run_query_review(config: QueryReviewConfig) -> anyhow::Result<()> {
     if let Some(page) = aggregated_note {
         manager.write("aggregated_demo.md", &page)?;
     }
+
+    let aggregation_config = AggregationBenchmarkConfig {
+        project: config.project,
+        project_id: 1,
+        judgments: &config.judgments,
+        top_k: config.top_k,
+        sources,
+        search_config: &search_config,
+    };
+    let aggregation_report = run_aggregation_benchmark(
+        query_test.coordinator(),
+        &aggregation_config,
+        &single_results,
+    )
+    .await?;
+    manager.write("aggregation_metrics.md", &aggregation_report)?;
 
     manager.write(
         "run_manifest.txt",
@@ -735,6 +758,9 @@ fn render_index(config: &QueryReviewConfig, outcomes: &[QueryOutcome]) -> String
     if config.judgments.len() >= 2 {
         page.push_str(
             "\n- [aggregated_demo.md](./aggregated_demo.md): two-sub-query merge demo.\n",
+        );
+        page.push_str(
+            "- [aggregation_metrics.md](./aggregation_metrics.md): category-aware aggregation benchmark.\n",
         );
     }
     page

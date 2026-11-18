@@ -10,7 +10,7 @@ use cce_e2e_tests::bench_data::EvaluationScope;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let project = BenchmarkProject::OnceCell;
     let all_judgments = project.judgments();
-    let scope = EvaluationScope::All;
+    let scope = EvaluationScope::CoreRetrieval;
     let judgments: Vec<_> = all_judgments
         .iter()
         .filter(|j| scope.includes_query_type(j.query_type))

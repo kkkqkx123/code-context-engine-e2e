@@ -77,6 +77,10 @@ name = "benchmark_oncecell"
 path = "examples/rust/benchmark_oncecell.rs"
 
 [[example]]
+name = "cross_language_oncecell"
+path = "examples/rust/cross_language_oncecell.rs"
+
+[[example]]
 name = "benchmark_ripgrep"
 path = "examples/rust/benchmark_ripgrep.rs"
 
