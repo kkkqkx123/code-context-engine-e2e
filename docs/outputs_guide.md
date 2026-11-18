@@ -204,12 +204,13 @@ cargo run --example alignment_report -p cce-e2e-tests
 
 **生成逻辑：**
 - 加载 `fixtures/rust/basic` fixture，使用确定性 mock 嵌入服务（`src/mock_embedding_server.rs`），无需 LLM API
-- 探测 Qdrant 可用性：可用时执行 vector/BM25/hybrid 三路查询，不可用时降级为 BM25-only 并在 manifest 中记录
-- 对齐键为 `cce_types::alignment_key`；使用 `OutputManager`（Scenarios / rust / alignment）写入
+- 使用嵌入式本地向量引擎执行 vector/BM25/hybrid 三路查询，manifest 记录后端与 mock 嵌入来源
+- 对齐键为 `cce_types::alignment_key`；三项比率由生产 `FusionAlignmentStats` 计算，汇总行按跨 query 计数合并
+- 使用 `OutputManager`（Scenarios / rust / alignment）写入
 
 **输出内容：**
-- `run_manifest.txt` - 运行清单（fixture、Qdrant 可用性、mock 嵌入、对齐键口径、查询列表）
-- `alignment_summary.md` - 逐 query 的 vector/bm25 键数、跨路径匹配键数与对齐率、hybrid 键包含关系
+- `run_manifest.txt` - 运行清单（fixture、本地向量后端、mock 嵌入、对齐键口径、三项指标定义、查询列表）
+- `alignment_summary.md` - 逐 query 与汇总的匹配率、单路键占比、不可对齐占比，以及 hybrid 键包含关系
 - `per_query_alignment.md` - 逐 query 的 vector/bm25/hybrid 对齐键明细
 
 #### 1.5 索引结果快照（`scenarios/{rust,multi_language}/`）

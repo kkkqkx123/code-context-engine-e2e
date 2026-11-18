@@ -139,6 +139,16 @@ impl AlignmentStat {
             (self.emb_unalignable + self.bm25_unalignable) as f64 / total as f64
         }
     }
+
+    /// Share of distinct keys returned by only one path, in `[0, 1]`.
+    pub fn single_path_share(&self) -> f64 {
+        let distinct = self.emb_keys + self.bm25_keys - self.common_keys;
+        if distinct == 0 {
+            0.0
+        } else {
+            (self.emb_only_keys + self.bm25_only_keys) as f64 / distinct as f64
+        }
+    }
 }
 
 /// Fused-score distribution of one method, accumulated over every query.

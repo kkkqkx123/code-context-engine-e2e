@@ -4,9 +4,9 @@
 //! `outputs/scenarios/rust/alignment/`:
 //!
 //! - `run_manifest.txt`: fixture, queries, vector backend, alignment key
-//!   convention.
-//! - `alignment_summary.md`: per-query key counts, cross-path matched keys,
-//!   and the resulting alignment ratio.
+//!   convention and metric definitions.
+//! - `alignment_summary.md`: per-query and overall match, single-path and
+//!   unalignable ratios.
 //! - `per_query_alignment.md`: per-query vector/BM25/hybrid key lists.
 //!
 //! Uses the deterministic mock embedding server, so no LLM service is needed.
@@ -22,6 +22,7 @@ use cce_e2e_tests::mock_embedding_server::MockEmbeddingServer;
 use cce_e2e_tests::output_manager::{OutputBuilder, OutputCategory};
 use cce_e2e_tests::query_test::QueryWorkflowTest;
 use cce_llm_client::OpenAICompatibleProvider;
+use cce_orchestrator::query::retrieval::primitives::fusion::compute_alignment_coverage;
 use cce_orchestrator::query::searcher::expand_multi_entity_results;
 use cce_orchestrator::query::types::SearchResult;
 
@@ -38,6 +39,14 @@ fn no_threshold_config() -> cce_orchestrator::SearchConfig {
 fn alignment_key_of(item: &SearchResult) -> String {
     cce_types::alignment_key(&item.entity_ids, item.segment_id.as_deref(), &item.id)
         .unwrap_or_else(|| format!("c:{}", item.id))
+}
+
+fn ratio(numerator: usize, denominator: usize) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
 }
 
 fn fmt_keys(items: &[SearchResult]) -> String {
@@ -89,6 +98,10 @@ fn main() {
     manifest.push_str("vector_backend: local (embedded simvec, per-run temp data dir)\n");
     manifest.push_str("embedder: deterministic mock (no LLM service)\n");
     manifest.push_str("alignment_key: e:<entity_id> | s:<segment_id> | c:<chunk_id>\n");
+    manifest.push_str(
+        "metrics: match=matched/vector_keys; single_path=single_keys/distinct_keys; \
+         unalignable=unalignable/(all_keys+unalignable); computed with production FusionAlignmentStats\n",
+    );
     manifest.push_str(&format!(
         "queries: {}\n",
         QUERIES
@@ -100,6 +113,7 @@ fn main() {
 
     let mut summary = String::from("# Hybrid Fusion Alignment Summary\n\n");
     let mut per_query = String::from("# Per-Query Alignment Detail\n\n");
+    let mut totals = (0usize, 0usize, 0usize, 0usize, 0usize);
 
     for query in QUERIES {
         let vector_items: Vec<SearchResult> = rt
@@ -122,29 +136,44 @@ fn main() {
         let bm25_items = expand_multi_entity_results(bm25_items);
         let hybrid_items = expand_multi_entity_results(hybrid_items);
 
+        let stats = compute_alignment_coverage(&vector_items, &bm25_items);
         let vector_keys: std::collections::HashSet<String> =
             vector_items.iter().map(alignment_key_of).collect();
         let bm25_keys: std::collections::HashSet<String> =
             bm25_items.iter().map(alignment_key_of).collect();
-        let matched = vector_keys.intersection(&bm25_keys).count();
-        let ratio = if vector_keys.is_empty() {
-            0.0
-        } else {
-            matched as f64 / vector_keys.len() as f64
-        };
+
+        totals.0 += stats.vector_keys;
+        totals.1 += stats.bm25_keys;
+        totals.2 += stats.matched_keys;
+        totals.3 += stats.single_path_keys();
+        totals.4 += stats.unalignable();
 
         summary.push_str(&format!("## Query: \"{query}\"\n"));
         summary.push_str(&format!(
             "- vector keys: {} ({} items)\n",
-            vector_keys.len(),
+            stats.vector_keys,
             vector_items.len()
         ));
         summary.push_str(&format!(
             "- bm25 keys: {} ({} items)\n",
-            bm25_keys.len(),
+            stats.bm25_keys,
             bm25_items.len()
         ));
-        summary.push_str(&format!("- matched keys: {matched} (ratio {:.2})\n", ratio));
+        summary.push_str(&format!(
+            "- matched keys: {} (match ratio {:.2})\n",
+            stats.matched_keys,
+            stats.match_ratio()
+        ));
+        summary.push_str(&format!(
+            "- single-path keys: {} (ratio {:.2})\n",
+            stats.single_path_keys(),
+            stats.single_path_ratio()
+        ));
+        summary.push_str(&format!(
+            "- unalignable entries: {} (ratio {:.2})\n",
+            stats.unalignable(),
+            stats.unalignable_ratio()
+        ));
         summary.push_str(&format!(
             "- hybrid items: {}; hybrid key ⊆ (vector ∪ bm25): {}\n",
             hybrid_items.len(),
@@ -161,6 +190,33 @@ fn main() {
         per_query.push_str(&format!("- hybrid keys: {}\n", fmt_keys(&hybrid_items)));
         per_query.push('\n');
     }
+
+    let distinct = totals.0 + totals.1 - totals.2;
+    let observed = totals.0 + totals.1 + totals.4;
+    summary.push_str("## Overall\n\n");
+    summary.push_str(&format!(
+        "- keys per path: vector {}, bm25 {}; matched {}\n",
+        totals.0, totals.1, totals.2
+    ));
+    summary.push_str(&format!(
+        "- match ratio: {:.2} (matched / vector keys)\n",
+        ratio(totals.2, totals.0)
+    ));
+    summary.push_str(&format!(
+        "- single-path ratio: {:.2} ({} / {} distinct keys)\n",
+        ratio(totals.3, distinct),
+        totals.3,
+        distinct
+    ));
+    summary.push_str(&format!(
+        "- unalignable ratio: {:.2} ({} / {} observed entries)\n\n",
+        ratio(totals.4, observed),
+        totals.4,
+        observed
+    ));
+    summary.push_str(
+        "Overall ratios aggregate counts across queries; the online histograms record one value per query.\n",
+    );
 
     manager
         .write("run_manifest.txt", &manifest)

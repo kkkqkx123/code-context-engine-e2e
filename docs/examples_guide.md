@@ -173,7 +173,7 @@ Examples are **demonstrative output generators** — they produce review artifac
 
 **Count:** 1 example
 
-**Purpose:** Hybrid cross-path alignment review — runs vector, BM25, and hybrid searches for sample queries, computes alignment keys, and reports per-query cross-path match ratios.
+**Purpose:** Hybrid cross-path alignment review — runs vector, BM25, and hybrid searches for sample queries, computes alignment keys with the production `FusionAlignmentStats`, and reports per-query and overall match, single-path, and unalignable ratios.
 
 **Output:** `outputs/scenarios/rust/alignment/`
 

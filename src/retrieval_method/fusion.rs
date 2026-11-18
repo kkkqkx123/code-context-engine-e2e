@@ -527,7 +527,13 @@ impl<'a> PreparedFusion<'a> {
                 coverage,
             });
         }
-        fused.sort_by(|a, b| b.fused_score.total_cmp(&a.fused_score));
+        // Key order must not decide equal-score rankings: the key set comes
+        // from a HashMap, whose iteration changes between runs.
+        fused.sort_by(|a, b| {
+            b.fused_score
+                .total_cmp(&a.fused_score)
+                .then_with(|| a.key.cmp(&b.key))
+        });
         fused
     }
 }

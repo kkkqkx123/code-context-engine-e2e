@@ -948,6 +948,17 @@ async fn test_hybrid_alignment_coverage_metric() {
         average > 0.0,
         "alignment coverage ratio must be > 0 when both paths align, got {average}"
     );
+    assert!(
+        metrics.hybrid_alignment_single_path_ratio.get_count() > 0
+            && metrics.hybrid_alignment_unalignable_ratio.get_count() > 0,
+        "hybrid query must record the single-path and unalignable histograms"
+    );
+    let single_path = metrics.hybrid_alignment_single_path_ratio.get_average();
+    let unalignable = metrics.hybrid_alignment_unalignable_ratio.get_average();
+    assert!(
+        (0.0..=1.0).contains(&single_path) && (0.0..=1.0).contains(&unalignable),
+        "alignment ratios must stay in [0, 1], got {single_path} / {unalignable}"
+    );
 
     query_test.cleanup().await;
     server.stop().await;

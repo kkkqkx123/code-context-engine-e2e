@@ -140,6 +140,7 @@ fn write_alignment_coverage(
         "common",
         "emb_only",
         "bm25_only",
+        "single_path_share",
         "coverage",
         "emb_unalignable",
         "bm25_unalignable",
@@ -163,6 +164,7 @@ fn write_alignment_coverage(
                 s.common_keys.to_string(),
                 s.emb_only_keys.to_string(),
                 s.bm25_only_keys.to_string(),
+                format!("{:.1}%", s.single_path_share() * 100.0),
                 format!("{:.1}%", coverage * 100.0),
                 s.emb_unalignable.to_string(),
                 s.bm25_unalignable.to_string(),
@@ -174,6 +176,11 @@ fn write_alignment_coverage(
 
     writeln!(f)?;
     writeln!(f, "Coverage = common keys / max(emb_keys, bm25_keys).")?;
+    writeln!(
+        f,
+        "Single-path share = (emb_only + bm25_only) / distinct keys; the offline \
+         counterpart of search_hybrid_alignment_single_path_ratio."
+    )?;
     writeln!(
         f,
         "Single-path keys join the fused list according to their own switch \
