@@ -40,6 +40,9 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+[dev-dependencies]
+cce-bench-kit = { version = "0.1.0", path = "../../bench/cce-bench-kit" }
+
 [[example]]
 name = "rust_basic"
 path = "examples/rust/basic.rs"
@@ -443,3 +446,7 @@ path = "examples/python/dbg_group_shape.rs"
 [[example]]
 name = "judgment_range_check"
 path = "examples/judgment_range_check.rs"
+
+[[example]]
+name = "full_pipeline_perf"
+path = "examples/full_pipeline_perf.rs"
