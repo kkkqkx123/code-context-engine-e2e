@@ -13,7 +13,7 @@
 //! per-stage timings are appended to `outputs/benchmark/full_pipeline_stages.tsv`.
 
 use std::fs;
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -113,18 +113,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("outputs/benchmark");
     fs::create_dir_all(&output_dir)?;
     let output = output_dir.join("full_pipeline_perf.tsv");
-    let mut report = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&output)?;
-    if report.metadata()?.len() == 0 {
-        use std::io::Write as _;
-        writeln!(
-            report,
-            "# tier\tfiles\tindexed\tfailed\tentities\trelations\tvectors\treported_ms\twall_ms\tfiles_per_sec\tcpu_ms\tpeak_rss_kb\tpeak_rss_delta_kb\tread_bytes_delta\twrite_bytes_delta"
-        )?;
-    }
-    use std::io::Write as _;
+    let mut report = cce_bench_kit::open_report_at_with_header(
+        &output,
+        "# tier\tfiles\tindexed\tfailed\tentities\trelations\tvectors\treported_ms\twall_ms\tfiles_per_sec\tcpu_ms\tpeak_rss_kb\tpeak_rss_delta_kb\tread_bytes_delta\twrite_bytes_delta",
+    );
     writeln!(
         report,
         "{}\t{file_count}\t{indexed_files}\t{failed_files}\t{entities}\t{relations}\t{vectors}\t{reported_ms}\t{wall_ms:.1}\t{:.1}\t{}\t{}\t{}\t{}\t{}",
@@ -137,20 +129,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         resources.write_bytes.unwrap_or(0),
     )?;
 
-    let mut stage_report = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(output_dir.join("full_pipeline_stages.tsv"))?;
-    if stage_report.metadata()?.len() == 0 {
-        use std::io::Write as _;
-        writeln!(
-            stage_report,
-            "# tier\tfiles\twall_ms\tscan_ms\tbatch_process_ms\tbatch_setup_ms\tentity_store_ms\tvector_store_ms\tbm25_store_ms\tsummary_ms\trelation_ms\trelation_spool_ms\trelation_spool_write_ms\trelation_symbols_ms\tsymbol_modules_ms\tsymbol_type_index_ms\tsymbol_overload_ms\tsymbol_flat_ms\tsymbol_cross_file_ms\texport_spool_ms\texport_ms\tmanifest_ms\tbatch_overhead_ms\tbatches\tvector_calls\tbm25_calls"
-        )?;
-    }
+    let mut stage_report = cce_bench_kit::open_report_at_with_header(
+        &output_dir.join("full_pipeline_stages.tsv"),
+        "# tier\tfiles\twall_ms\tscan_ms\tbatch_process_ms\tbatch_setup_ms\tentity_store_ms\tvector_store_ms\tbm25_store_ms\tsummary_ms\trelation_ms\trelation_spool_ms\trelation_spool_write_ms\trelation_symbols_ms\tsymbol_modules_ms\tsymbol_type_index_ms\tsymbol_overload_ms\tsymbol_flat_ms\tsymbol_cross_file_ms\texport_spool_ms\texport_ms\tmanifest_ms\tbatch_overhead_ms\tbatches\tvector_calls\tbm25_calls\tmetadata\tentity_store_calls\tvector_txns_applied\tvector_points_written\tvector_wal_flushes\tvector_wal_txns\tvector_commit_wait_ms\tvector_hnsw_builds\tvector_hnsw_build_ms\tvector_checkpoints\tvector_checkpoint_ms",
+    );
     writeln!(
         stage_report,
-        "{}\t{file_count}\t{wall_ms:.1}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{file_count}\t{wall_ms:.1}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\tmemory{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         size.label(),
         stages.scan_ms,
         stages.batch_process_ms,
@@ -175,6 +160,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         stages.batches,
         stages.vector_store_calls,
         stages.bm25_store_calls,
+        stages.entity_store_calls,
+        stages.vector_txns_applied,
+        stages.vector_points_written,
+        stages.vector_wal_flushes,
+        stages.vector_wal_txns,
+        stages.vector_commit_wait_ms,
+        stages.vector_hnsw_builds,
+        stages.vector_hnsw_build_ms,
+        stages.vector_checkpoints,
+        stages.vector_checkpoint_ms,
     )?;
 
     println!(
