@@ -447,12 +447,9 @@ async fn test_build_config_change_triggers_relation_rebuild() {
     // The rebuilt epoch must be loadable and contain the rebuilt files.
     use cce_codegraph::index::snapshot_loader::RelationSnapshotLoader;
     use cce_codegraph::index::snapshot_query::SnapshotFileQueryOps;
-    let rebuilt = RelationSnapshotLoader::load(
-        harness.store.as_ref(),
-        harness.project_id,
-        after_relation_epoch,
-    )
-    .expect("rebuilt relation snapshot must load");
+    let rebuilt =
+        RelationSnapshotLoader::load(&harness.store, harness.project_id, after_relation_epoch)
+            .expect("rebuilt relation snapshot must load");
     assert!(
         rebuilt.contains_file("src/lib.rs") && rebuilt.contains_file("src/util.rs"),
         "both relation files must be present after the rebuild"

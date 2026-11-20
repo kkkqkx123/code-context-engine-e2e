@@ -36,6 +36,7 @@ use cce_orchestrator::{
 use cce_parser::summary::{FileSummary, RuleBasedGenerator, SummaryGenerator};
 use cce_storage_bm25::{Bm25Client, Bm25Config};
 use cce_storage_common::MetadataStorage;
+use cce_storage_common::metadb::MetadataBackendStore;
 use cce_utils::hash::hash_serializable;
 
 use crate::helper::EmptyFixture;
@@ -267,6 +268,7 @@ impl HotUpdateHarness {
         )
         .for_project(project_id)
         .context("scope store")?;
+        let store = MetadataBackendStore::Local(store);
         let checkpoint_manager = Arc::new(CheckpointManager::new_for_project(
             project_id,
             store.clone(),

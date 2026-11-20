@@ -28,6 +28,7 @@ use cce_orchestrator::{
 };
 use cce_storage_bm25::{Bm25Client, Bm25Config};
 use cce_storage_common::MetadataStorage;
+use cce_storage_common::metadb::MetadataBackendStore;
 use cce_storage_vector_qdrant::{QdrantClient, types as qdrant_types};
 
 /// Qdrant payload isolation group used for every scenario.
@@ -77,10 +78,11 @@ impl DriftScaffold {
         let mut bm25 = Bm25Client::new(bm25_config);
         bm25.connect().await.context("failed to connect BM25")?;
 
+        let store = MetadataBackendStore::Local(scoped);
         Ok(Self {
             fixture,
-            store: scoped.clone(),
-            checkpoint_manager: Arc::new(CheckpointManager::new_for_project(PROJECT_ID, scoped)),
+            store: store.clone(),
+            checkpoint_manager: Arc::new(CheckpointManager::new_for_project(PROJECT_ID, store)),
             bm25: Arc::new(bm25),
             qdrant: CapturingMockQdrant::spawn().await,
             entity_id_seed: Arc::new(AtomicU64::new(0)),
